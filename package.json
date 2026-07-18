@@ -67,11 +67,11 @@
     "expo-splash-screen": "~57.0.4",
     "expo-sqlite": "~57.0.1",
     "expo-system-ui": "~57.0.1",
-    "react": "19.2.3",
+    "react": "19.2.7",
     "react-native": "0.86.0",
-    "react-native-get-random-values": "~1.11.0",
+    "react-native-get-random-values": "~2.0.0",
     "react-native-qrcode-svg": "file:vendor/react-native-qrcode-svg",
-    "react-native-safe-area-context": "~5.7.0",
+    "react-native-safe-area-context": "~5.8.0",
     "tweetnacl": "^1.0.3"
   },
   "devDependencies": {
