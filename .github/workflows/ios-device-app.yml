@@ -1,0 +1,262 @@
+name: iOS Device App
+
+env:
+  EXPO_NO_TELEMETRY: "1"
+  CI: "1"
+  NODE_ENV: production
+  RUSTFLAGS: "-D warnings"
+  DEVELOPER_DIR: /Applications/Xcode_26.6.app/Contents/Developer
+  COCOAPODS_DISABLE_STATS: "true"
+  RCT_USE_RN_DEP: "1"
+  RCT_USE_PREBUILT_RNCORE: "0"
+  RCT_BUILD_HERMES_FROM_SOURCE: "false"
+  BUNDLE_VERSION: "4.0.16"
+  LANG: en_US.UTF-8
+
+"on":
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ios-device-app-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build-ios-device-app:
+    name: Build iOS Device App
+    runs-on: macos-26
+    timeout-minutes: 90
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+
+      - name: Select Xcode 26.6
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -d "$DEVELOPER_DIR"
+          xcodebuild -version 2>&1 | tee xcode-version.log
+          grep -Fx "Xcode 26.6" xcode-version.log
+
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: "24.14.0"
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
+        with:
+          toolchain: "1.97.1"
+          targets: aarch64-apple-ios,aarch64-apple-ios-sim,x86_64-apple-ios
+          components: clippy,rustfmt,llvm-tools-preview
+
+      - name: Install dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm ci --include=dev --fund=false --audit=false 2>&1 | tee npm-install.log
+          node scripts/assert-warning-free.mjs npm-install.log
+
+      - name: Install CocoaPods 1.17.0
+        shell: bash
+        run: |
+          set -euo pipefail
+          gem install bundler --version "$BUNDLE_VERSION" --no-document 2>&1 | tee ruby-toolchain.log
+          BUNDLE_RUNTIME_VERSION="$(bundle --version)"
+          printf '%s\n' "$BUNDLE_RUNTIME_VERSION" | tee -a ruby-toolchain.log
+          grep -Eq "(^|[[:space:]])${BUNDLE_VERSION}([[:space:]]|$)" <<< "$BUNDLE_RUNTIME_VERSION"
+          bundle install --jobs 4 --retry 3 2>&1 | tee -a ruby-toolchain.log
+          test "$(bundle exec pod --version)" = "1.17.0"
+          node scripts/assert-warning-free.mjs ruby-toolchain.log
+
+      - name: Verify dependency alignment
+        shell: bash
+        run: |
+          set -euo pipefail
+          npx expo install --check 2>&1 | tee expo-install-check.log
+          node scripts/assert-warning-free.mjs expo-install-check.log
+          npm run doctor 2>&1 | tee expo-doctor.log
+          node scripts/assert-warning-free.mjs expo-doctor.log
+
+      - name: Verify warning policy
+        run: |
+          npm run warnings:self-test
+          npm run warnings:source
+
+      - name: ESLint
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm run lint 2>&1 | tee eslint.log
+          node scripts/assert-warning-free.mjs eslint.log
+
+      - name: TypeScript
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm run typecheck 2>&1 | tee typescript.log
+          node scripts/assert-warning-free.mjs typescript.log
+
+      - name: Unit tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm run test 2>&1 | tee vitest.log
+          node scripts/assert-warning-free.mjs vitest.log
+
+      - name: Rust format
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm run rust:fmt 2>&1 | tee rust-fmt.log
+          node scripts/assert-warning-free.mjs rust-fmt.log
+
+      - name: Rust clippy
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm run rust:clippy 2>&1 | tee rust-clippy.log
+          node scripts/assert-warning-free.mjs rust-clippy.log
+
+      - name: Rust tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm run rust:test 2>&1 | tee rust-test.log
+          node scripts/assert-warning-free.mjs rust-test.log
+
+      - name: Rust iOS clippy
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo clippy --manifest-path native/nito-wallet-crypto/Cargo.toml --target aarch64-apple-ios --lib --locked -- -D warnings 2>&1 | tee rust-ios-clippy.log
+          node scripts/assert-warning-free.mjs rust-ios-clippy.log
+
+      - name: Dependency audit
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm audit --omit=dev --audit-level=moderate 2>&1 | tee npm-audit.log
+          node scripts/assert-warning-free.mjs npm-audit.log
+
+      - name: Build native Rust core for iOS device
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo build --manifest-path native/nito-wallet-crypto/Cargo.toml --target aarch64-apple-ios --release --locked 2>&1 | tee rust-ios-build.log
+          node scripts/assert-warning-free.mjs rust-ios-build.log
+          LIBRARY="native/nito-wallet-crypto/target/aarch64-apple-ios/release/libnito_wallet_crypto.a"
+          test -f "$LIBRARY"
+          lipo "$LIBRARY" -verify_arch arm64
+          RUST_HOST="$(rustc -vV | sed -n 's/^host: //p')"
+          LLVM_NM="$(rustc --print sysroot)/lib/rustlib/${RUST_HOST}/bin/llvm-nm"
+          test -x "$LLVM_NM"
+          "$LLVM_NM" --defined-only --extern-only "$LIBRARY" > rust-ios-symbols.log
+          grep -Eq '[[:space:]]_nito_wallet_crypto_invoke$' rust-ios-symbols.log
+          grep -Eq '[[:space:]]_nito_wallet_crypto_free$' rust-ios-symbols.log
+          mkdir -p native/ios/lib
+          cp "$LIBRARY" native/ios/lib/libnito_wallet_crypto.a
+
+      - name: Generate iOS native project
+        shell: bash
+        run: |
+          set -euo pipefail
+          npx expo prebuild --platform ios --clean --no-install 2>&1 | tee expo-prebuild-ios.log
+          node scripts/assert-warning-free.mjs expo-prebuild-ios.log
+
+      - name: Install iOS pods
+        shell: bash
+        run: |
+          set -euo pipefail
+          bundle exec pod install --project-directory=ios 2>&1 | tee pod-install.log
+          node scripts/assert-warning-free.mjs pod-install.log
+          CORE_SPEC="ios/Pods/Local Podspecs/ExpoModulesCore.podspec.json"
+          test -f "$CORE_SPEC"
+          node --input-type=module - "$CORE_SPEC" <<'NODE'
+          import fs from 'node:fs';
+
+          const spec = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
+          if (spec.vendored_frameworks) {
+            throw new Error('ExpoModulesCore must be compiled from source on iOS.');
+          }
+          if (!spec.source_files) {
+            throw new Error('ExpoModulesCore source files are missing from the resolved podspec.');
+          }
+          NODE
+          if grep -Fq 'React-Core-prebuilt' ios/Podfile.lock; then
+            echo 'React Core must be compiled from source on iOS.' >&2
+            exit 1
+          fi
+
+      - name: Patch ZXingObjC for strict Xcode diagnostics
+        run: node scripts/patch-ios-zxing.mjs
+
+      - name: Configure complete Xcode diagnostics
+        shell: bash
+        run: |
+          set -euo pipefail
+          bundle exec ruby scripts/prepare-ios-build-phases.rb 2>&1 | tee xcode-policy.log
+          node scripts/assert-warning-free.mjs xcode-policy.log
+          npm run warnings:source
+
+      - name: Build release app for a physical iOS device
+        shell: bash
+        run: |
+          set -euo pipefail
+          IOS_WORKSPACE="$(find ios -maxdepth 1 -name '*.xcworkspace' -print -quit)"
+          test -n "$IOS_WORKSPACE"
+          IOS_SCHEME="$(basename "$IOS_WORKSPACE" .xcworkspace)"
+          test -n "$IOS_SCHEME"
+          set +e
+          xcodebuild \
+            -workspace "$IOS_WORKSPACE" \
+            -scheme "$IOS_SCHEME" \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination "generic/platform=iOS" \
+            -derivedDataPath ios-build \
+            ARCHS=arm64 \
+            ONLY_ACTIVE_ARCH=YES \
+            COMPILER_INDEX_STORE_ENABLE=NO \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            build 2>&1 | tee ios-xcodebuild.log
+          BUILD_STATUS=${PIPESTATUS[0]}
+          set -e
+
+          WARNING_STATUS=0
+          node scripts/assert-ios-owned-warning-free.mjs ios-xcodebuild.log || WARNING_STATUS=$?
+
+          if [[ "$BUILD_STATUS" -ne 0 ]]; then
+            exit "$BUILD_STATUS"
+          fi
+          exit "$WARNING_STATUS"
+
+      - name: Package unsigned device IPA
+        shell: bash
+        run: |
+          APP_PATH="$(find ios-build/Build/Products/Release-iphoneos -maxdepth 1 -name '*.app' -type d -print -quit)"
+          test -n "$APP_PATH"
+          mkdir -p artifacts/ios/Payload
+          ditto "$APP_PATH" "artifacts/ios/Payload/$(basename "$APP_PATH")"
+          pushd artifacts/ios
+          ditto -c -k --sequesterRsrc --keepParent Payload Nito-Wallet-iOS-Device-unsigned.ipa
+          shasum -a 256 Nito-Wallet-iOS-Device-unsigned.ipa > Nito-Wallet-iOS-Device-unsigned.ipa.sha256
+          cat Nito-Wallet-iOS-Device-unsigned.ipa.sha256
+          popd
+
+      - name: Upload iOS device app
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: Nito-Wallet-iOS-Device-Unsigned
+          path: |
+            artifacts/ios/Nito-Wallet-iOS-Device-unsigned.ipa
+            artifacts/ios/Nito-Wallet-iOS-Device-unsigned.ipa.sha256
+          if-no-files-found: error
+          retention-days: 30

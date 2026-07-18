@@ -1,0 +1,625 @@
+diff --git a/node_modules/expo-modules-core/android/ExpoModulesCorePlugin.gradle b/node_modules/expo-modules-core/android/ExpoModulesCorePlugin.gradle
+index 7910c77..01926b6 100644
+--- a/node_modules/expo-modules-core/android/ExpoModulesCorePlugin.gradle
++++ b/node_modules/expo-modules-core/android/ExpoModulesCorePlugin.gradle
+@@ -62,15 +62,16 @@ ext.applyKspJvmToolchain = {
+ // Setup build options that are common for all modules
+ ext.useDefaultAndroidSdkVersions = {
+   project.android {
+-    compileSdkVersion project.ext.safeExtGet("compileSdkVersion", 36)
++    compileSdk = project.ext.safeExtGet("compileSdkVersion", 36)
+ 
+     defaultConfig {
+-      minSdkVersion project.ext.safeExtGet("minSdkVersion", 24)
+-      targetSdkVersion project.ext.safeExtGet("targetSdkVersion", 36)
++      minSdk = project.ext.safeExtGet("minSdkVersion", 24)
++      targetSdk = project.ext.safeExtGet("targetSdkVersion", 36)
+     }
+-
+-    lintOptions {
+-      abortOnError false
++    lint {
++      abortOnError = true
++      warningsAsErrors = true
++      checkReleaseBuilds = true
+     }
+   }
+ }
+diff --git a/node_modules/expo-modules-core/android/build.gradle b/node_modules/expo-modules-core/android/build.gradle
+index 3491121..3152db9 100644
+--- a/node_modules/expo-modules-core/android/build.gradle
++++ b/node_modules/expo-modules-core/android/build.gradle
+@@ -79,18 +79,18 @@ if (workletsProject != null) {
+ def reactNativeWorkletsRootDir = workletsProject?.projectDir?.parentFile
+ 
+ expoModule {
+-  canBePublished false
++  canBePublished = false
+ }
+ 
+ android {
+   if (rootProject.hasProperty("ndkPath")) {
+-    ndkPath rootProject.ext.ndkPath
++    ndkPath = rootProject.ext.ndkPath
+   }
+   if (rootProject.hasProperty("ndkVersion")) {
+-    ndkVersion rootProject.ext.ndkVersion
++    ndkVersion = rootProject.ext.ndkVersion
+   }
+ 
+-  namespace "expo.modules"
++  namespace = "expo.modules"
+   defaultConfig {
+     consumerProguardFiles 'proguard-rules.pro'
+     versionCode 1
+@@ -128,9 +128,9 @@ android {
+   }
+ 
+   buildFeatures {
+-    buildConfig true
+-    prefab true
+-    compose shouldIncludeCompose
++    buildConfig = true
++    prefab = true
++    compose = shouldIncludeCompose
+   }
+ 
+   packagingOptions {
+@@ -254,10 +254,11 @@ dependencies {
+   }
+ }
+ 
++tasks.withType(JavaCompile) configureEach {
++  options.compilerArgs.addAll(["-Xlint:deprecation", "-Xlint:unchecked", "-Werror"])
++}
++
+ if (shouldTurnWarningsIntoErrors) {
+-  tasks.withType(JavaCompile) configureEach {
+-    options.compilerArgs << "-Werror" << "-Xlint:all" << '-Xlint:-serial' << '-Xlint:-rawtypes'
+-  }
+   tasks.withType(KotlinCompile) configureEach {
+     compilerOptions.allWarningsAsErrors = true
+   }
+diff --git a/node_modules/expo-modules-core/android/src/main/AndroidManifest.xml b/node_modules/expo-modules-core/android/src/main/AndroidManifest.xml
+index d00d6fb..06ac728 100644
+--- a/node_modules/expo-modules-core/android/src/main/AndroidManifest.xml
++++ b/node_modules/expo-modules-core/android/src/main/AndroidManifest.xml
+@@ -1,14 +1,9 @@
+-<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+-          xmlns:tools="http://schemas.android.com/tools">
++<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+ 
+     <application>
+         <meta-data
+             android:name="org.unimodules.core.AppLoader#react-native-headless"
+             android:value="expo.modules.adapters.react.apploader.RNHeadlessAppLoader" />
+-        <meta-data
+-            android:name="com.facebook.soloader.enabled"
+-            android:value="true"
+-            tools:replace="android:value" />
+     </application>
+ 
+ </manifest>
+diff --git a/node_modules/expo-modules-core/android/src/main/cpp/fabric/ExpoComponentDescriptorFactory.cpp b/node_modules/expo-modules-core/android/src/main/cpp/fabric/ExpoComponentDescriptorFactory.cpp
+index b7a5d55..0126e7b 100644
+--- a/node_modules/expo-modules-core/android/src/main/cpp/fabric/ExpoComponentDescriptorFactory.cpp
++++ b/node_modules/expo-modules-core/android/src/main/cpp/fabric/ExpoComponentDescriptorFactory.cpp
+@@ -14,7 +14,7 @@ react::ComponentDescriptor::Unique concreteExpoComponentDescriptorConstructor(
+ ) {
+   auto descriptor = std::make_unique<AndroidExpoViewComponentDescriptor>(
+     parameters,
+-    react::RawPropsParser(/*useRawPropsJsiValue=*/true)
++    react::RawPropsParser()
+   );
+ 
+   if (statePropMap.contains(std::static_pointer_cast<std::string const>(parameters.flavor))) {
+diff --git a/node_modules/expo-modules-core/android/src/main/java/expo/modules/adapters/react/ModuleRegistryAdapter.java b/node_modules/expo-modules-core/android/src/main/java/expo/modules/adapters/react/ModuleRegistryAdapter.java
+index 10af42b..150253a 100644
+--- a/node_modules/expo-modules-core/android/src/main/java/expo/modules/adapters/react/ModuleRegistryAdapter.java
++++ b/node_modules/expo-modules-core/android/src/main/java/expo/modules/adapters/react/ModuleRegistryAdapter.java
+@@ -1,11 +1,13 @@
+ package expo.modules.adapters.react;
+ 
+ import com.facebook.react.ReactPackage;
++import com.facebook.react.BaseReactPackage;
+ import com.facebook.react.bridge.NativeModule;
+ import com.facebook.react.bridge.ReactApplicationContext;
+ import com.facebook.react.uimanager.ViewManager;
+ 
+ import java.lang.ref.WeakReference;
++import java.lang.reflect.Method;
+ import java.util.ArrayList;
+ import java.util.List;
+ import java.util.Objects;
+@@ -30,7 +32,7 @@ import expo.modules.kotlin.views.ViewManagerWrapperDelegate;
+  * Provides React Native with native modules and view managers,
+  * which in turn are created by packages provided by {@link ReactModuleRegistryProvider}.
+  */
+-public class ModuleRegistryAdapter implements ReactPackage {
++public class ModuleRegistryAdapter {
+   protected ReactModuleRegistryProvider mModuleRegistryProvider;
+   protected ModulesProvider mModulesProvider;
+   protected ReactAdapterPackage mReactAdapterPackage = new ReactAdapterPackage();
+@@ -60,7 +62,6 @@ public class ModuleRegistryAdapter implements ReactPackage {
+     mModulesProvider = modulesProvider;
+   }
+ 
+-  @Override
+   public List<NativeModule> createNativeModules(ReactApplicationContext reactContext) {
+     NativeModulesProxy proxy = getOrCreateNativeModulesProxy(reactContext, null);
+     ModuleRegistry moduleRegistry = proxy.getModuleRegistry();
+@@ -95,14 +96,53 @@ public class ModuleRegistryAdapter implements ReactPackage {
+ 
+     ReactPackagesProvider reactPackagesProvider = moduleRegistry.getModule(ReactPackagesProvider.class);
+     for (ReactPackage reactPackage : reactPackagesProvider.getReactPackages()) {
+-      nativeModulesList.addAll(reactPackage.createNativeModules(reactContext));
++      nativeModulesList.addAll(createNativeModulesFromPackage(reactPackage, reactContext));
+     }
+ 
+     nativeModulesList.add(new ExpoBridgeModule(reactContext, new WeakReference<>(nativeModulesProxy)));
+     return nativeModulesList;
+   }
+ 
+-  @Override
++  private List<NativeModule> createNativeModulesFromPackage(
++    ReactPackage reactPackage,
++    ReactApplicationContext reactContext
++  ) {
++    if (reactPackage instanceof BaseReactPackage) {
++      BaseReactPackage baseReactPackage = (BaseReactPackage) reactPackage;
++      List<NativeModule> nativeModules = new ArrayList<>();
++      for (String moduleName : baseReactPackage.getReactModuleInfoProvider().getReactModuleInfos().keySet()) {
++        NativeModule nativeModule = baseReactPackage.getModule(moduleName, reactContext);
++        if (nativeModule != null) {
++          nativeModules.add(nativeModule);
++        }
++      }
++      return nativeModules;
++    }
++
++    try {
++      Method factory = reactPackage.getClass().getMethod(
++        "createNativeModules",
++        ReactApplicationContext.class
++      );
++      Object result = factory.invoke(reactPackage, reactContext);
++      if (!(result instanceof List<?>)) {
++        throw new IllegalStateException("Legacy ReactPackage returned a non-list module collection");
++      }
++
++      List<?> legacyModules = (List<?>) result;
++      List<NativeModule> nativeModules = new ArrayList<>(legacyModules.size());
++      for (Object module : legacyModules) {
++        if (!(module instanceof NativeModule)) {
++          throw new IllegalStateException("Legacy ReactPackage returned an invalid native module");
++        }
++        nativeModules.add((NativeModule) module);
++      }
++      return nativeModules;
++    } catch (ReflectiveOperationException exception) {
++      throw new IllegalStateException("Unable to create modules from a legacy ReactPackage", exception);
++    }
++  }
++
+   @SuppressWarnings("unchecked")
+   public List<ViewManager> createViewManagers(ReactApplicationContext reactContext) {
+     List<ViewManager> viewManagerList = new ArrayList<>(mModuleRegistryProvider.getReactViewManagers(reactContext));
+diff --git a/node_modules/expo-modules-core/android/src/main/java/expo/modules/adapters/react/services/EventEmitterModule.java b/node_modules/expo-modules-core/android/src/main/java/expo/modules/adapters/react/services/EventEmitterModule.java
+index dfcbde5..ab6b942 100644
+--- a/node_modules/expo-modules-core/android/src/main/java/expo/modules/adapters/react/services/EventEmitterModule.java
++++ b/node_modules/expo-modules-core/android/src/main/java/expo/modules/adapters/react/services/EventEmitterModule.java
+@@ -4,13 +4,14 @@ import android.os.Bundle;
+ 
+ import com.facebook.react.bridge.Arguments;
+ import com.facebook.react.bridge.ReactContext;
++import com.facebook.react.bridge.WritableMap;
+ import com.facebook.react.modules.core.DeviceEventManagerModule;
+ import com.facebook.react.uimanager.UIManagerHelper;
+ import com.facebook.react.uimanager.events.EventDispatcher;
+-import com.facebook.react.uimanager.events.RCTEventEmitter;
+ 
+ import java.util.Collections;
+ import java.util.List;
++import java.util.Objects;
+ 
+ import expo.modules.adapters.react.views.ViewManagerAdapterUtils;
+ import expo.modules.core.interfaces.InternalModule;
+@@ -30,35 +31,24 @@ public class EventEmitterModule implements EventEmitter, InternalModule {
+ 
+   @Override
+   public void emit(final int viewId, final Event event) {
+-    final EventDispatcher dispatcher = UIManagerHelper.getEventDispatcherForReactTag(mReactContext, viewId);
+-    dispatcher.dispatchEvent(getReactEventFromEvent(viewId, event));
++    getEventDispatcher().dispatchEvent(new ReactEvent(
++      viewId,
++      event.getEventName(),
++      Arguments.fromBundle(event.getEventBody()),
++      event.canCoalesce(),
++      event.getCoalescingKey()
++    ));
+   }
+ 
+   @Override
+-  @SuppressWarnings("deprecation")
+   public void emit(final int viewId, final String eventName, final Bundle eventBody) {
+-    final EventDispatcher dispatcher = UIManagerHelper.getEventDispatcherForReactTag(mReactContext, viewId);
+-    dispatcher.dispatchEvent(new com.facebook.react.uimanager.events.Event(viewId) {
+-      @Override
+-      public String getEventName() {
+-        return ViewManagerAdapterUtils.normalizeEventName(eventName);
+-      }
+-
+-      @Override
+-      public void dispatch(RCTEventEmitter rctEventEmitter) {
+-        rctEventEmitter.receiveEvent(viewId, getEventName(), eventBody != null ? Arguments.fromBundle(eventBody) : null);
+-      }
+-
+-      @Override
+-      public boolean canCoalesce() {
+-        return false;
+-      }
+-
+-      @Override
+-      public short getCoalescingKey() {
+-        return 0;
+-      }
+-    });
++    getEventDispatcher().dispatchEvent(new ReactEvent(
++      viewId,
++      eventName,
++      eventBody != null ? Arguments.fromBundle(eventBody) : null,
++      false,
++      (short) 0
++    ));
+   }
+ 
+   @Override
+@@ -66,28 +56,51 @@ public class EventEmitterModule implements EventEmitter, InternalModule {
+     return Collections.singletonList((Class) EventEmitter.class);
+   }
+ 
+-  @SuppressWarnings("deprecation")
+-  private static com.facebook.react.uimanager.events.Event getReactEventFromEvent(final int viewId, final Event event) {
+-    return new com.facebook.react.uimanager.events.Event(viewId) {
+-      @Override
+-      public String getEventName() {
+-        return ViewManagerAdapterUtils.normalizeEventName(event.getEventName());
+-      }
+-
+-      @Override
+-      public void dispatch(RCTEventEmitter rctEventEmitter) {
+-        rctEventEmitter.receiveEvent(viewId, getEventName(), Arguments.fromBundle(event.getEventBody()));
+-      }
+-
+-      @Override
+-      public boolean canCoalesce() {
+-        return event.canCoalesce();
+-      }
+-
+-      @Override
+-      public short getCoalescingKey() {
+-        return event.getCoalescingKey();
+-      }
+-    };
++  private EventDispatcher getEventDispatcher() {
++    return Objects.requireNonNull(
++      UIManagerHelper.getEventDispatcher(mReactContext),
++      "React Native event dispatcher is unavailable"
++    );
++  }
++
++  private static final class ReactEvent extends com.facebook.react.uimanager.events.Event<ReactEvent> {
++    private final String mEventName;
++    private final WritableMap mEventData;
++    private final boolean mCanCoalesce;
++    private final short mCoalescingKey;
++
++    ReactEvent(
++      int viewId,
++      String eventName,
++      WritableMap eventData,
++      boolean canCoalesce,
++      short coalescingKey
++    ) {
++      super(-1, viewId);
++      mEventName = ViewManagerAdapterUtils.normalizeEventName(eventName);
++      mEventData = eventData;
++      mCanCoalesce = canCoalesce;
++      mCoalescingKey = coalescingKey;
++    }
++
++    @Override
++    public String getEventName() {
++      return mEventName;
++    }
++
++    @Override
++    protected WritableMap getEventData() {
++      return mEventData;
++    }
++
++    @Override
++    public boolean canCoalesce() {
++      return mCanCoalesce;
++    }
++
++    @Override
++    public short getCoalescingKey() {
++      return mCoalescingKey;
++    }
+   }
+ }
+diff --git a/node_modules/expo-modules-core/android/src/main/java/expo/modules/apploader/AppLoaderProvider.kt b/node_modules/expo-modules-core/android/src/main/java/expo/modules/apploader/AppLoaderProvider.kt
+index 60cc512..ec9103d 100644
+--- a/node_modules/expo-modules-core/android/src/main/java/expo/modules/apploader/AppLoaderProvider.kt
++++ b/node_modules/expo-modules-core/android/src/main/java/expo/modules/apploader/AppLoaderProvider.kt
+@@ -31,10 +31,10 @@ object AppLoaderProvider {
+         "org.unimodules.core.AppLoader#$name"
+       ) ?: throw IllegalStateException("Unable to instantiate AppLoader!")
+ 
+-      loaderClass = Class.forName(loaderClassName) as Class<out HeadlessAppLoader>
++      loaderClass = Class.forName(loaderClassName).asSubclass(HeadlessAppLoader::class.java)
+       loaders[name] = loaderClass
+         .getDeclaredConstructor()
+-        .newInstance() as HeadlessAppLoader
++        .newInstance()
+     } catch (e: PackageManager.NameNotFoundException) {
+       throw IllegalStateException("Unable to instantiate AppLoader!", e)
+     }
+diff --git a/node_modules/expo-modules-core/android/src/main/java/expo/modules/kotlin/AppContext.kt b/node_modules/expo-modules-core/android/src/main/java/expo/modules/kotlin/AppContext.kt
+index 7bb61c6..265b4ed 100644
+--- a/node_modules/expo-modules-core/android/src/main/java/expo/modules/kotlin/AppContext.kt
++++ b/node_modules/expo-modules-core/android/src/main/java/expo/modules/kotlin/AppContext.kt
+@@ -11,15 +11,12 @@ import androidx.appcompat.app.AppCompatActivity
+ import com.facebook.react.bridge.ReactApplicationContext
+ import com.facebook.react.modules.network.OkHttpClientProvider
+ import com.facebook.react.uimanager.UIManagerHelper
+-import com.facebook.react.uimanager.UIManagerModule
+-import com.facebook.react.uimanager.common.UIManagerType
+ import expo.modules.adapters.react.NativeModulesProxy
+ import expo.modules.core.errors.ContextDestroyedException
+ import expo.modules.core.interfaces.ActivityProvider
+ import expo.modules.interfaces.permissions.Permissions
+ import expo.modules.kotlin.activityresult.ActivityResultsManager
+ import expo.modules.kotlin.activityresult.DefaultAppContextActivityResultCaller
+-import expo.modules.kotlin.defaultmodules.ErrorManagerModule
+ import expo.modules.kotlin.defaultmodules.JSLoggerModule
+ import expo.modules.kotlin.defaultmodules.NativeModulesProxyModule
+ import expo.modules.kotlin.events.EventEmitter
+@@ -54,11 +51,11 @@ class AppContext(
+ ) : CurrentActivityProvider {
+   // The main context used in the app.
+   // Modules attached to this context will be available on the main js context.
+-  @Deprecated("Use AppContext.runtimeContext instead", ReplaceWith("runtime"))
+-  val hostingRuntimeContext = MainRuntime(this, reactContextHolder)
++  val runtime = MainRuntime(this, reactContextHolder)
+ 
+-  val runtime: MainRuntime
+-    get() = hostingRuntimeContext
++  @Deprecated("Use runtime instead", ReplaceWith("runtime"))
++  val hostingRuntimeContext: MainRuntime
++    get() = runtime
+ 
+   private val uiRuntimeHolder = lazy { WorkletRuntime(this, reactContextHolder) }
+   val uiRuntime
+@@ -267,10 +264,6 @@ class AppContext(
+       return KEventEmitterWrapper(legacyEventEmitter, runtime.reactContextHolder)
+     }
+ 
+-  @Deprecated("Use AppContext.jsLogger instead")
+-  val errorManager: ErrorManagerModule? by lazy {
+-    registry.getModule()
+-  }
+ 
+   val jsLogger by lazy {
+     registry.getModule<JSLoggerModule>()?.logger
+@@ -375,14 +368,7 @@ class AppContext(
+ 
+   internal fun dispatchOnMainUsingUIManager(block: () -> Unit) {
+     val reactContext = runtime.reactContext ?: throw Exceptions.ReactContextLost()
+-    val uiManager = UIManagerHelper.getUIManagerForReactTag(
+-      reactContext,
+-      UIManagerType.DEFAULT
+-    ) as UIManagerModule
+-
+-    uiManager.addUIBlock {
+-      block()
+-    }
++    reactContext.runOnUiQueueThread(block)
+   }
+ 
+   internal fun assertMainThread() {
+diff --git a/node_modules/expo-modules-core/android/src/main/java/expo/modules/kotlin/defaultmodules/NativeModulesProxyModule.kt b/node_modules/expo-modules-core/android/src/main/java/expo/modules/kotlin/defaultmodules/NativeModulesProxyModule.kt
+index 8eb209a..e0e3e88 100644
+--- a/node_modules/expo-modules-core/android/src/main/java/expo/modules/kotlin/defaultmodules/NativeModulesProxyModule.kt
++++ b/node_modules/expo-modules-core/android/src/main/java/expo/modules/kotlin/defaultmodules/NativeModulesProxyModule.kt
+@@ -13,8 +13,9 @@ class NativeModulesProxyModule : Module() {
+   override fun definition() = ModuleDefinition {
+     Name(NativeModulesProxyModuleName)
+ 
+-    Constants {
+-      appContext.legacyModulesProxyHolder?.get()?.constants ?: emptyMap()
++    val constants = appContext.legacyModulesProxyHolder?.get()?.constants ?: emptyMap()
++    constants.forEach { (name, value) ->
++      Constant(name) { value }
+     }
+ 
+     AsyncFunction("callMethod") { moduleName: String, methodName: String, arguments: ReadableArray, promise: Promise ->
+diff --git a/node_modules/expo-modules-core/android/src/main/java/expo/modules/kotlin/events/KModuleEventEmitterWrapper.kt b/node_modules/expo-modules-core/android/src/main/java/expo/modules/kotlin/events/KModuleEventEmitterWrapper.kt
+index ab1b954..8cc21b1 100644
+--- a/node_modules/expo-modules-core/android/src/main/java/expo/modules/kotlin/events/KModuleEventEmitterWrapper.kt
++++ b/node_modules/expo-modules-core/android/src/main/java/expo/modules/kotlin/events/KModuleEventEmitterWrapper.kt
+@@ -96,7 +96,7 @@ open class KEventEmitterWrapper(
+   override fun emit(viewId: Int, eventName: String, eventBody: WritableMap?, coalescingKey: Short?) {
+     val context = reactContextHolder.get() ?: return
+     val uiEvent = UIEvent(surfaceId = -1, viewId, eventName, eventBody, coalescingKey)
+-    UIManagerHelper.getEventDispatcherForReactTag(context, viewId)
++    UIManagerHelper.getEventDispatcher(context)
+       ?.dispatchEvent(uiEvent)
+   }
+ 
+@@ -105,7 +105,7 @@ open class KEventEmitterWrapper(
+     val surfaceId = UIManagerHelper.getSurfaceId(view)
+     val viewId = view.id
+     val uiEvent = UIEvent(surfaceId, viewId, eventName, eventBody, coalescingKey)
+-    UIManagerHelper.getEventDispatcherForReactTag(context, view.id)
++    UIManagerHelper.getEventDispatcher(context)
+       ?.dispatchEvent(uiEvent)
+   }
+ 
+diff --git a/node_modules/expo-modules-core/android/src/main/java/expo/modules/kotlin/views/ViewDefinitionBuilder.kt b/node_modules/expo-modules-core/android/src/main/java/expo/modules/kotlin/views/ViewDefinitionBuilder.kt
+index c330026..a516bd9 100644
+--- a/node_modules/expo-modules-core/android/src/main/java/expo/modules/kotlin/views/ViewDefinitionBuilder.kt
++++ b/node_modules/expo-modules-core/android/src/main/java/expo/modules/kotlin/views/ViewDefinitionBuilder.kt
+@@ -467,7 +467,8 @@ class ViewDefinitionBuilder<T : View>(
+   private fun handleFailureDuringViewCreation(context: Context, appContext: AppContext, error: Throwable): View {
+     Log.e("ExpoModulesCore", "Couldn't create view of type $viewClass", error)
+ 
+-    appContext.errorManager?.reportExceptionToLogBox(
++    appContext.jsLogger?.error(
++      "Couldn't create view of type $viewClass",
+       error as? CodedException ?: UnexpectedException(error)
+     )
+ 
+diff --git a/node_modules/expo-modules-core/android/src/main/java/expo/modules/kotlin/views/ViewManagerDefinition.kt b/node_modules/expo-modules-core/android/src/main/java/expo/modules/kotlin/views/ViewManagerDefinition.kt
+index ca30c67..d4c2ea0 100644
+--- a/node_modules/expo-modules-core/android/src/main/java/expo/modules/kotlin/views/ViewManagerDefinition.kt
++++ b/node_modules/expo-modules-core/android/src/main/java/expo/modules/kotlin/views/ViewManagerDefinition.kt
+@@ -38,6 +38,6 @@ class ViewManagerDefinition(
+     val nativeModulesProxy = reactContext.getUnimoduleProxy() ?: return
+     val appContext = nativeModulesProxy.kotlinInteropModuleRegistry.appContext
+ 
+-    appContext.errorManager?.reportExceptionToLogBox(exception)
++    appContext.jsLogger?.error("View manager operation failed", exception)
+   }
+ }
+diff --git a/node_modules/expo-modules-core/expo-module-gradle-plugin/.gradle/8.13/executionHistory/executionHistory.bin b/node_modules/expo-modules-core/expo-module-gradle-plugin/.gradle/8.13/executionHistory/executionHistory.bin
+new file mode 100644
+index 0000000..e69de29
+diff --git a/node_modules/expo-modules-core/expo-module-gradle-plugin/.gradle/8.13/executionHistory/executionHistory.lock b/node_modules/expo-modules-core/expo-module-gradle-plugin/.gradle/8.13/executionHistory/executionHistory.lock
+new file mode 100644
+index 0000000..e69de29
+diff --git a/node_modules/expo-modules-core/expo-module-gradle-plugin/.gradle/8.14.5/executionHistory/executionHistory.bin b/node_modules/expo-modules-core/expo-module-gradle-plugin/.gradle/8.14.5/executionHistory/executionHistory.bin
+new file mode 100644
+index 0000000..e69de29
+diff --git a/node_modules/expo-modules-core/expo-module-gradle-plugin/.gradle/8.14.5/executionHistory/executionHistory.lock b/node_modules/expo-modules-core/expo-module-gradle-plugin/.gradle/8.14.5/executionHistory/executionHistory.lock
+new file mode 100644
+index 0000000..e69de29
+diff --git a/node_modules/expo-modules-core/expo-module-gradle-plugin/.gradle/9.3.1/executionHistory/executionHistory.bin b/node_modules/expo-modules-core/expo-module-gradle-plugin/.gradle/9.3.1/executionHistory/executionHistory.bin
+new file mode 100644
+index 0000000..e69de29
+diff --git a/node_modules/expo-modules-core/expo-module-gradle-plugin/.gradle/9.3.1/executionHistory/executionHistory.lock b/node_modules/expo-modules-core/expo-module-gradle-plugin/.gradle/9.3.1/executionHistory/executionHistory.lock
+new file mode 100644
+index 0000000..e69de29
+diff --git a/node_modules/expo-modules-core/expo-module-gradle-plugin/.gradle/buildOutputCleanup/buildOutputCleanup.lock b/node_modules/expo-modules-core/expo-module-gradle-plugin/.gradle/buildOutputCleanup/buildOutputCleanup.lock
+new file mode 100644
+index 0000000..e69de29
+diff --git a/node_modules/expo-modules-core/expo-module-gradle-plugin/.gradle/buildOutputCleanup/cache.properties b/node_modules/expo-modules-core/expo-module-gradle-plugin/.gradle/buildOutputCleanup/cache.properties
+new file mode 100644
+index 0000000..def9e98
+--- /dev/null
++++ b/node_modules/expo-modules-core/expo-module-gradle-plugin/.gradle/buildOutputCleanup/cache.properties
+@@ -0,0 +1,2 @@
++#Thu Jul 16 19:23:52 CEST 2026
++gradle.version=8.14.5
+diff --git a/node_modules/expo-modules-core/expo-module-gradle-plugin/.gradle/buildOutputCleanup/outputFiles.bin b/node_modules/expo-modules-core/expo-module-gradle-plugin/.gradle/buildOutputCleanup/outputFiles.bin
+new file mode 100644
+index 0000000..e69de29
+diff --git a/node_modules/expo-modules-core/expo-module-gradle-plugin/.gradle/file-system.probe b/node_modules/expo-modules-core/expo-module-gradle-plugin/.gradle/file-system.probe
+new file mode 100644
+index 0000000..e69de29
+diff --git a/node_modules/expo-modules-core/expo-module-gradle-plugin/src/main/kotlin/expo/modules/plugin/android/AndroidLibraryExtension.kt b/node_modules/expo-modules-core/expo-module-gradle-plugin/src/main/kotlin/expo/modules/plugin/android/AndroidLibraryExtension.kt
+index 9bfae8d..94b742b 100644
+--- a/node_modules/expo-modules-core/expo-module-gradle-plugin/src/main/kotlin/expo/modules/plugin/android/AndroidLibraryExtension.kt
++++ b/node_modules/expo-modules-core/expo-module-gradle-plugin/src/main/kotlin/expo/modules/plugin/android/AndroidLibraryExtension.kt
+@@ -6,12 +6,16 @@ internal fun LibraryExtension.applySDKVersions(compileSdk: Int, minSdk: Int, tar
+   this.compileSdk = compileSdk
+   defaultConfig {
+     this@defaultConfig.minSdk = minSdk
+-    this@defaultConfig.targetSdk = targetSdk
+   }
++  lint.targetSdk = targetSdk
+ }
+ 
+ internal fun LibraryExtension.applyLinterOptions() {
+-  lintOptions.isAbortOnError = false
++  lint {
++    abortOnError = true
++    warningsAsErrors = true
++    checkReleaseBuilds = true
++  }
+ }
+ 
+ internal fun LibraryExtension.applyPublishingVariant() {
+diff --git a/node_modules/expo-modules-core/ios/Interfaces/FileSystem/EXFileSystemInterface.h b/node_modules/expo-modules-core/ios/Interfaces/FileSystem/EXFileSystemInterface.h
+index fca4649..0bfb2e5 100644
+--- a/node_modules/expo-modules-core/ios/Interfaces/FileSystem/EXFileSystemInterface.h
++++ b/node_modules/expo-modules-core/ios/Interfaces/FileSystem/EXFileSystemInterface.h
+@@ -2,6 +2,8 @@
+ 
+ #import <Foundation/Foundation.h>
+ 
++NS_ASSUME_NONNULL_BEGIN
++
+ typedef NS_OPTIONS(unsigned int, EXFileSystemPermissionFlags) {
+   EXFileSystemPermissionNone = 0,
+   EXFileSystemPermissionRead = 1 << 1,
+@@ -21,3 +23,5 @@ typedef NS_OPTIONS(unsigned int, EXFileSystemPermissionFlags) {
+ - (BOOL)ensureDirExistsWithPath:(NSString *)path;
+ 
+ @end
++
++NS_ASSUME_NONNULL_END
+diff --git a/node_modules/expo-modules-core/ios/Interfaces/ImageLoader/EXImageLoaderInterface.h b/node_modules/expo-modules-core/ios/Interfaces/ImageLoader/EXImageLoaderInterface.h
+index 2b241d1..2c749c6 100644
+--- a/node_modules/expo-modules-core/ios/Interfaces/ImageLoader/EXImageLoaderInterface.h
++++ b/node_modules/expo-modules-core/ios/Interfaces/ImageLoader/EXImageLoaderInterface.h
+@@ -2,7 +2,9 @@
+ 
+ #import <ExpoModulesCore/Platform.h>
+ 
+-typedef void (^EXImageLoaderCompletionBlock)(NSError *error, UIImage *image);
++NS_ASSUME_NONNULL_BEGIN
++
++typedef void (^EXImageLoaderCompletionBlock)(NSError *_Nullable error, UIImage *_Nullable image);
+ 
+ @protocol EXImageLoaderInterface <NSObject>
+ 
+@@ -10,3 +12,5 @@ typedef void (^EXImageLoaderCompletionBlock)(NSError *error, UIImage *image);
+       completionHandler:(EXImageLoaderCompletionBlock)completionHandler;
+ 
+ @end
++
++NS_ASSUME_NONNULL_END
+diff --git a/node_modules/expo-modules-core/ios/Legacy/ModuleRegistryAdapter/EXModuleRegistryHolderReactModule.h b/node_modules/expo-modules-core/ios/Legacy/ModuleRegistryAdapter/EXModuleRegistryHolderReactModule.h
+index 40307db..c40c06c 100644
+--- a/node_modules/expo-modules-core/ios/Legacy/ModuleRegistryAdapter/EXModuleRegistryHolderReactModule.h
++++ b/node_modules/expo-modules-core/ios/Legacy/ModuleRegistryAdapter/EXModuleRegistryHolderReactModule.h
+@@ -1,7 +1,6 @@
+ // Copyright 2018-present 650 Industries. All rights reserved.
+ 
+-@protocol RCTBridgeModule;
+-
++#import <React/RCTBridgeModule.h>
+ #import <ExpoModulesCore/EXModuleRegistry.h>
+ 
+ @interface EXModuleRegistryHolderReactModule : NSObject <RCTBridgeModule>
+diff --git a/node_modules/expo-modules-core/ios/Utilities/EXImageLoader.h b/node_modules/expo-modules-core/ios/Utilities/EXImageLoader.h
+index dd49363..4447cb5 100644
+--- a/node_modules/expo-modules-core/ios/Utilities/EXImageLoader.h
++++ b/node_modules/expo-modules-core/ios/Utilities/EXImageLoader.h
+@@ -1,14 +1,8 @@
+ // Copyright 2025-present 650 Industries. All rights reserved.
+ 
+-#if !__building_module(ExpoModulesCore)
+ #import <React/RCTBridge.h>
+ #import <React/RCTImageLoader.h>
+ #import <ExpoModulesCore/EXImageLoaderInterface.h>
+-#else
+-@class RCTBridge;
+-@class RCTImageLoader;
+-@protocol EXImageLoaderInterface;
+-#endif
+ 
+ NS_SWIFT_NAME(ImageLoader)
+ @interface EXImageLoader : NSObject <EXImageLoaderInterface>

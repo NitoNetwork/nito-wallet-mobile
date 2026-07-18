@@ -1,0 +1,41 @@
+diff --git a/node_modules/expo/node_modules/@expo/log-box/android/build.gradle b/node_modules/expo/node_modules/@expo/log-box/android/build.gradle
+index 660af1e..9b461e2 100644
+--- a/node_modules/expo/node_modules/@expo/log-box/android/build.gradle
++++ b/node_modules/expo/node_modules/@expo/log-box/android/build.gradle
+@@ -9,13 +9,13 @@ group = 'host.exp.exponent'
+ version = '57.0.1'
+
+ expoModule {
+-  canBePublished false
++  canBePublished = false
+ }
+
+ def isEnabled = System.getenv('EXPO_UNSTABLE_LOG_BOX') == '1' || System.getenv('EXPO_UNSTABLE_LOG_BOX')?.toLowerCase() == 'true'
+
+ android {
+-  namespace "expo.modules.logbox"
++  namespace = "expo.modules.logbox"
+   defaultConfig {
+     versionCode 1
+     versionName "57.0.1"
+@@ -34,8 +34,8 @@ android {
+     }
+   }
+
+-  aaptOptions {
+-    ignoreAssetsPattern '!._expo'
++  androidResources {
++    ignoreAssetsPattern = '!._expo'
+   }
+ }
+
+diff --git a/node_modules/expo/node_modules/@expo/log-box/ios/ExpoRedBoxSwap.mm b/node_modules/expo/node_modules/@expo/log-box/ios/ExpoRedBoxSwap.mm
+index 12f8b75..81cf4cd 100644
+--- a/node_modules/expo/node_modules/@expo/log-box/ios/ExpoRedBoxSwap.mm
++++ b/node_modules/expo/node_modules/@expo/log-box/ios/ExpoRedBoxSwap.mm
+@@ -46,3 +46,5 @@
+ @end
+
+ #endif
++
++__attribute__((used, visibility("default"))) unsigned char nito_expo_red_box_swap_anchor = 0;

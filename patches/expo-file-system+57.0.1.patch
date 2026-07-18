@@ -1,0 +1,61 @@
+diff --git a/node_modules/expo-file-system/android/build.gradle b/node_modules/expo-file-system/android/build.gradle
+index 79e920d..cabeb75 100644
+--- a/node_modules/expo-file-system/android/build.gradle
++++ b/node_modules/expo-file-system/android/build.gradle
+@@ -7,11 +7,11 @@ group = 'host.exp.exponent'
+ version = '57.0.1'
+
+ android {
+-  namespace "expo.modules.filesystem"
++  namespace = "expo.modules.filesystem"
+   defaultConfig {
+-    versionCode 30
+-    versionName "57.0.1"
+-    testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
++    versionCode = 30
++    versionName = "57.0.1"
++    testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+   }
+   testOptions {
+     unitTests.includeAndroidResources = true
+diff --git a/node_modules/expo-file-system/android/src/main/AndroidManifest.xml b/node_modules/expo-file-system/android/src/main/AndroidManifest.xml
+index f4659f4..cf590a8 100644
+--- a/node_modules/expo-file-system/android/src/main/AndroidManifest.xml
++++ b/node_modules/expo-file-system/android/src/main/AndroidManifest.xml
+@@ -1,9 +1,7 @@
+-<manifest xmlns:android="http://schemas.android.com/apk/res/android" xmlns:tools="http://schemas.android.com/tools">
++<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+     <uses-permission android:name="android.permission.INTERNET"/>
+-    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="32" />
+-    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />
+     <application>
+-        <provider tools:replace="android:authorities" android:name=".FileSystemFileProvider" android:authorities="${applicationId}.FileSystemFileProvider" android:exported="false" android:grantUriPermissions="true">
++        <provider android:name=".FileSystemFileProvider" android:authorities="${applicationId}.FileSystemFileProvider" android:exported="false" android:grantUriPermissions="true">
+             <meta-data android:name="android.support.FILE_PROVIDER_PATHS" android:resource="@xml/file_system_provider_paths" />
+         </provider>
+     </application>
+diff --git a/node_modules/expo-file-system/android/src/main/java/expo/modules/filesystem/FileSystemWatcher.kt b/node_modules/expo-file-system/android/src/main/java/expo/modules/filesystem/FileSystemWatcher.kt
+index 04385d0..1283b3e 100644
+--- a/node_modules/expo-file-system/android/src/main/java/expo/modules/filesystem/FileSystemWatcher.kt
++++ b/node_modules/expo-file-system/android/src/main/java/expo/modules/filesystem/FileSystemWatcher.kt
+@@ -1,6 +1,7 @@
+ package expo.modules.filesystem
+
+ import android.net.Uri
++import android.os.Build
+ import android.os.FileObserver
+ import androidx.core.net.toUri
+ import expo.modules.kotlin.AppContext
+@@ -91,7 +92,11 @@ internal class FileSystemWatcher(
+       return
+     }
+
+-    observer = object : FileObserver(watchedFile.path, WATCH_MASK) {
++    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
++      throw WatcherUnsupportedPathException(watchedUri.toString())
++    }
++
++    observer = object : FileObserver(watchedFile, WATCH_MASK) {
+       override fun onEvent(event: Int, path: String?) {
+         handleEvent(RawWatchEvent(WatchEventFlags(event), path))
+       }
