@@ -1,0 +1,173 @@
+diff --git a/node_modules/react-native-get-random-values/android/build.gradle b/node_modules/react-native-get-random-values/android/build.gradle
+index 077d5be..799c9eb 100644
+--- a/node_modules/react-native-get-random-values/android/build.gradle
++++ b/node_modules/react-native-get-random-values/android/build.gradle
+@@ -1,20 +1,3 @@
+-buildscript {
+-    // The Android Gradle plugin is only required when opening the android folder stand-alone.
+-    // This avoids unnecessary downloads and potential conflicts when the library is included as a
+-    // module dependency in an application project.
+-    if (project == rootProject) {
+-        repositories {
+-            mavenCentral()
+-            google()
+-        }
+-        def buildGradleVersion = ext.has('buildGradlePluginVersion') ? ext.get('buildGradlePluginVersion') : '4.2.2'
+-
+-        dependencies {
+-            classpath "com.android.tools.build:gradle:$buildGradleVersion"
+-        }
+-    }
+-}
+-
+ apply plugin: 'com.android.library'
+
+ def safeExtGet(prop, fallback) {
+@@ -22,33 +5,15 @@ def safeExtGet(prop, fallback) {
+ }
+
+ android {
+-    def agpVersion = com.android.Version.ANDROID_GRADLE_PLUGIN_VERSION.tokenize('.')[0].toInteger()
+-    if (agpVersion >= 7) {
+-      namespace 'org.linusu'
+-    }
+-    compileSdkVersion safeExtGet('compileSdkVersion', 30)
+-    buildToolsVersion safeExtGet('buildToolsVersion', '30.0.3')
++    namespace = 'org.linusu'
++    compileSdk = safeExtGet('compileSdkVersion', 36)
+
+     defaultConfig {
+-        minSdkVersion safeExtGet('minSdkVersion', 16)
+-        targetSdkVersion safeExtGet('targetSdkVersion', 30)
+-        versionCode 1
+-        versionName "1.0"
+-    }
+-    lintOptions {
+-        abortOnError false
+-    }
+-}
+-
+-repositories {
+-    mavenCentral()
+-    google()
+-    maven {
+-        // All of React Native (JS, Obj-C sources, Android binaries) is installed from npm
+-        url "$rootDir/../node_modules/react-native/android"
++        minSdk = safeExtGet('minSdkVersion', 24)
++        targetSdk = safeExtGet('targetSdkVersion', 36)
+     }
+ }
+
+ dependencies {
+-    implementation 'com.facebook.react:react-native:+'
++    implementation 'com.facebook.react:react-android'
+ }
+diff --git a/node_modules/react-native-get-random-values/android/src/main/AndroidManifest.xml b/node_modules/react-native-get-random-values/android/src/main/AndroidManifest.xml
+index 864282a..0a0938a 100644
+--- a/node_modules/react-native-get-random-values/android/src/main/AndroidManifest.xml
++++ b/node_modules/react-native-get-random-values/android/src/main/AndroidManifest.xml
+@@ -1,4 +1,3 @@
+-<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+-          package="org.linusu">
++<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+ </manifest>
+diff --git a/node_modules/react-native-get-random-values/android/src/main/java/org/linusu/RNGetRandomValuesModule.java b/node_modules/react-native-get-random-values/android/src/main/java/org/linusu/RNGetRandomValuesModule.java
+index 37c728d..996cfcc 100644
+--- a/node_modules/react-native-get-random-values/android/src/main/java/org/linusu/RNGetRandomValuesModule.java
++++ b/node_modules/react-native-get-random-values/android/src/main/java/org/linusu/RNGetRandomValuesModule.java
+@@ -1,6 +1,5 @@
+ package org.linusu;
+
+-import java.security.NoSuchAlgorithmException;
+ import java.security.SecureRandom;
+
+ import android.util.Base64;
+@@ -8,24 +7,21 @@ import android.util.Base64;
+ import com.facebook.react.bridge.ReactApplicationContext;
+ import com.facebook.react.bridge.ReactContextBaseJavaModule;
+ import com.facebook.react.bridge.ReactMethod;
+-import com.facebook.react.bridge.Callback;
+
+ public class RNGetRandomValuesModule extends ReactContextBaseJavaModule {
+-
+-  private final ReactApplicationContext reactContext;
++  public static final String NAME = "RNGetRandomValues";
+
+   public RNGetRandomValuesModule(ReactApplicationContext reactContext) {
+     super(reactContext);
+-    this.reactContext = reactContext;
+   }
+
+   @Override
+   public String getName() {
+-    return "RNGetRandomValues";
++    return NAME;
+   }
+
+   @ReactMethod(isBlockingSynchronousMethod = true)
+-  public String getRandomBase64(int byteLength) throws NoSuchAlgorithmException {
++  public String getRandomBase64(int byteLength) {
+     byte[] data = new byte[byteLength];
+     SecureRandom random = new SecureRandom();
+
+diff --git a/node_modules/react-native-get-random-values/android/src/main/java/org/linusu/RNGetRandomValuesPackage.java b/node_modules/react-native-get-random-values/android/src/main/java/org/linusu/RNGetRandomValuesPackage.java
+index b5703b2..cf4dd98 100644
+--- a/node_modules/react-native-get-random-values/android/src/main/java/org/linusu/RNGetRandomValuesPackage.java
++++ b/node_modules/react-native-get-random-values/android/src/main/java/org/linusu/RNGetRandomValuesPackage.java
+@@ -1,28 +1,39 @@
+ package org.linusu;
+
+-import java.util.Arrays;
+-import java.util.Collections;
+-import java.util.List;
++import java.util.HashMap;
++import java.util.Map;
+
+-import com.facebook.react.ReactPackage;
++import com.facebook.react.BaseReactPackage;
+ import com.facebook.react.bridge.NativeModule;
+ import com.facebook.react.bridge.ReactApplicationContext;
+-import com.facebook.react.uimanager.ViewManager;
+-import com.facebook.react.bridge.JavaScriptModule;
++import com.facebook.react.module.model.ReactModuleInfo;
++import com.facebook.react.module.model.ReactModuleInfoProvider;
+
+-public class RNGetRandomValuesPackage implements ReactPackage {
++public class RNGetRandomValuesPackage extends BaseReactPackage {
+   @Override
+-  public List<NativeModule> createNativeModules(ReactApplicationContext reactContext) {
+-    return Arrays.<NativeModule>asList(new RNGetRandomValuesModule(reactContext));
+-  }
+-
+-  // Deprecated from RN 0.47
+-  public List<Class<? extends JavaScriptModule>> createJSModules() {
+-    return Collections.emptyList();
++  public NativeModule getModule(String name, ReactApplicationContext reactContext) {
++    if (RNGetRandomValuesModule.NAME.equals(name)) {
++      return new RNGetRandomValuesModule(reactContext);
++    }
++    return null;
+   }
+
+   @Override
+-  public List<ViewManager> createViewManagers(ReactApplicationContext reactContext) {
+-    return Collections.emptyList();
++  public ReactModuleInfoProvider getReactModuleInfoProvider() {
++    return () -> {
++      Map<String, ReactModuleInfo> modules = new HashMap<>();
++      modules.put(
++        RNGetRandomValuesModule.NAME,
++        new ReactModuleInfo(
++          RNGetRandomValuesModule.NAME,
++          RNGetRandomValuesModule.class.getName(),
++          false,
++          false,
++          false,
++          false
++        )
++      );
++      return modules;
++    };
+   }
+ }

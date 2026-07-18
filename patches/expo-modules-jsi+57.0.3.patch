@@ -1,0 +1,137 @@
+diff --git a/node_modules/expo-modules-jsi/apple/Package.swift b/node_modules/expo-modules-jsi/apple/Package.swift
+index 5798eaf..21975b7 100644
+--- a/node_modules/expo-modules-jsi/apple/Package.swift
++++ b/node_modules/expo-modules-jsi/apple/Package.swift
+@@ -71,7 +71,7 @@ let package = Package(
+   products: [
+     .library(
+       name: "ExpoModulesJSI",
+-      type: .dynamic,
++      type: .static,
+       targets: ["ExpoModulesJSI"],
+     )
+   ],
+@@ -110,14 +110,6 @@ let package = Package(
+
+         .unsafeFlags(swiftIncludeFlags),
+       ],
+-      linkerSettings: [
+-        // React, ReactCommon, hermes, and JSI symbols are provided by the host
+-        // app at final link time. Defer their resolution so the xcframework
+-        // builds without those static libs being available here.
+-        .unsafeFlags([
+-          "-Xlinker", "-undefined", "-Xlinker", "dynamic_lookup",
+-        ])
+-      ],
+     ),
+
+     // C++ target (internal)
+diff --git a/node_modules/expo-modules-jsi/apple/scripts/build-xcframework.sh b/node_modules/expo-modules-jsi/apple/scripts/build-xcframework.sh
+index 28d3249..b31f041 100644
+--- a/node_modules/expo-modules-jsi/apple/scripts/build-xcframework.sh
++++ b/node_modules/expo-modules-jsi/apple/scripts/build-xcframework.sh
+@@ -221,6 +221,7 @@ build_slice() {
+
+   local product_path="${BUILD_PRODUCTS_PATH}/${build_dir_name}"
+   local framework_src="${product_path}/PackageFrameworks/${PACKAGE_NAME}.framework"
++  local static_archive_src="${product_path}/lib${PACKAGE_NAME}.a"
+   local swiftmodule_src="${product_path}/${PACKAGE_NAME}.swiftmodule"
+   # GeneratedModuleMaps follows the same $EFFECTIVE_PLATFORM_NAME convention as
+   # build products: no suffix for macOS, "-${platform}" for everything else.
+@@ -231,8 +232,22 @@ build_slice() {
+     generated_maps="${DERIVED_DATA_PATH}/Build/Intermediates.noindex/GeneratedModuleMaps-${platform}"
+   fi
+
+-  if [[ ! -d "$framework_src" ]]; then
+-    log "error: xcodebuild did not produce ${framework_src}"
++  if [[ ! -d "$framework_src" && ! -f "$static_archive_src" ]]; then
++    local object_files=()
++    while IFS= read -r -d '' object_file; do
++      object_files+=("$object_file")
++    done < <(find "${DERIVED_DATA_PATH}/Build/Intermediates.noindex" \
++      -type f \
++      -path "*${PACKAGE_NAME}*.build/Objects-normal/*/*.o" \
++      -print0)
++
++    if (( ${#object_files[@]} )); then
++      xcrun libtool -static -o "$static_archive_src" "${object_files[@]}"
++    fi
++  fi
++
++  if [[ ! -d "$framework_src" && ! -f "$static_archive_src" ]]; then
++    log "error: xcodebuild produced neither ${framework_src} nor ${static_archive_src}"
+     exit 1
+   fi
+
+@@ -246,9 +261,17 @@ build_slice() {
+   # `cp -a` preserves symlinks, attributes, and timestamps. `cp -r` resolves
+   # symlinks into real files, which breaks the macOS versioned-framework bundle
+   # layout (top-level `Foo`, `Resources`, etc. must be symlinks into Versions/Current).
+-  cp -a "$framework_src" "$staging_dir/"
+-  if [[ -d "${product_path}/${PACKAGE_NAME}.framework.dSYM" ]]; then
+-    cp -a "${product_path}/${PACKAGE_NAME}.framework.dSYM" "$staging_dir/"
++  if [[ -d "$framework_src" ]]; then
++    cp -a "$framework_src" "$staging_dir/"
++    if [[ -d "${product_path}/${PACKAGE_NAME}.framework.dSYM" ]]; then
++      cp -a "${product_path}/${PACKAGE_NAME}.framework.dSYM" "$staging_dir/"
++    fi
++  else
++    if [[ ! -d "${slice_dir}/${PACKAGE_NAME}.framework" ]]; then
++      log "error: Missing stub framework for static archive packaging: ${slice_dir}"
++      exit 1
++    fi
++    cp -a "${slice_dir}/${PACKAGE_NAME}.framework" "$staging_dir/"
+   fi
+
+   # Modules and Headers live at the framework root on flat (iOS/tvOS) bundles
+@@ -261,6 +284,34 @@ build_slice() {
+     content_root="${framework_root}"
+   fi
+
++  if [[ -f "$static_archive_src" ]]; then
++    cp "$static_archive_src" "${content_root}/${PACKAGE_NAME}"
++    cat > "${content_root}/Info.plist" <<PLIST
++<?xml version="1.0" encoding="UTF-8"?>
++<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
++<plist version="1.0">
++<dict>
++  <key>CFBundleDevelopmentRegion</key>
++  <string>en</string>
++  <key>CFBundleExecutable</key>
++  <string>${PACKAGE_NAME}</string>
++  <key>CFBundleIdentifier</key>
++  <string>network.nito.${PACKAGE_NAME}</string>
++  <key>CFBundleInfoDictionaryVersion</key>
++  <string>6.0</string>
++  <key>CFBundleName</key>
++  <string>${PACKAGE_NAME}</string>
++  <key>CFBundlePackageType</key>
++  <string>FMWK</string>
++  <key>CFBundleShortVersionString</key>
++  <string>1.0</string>
++  <key>CFBundleVersion</key>
++  <string>1</string>
++</dict>
++</plist>
++PLIST
++  fi
++
+   # Copy Swift module interfaces and generated headers into the staged framework.
+   local modules_dir="${content_root}/Modules"
+   mkdir -p "$modules_dir"
+diff --git a/node_modules/expo-modules-jsi/apple/scripts/generate-modulemap.sh b/node_modules/expo-modules-jsi/apple/scripts/generate-modulemap.sh
+index 3637f3c..7ee022c 100644
+--- a/node_modules/expo-modules-jsi/apple/scripts/generate-modulemap.sh
++++ b/node_modules/expo-modules-jsi/apple/scripts/generate-modulemap.sh
+@@ -49,10 +49,9 @@ fi
+ # Avoid touching the file when contents would be identical, so the xcframework
+ # hash cache and Xcode don't see a spurious change when inputs are unchanged.
+ NEW_CONTENT="module jsi {
+-  umbrella header \"${JSI_UMBRELLA}\"
++  header \"${JSI_UMBRELLA}\"
+
+   export *
+-  module * { export * }
+ }"
+ if [[ ! -f "$GENERATED_MODULE_MAP" ]] || [[ "$(cat "$GENERATED_MODULE_MAP")" != "$NEW_CONTENT" ]]; then
+   printf '%s\n' "$NEW_CONTENT" > "$GENERATED_MODULE_MAP"

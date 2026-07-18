@@ -1,0 +1,232 @@
+name: Android APK
+
+env:
+  EXPO_NO_TELEMETRY: "1"
+  CI: "1"
+  NODE_ENV: production
+  RUSTFLAGS: "-D warnings"
+  ANDROID_NDK_VERSION: "27.1.12297006"
+
+"on":
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-apk-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build-android-apk:
+    name: Build Android APK
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: "24.14.0"
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Setup Java
+        uses: actions/setup-java@0f481fcb613427c0f801b606911222b5b6f3083a # v5
+        with:
+          distribution: temurin
+          java-version: "17.0.19+10"
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@40fd30fb8d7440372e1316f5d1809ec01dcd3699 # v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
+        with:
+          toolchain: "1.97.1"
+          targets: aarch64-linux-android,armv7-linux-androideabi,i686-linux-android,x86_64-linux-android
+          components: clippy,rustfmt
+
+      - name: Install Android NDK and cargo-ndk
+        shell: bash
+        run: |
+          set -euo pipefail
+          sdkmanager "ndk;${ANDROID_NDK_VERSION}" 2>&1 | tee android-toolchain.log
+          echo "ANDROID_NDK_HOME=${ANDROID_HOME}/ndk/${ANDROID_NDK_VERSION}" >> "$GITHUB_ENV"
+          echo "ANDROID_NDK_ROOT=${ANDROID_HOME}/ndk/${ANDROID_NDK_VERSION}" >> "$GITHUB_ENV"
+          cargo +1.97.1 install cargo-ndk --version 4.1.2 --locked 2>&1 | tee -a android-toolchain.log
+          node scripts/assert-warning-free.mjs android-toolchain.log
+
+      - name: Install dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm ci --include=dev --fund=false --audit=false 2>&1 | tee npm-install.log
+          node scripts/assert-warning-free.mjs npm-install.log
+
+      - name: Verify dependency alignment
+        shell: bash
+        run: |
+          set -euo pipefail
+          npx expo install --check 2>&1 | tee expo-install-check.log
+          node scripts/assert-warning-free.mjs expo-install-check.log
+          npm run doctor 2>&1 | tee expo-doctor.log
+          node scripts/assert-warning-free.mjs expo-doctor.log
+
+      - name: Verify warning policy
+        run: |
+          npm run warnings:self-test
+          npm run warnings:source
+
+      - name: ESLint
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm run lint 2>&1 | tee eslint.log
+          node scripts/assert-warning-free.mjs eslint.log
+
+      - name: TypeScript
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm run typecheck 2>&1 | tee typescript.log
+          node scripts/assert-warning-free.mjs typescript.log
+
+      - name: Unit tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm run test 2>&1 | tee vitest.log
+          node scripts/assert-warning-free.mjs vitest.log
+
+      - name: Rust format
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm run rust:fmt 2>&1 | tee rust-fmt.log
+          node scripts/assert-warning-free.mjs rust-fmt.log
+
+      - name: Rust clippy
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm run rust:clippy 2>&1 | tee rust-clippy.log
+          node scripts/assert-warning-free.mjs rust-clippy.log
+
+      - name: Rust tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm run rust:test 2>&1 | tee rust-test.log
+          node scripts/assert-warning-free.mjs rust-test.log
+
+      - name: Dependency audit
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm audit --omit=dev --audit-level=moderate 2>&1 | tee npm-audit.log
+          node scripts/assert-warning-free.mjs npm-audit.log
+
+      - name: Prepare Android release signing
+        shell: bash
+        env:
+          NITO_ANDROID_KEYSTORE_BASE64: ${{ secrets.NITO_ANDROID_KEYSTORE_BASE64 }}
+          NITO_ANDROID_KEYSTORE_PASSWORD_SECRET: ${{ secrets.NITO_ANDROID_KEYSTORE_PASSWORD }}
+          NITO_ANDROID_KEY_ALIAS_SECRET: ${{ secrets.NITO_ANDROID_KEY_ALIAS }}
+          NITO_ANDROID_KEY_PASSWORD_SECRET: ${{ secrets.NITO_ANDROID_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          test -n "$NITO_ANDROID_KEYSTORE_BASE64"
+          test -n "$NITO_ANDROID_KEYSTORE_PASSWORD_SECRET"
+          test -n "$NITO_ANDROID_KEY_ALIAS_SECRET"
+          test -n "$NITO_ANDROID_KEY_PASSWORD_SECRET"
+          SIGNING_DIRECTORY="$RUNNER_TEMP/nito-wallet-signing"
+          KEYSTORE_PATH="$SIGNING_DIRECTORY/nito-wallet-release.jks"
+          mkdir -p "$SIGNING_DIRECTORY"
+          printf '%s' "$NITO_ANDROID_KEYSTORE_BASE64" | base64 --decode > "$KEYSTORE_PATH"
+          chmod 600 "$KEYSTORE_PATH"
+          keytool -list \
+            -keystore "$KEYSTORE_PATH" \
+            -storepass "$NITO_ANDROID_KEYSTORE_PASSWORD_SECRET" \
+            -alias "$NITO_ANDROID_KEY_ALIAS_SECRET" > /dev/null
+          {
+            echo "NITO_ANDROID_KEYSTORE_PATH=$KEYSTORE_PATH"
+            echo "NITO_ANDROID_KEYSTORE_PASSWORD=$NITO_ANDROID_KEYSTORE_PASSWORD_SECRET"
+            echo "NITO_ANDROID_KEY_ALIAS=$NITO_ANDROID_KEY_ALIAS_SECRET"
+            echo "NITO_ANDROID_KEY_PASSWORD=$NITO_ANDROID_KEY_PASSWORD_SECRET"
+          } >> "$GITHUB_ENV"
+
+      - name: Generate Android native project
+        shell: bash
+        run: |
+          set -euo pipefail
+          npx expo prebuild --platform android --clean --no-install 2>&1 | tee expo-prebuild-android.log
+          node scripts/assert-warning-free.mjs expo-prebuild-android.log
+          npm run warnings:source
+          chmod +x android/gradlew
+
+      - name: Isolate Android 13 splash resources
+        run: node scripts/patch-android-splash-resources.mjs
+
+      - name: Verify Gradle configuration
+        shell: bash
+        run: |
+          set -euo pipefail
+          android/gradlew -p android help --no-daemon --console=plain --warning-mode=fail 2>&1 | tee gradle-config.log
+          node scripts/assert-warning-free.mjs gradle-config.log
+
+      - name: Android lint
+        shell: bash
+        run: |
+          set -euo pipefail
+          android/gradlew -p android :app:lintRelease --no-daemon --console=plain --warning-mode=fail 2>&1 | tee gradle-lint.log
+          node scripts/assert-warning-free.mjs gradle-lint.log
+
+      - name: Android unit tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          android/gradlew -p android :app:testReleaseUnitTest --no-daemon --console=plain --warning-mode=fail 2>&1 | tee gradle-tests.log
+          node scripts/assert-warning-free.mjs gradle-tests.log
+
+      - name: Build release APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          android/gradlew -p android :app:assembleRelease --no-daemon --console=plain --warning-mode=fail 2>&1 | tee gradle-build.log
+          node scripts/assert-warning-free.mjs gradle-build.log
+
+      - name: Package APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          APK_PATH="$(find android/app/build/outputs/apk/release -maxdepth 1 -name '*.apk' -type f -print -quit)"
+          test -n "$APK_PATH"
+          APKSIGNER="$(find "$ANDROID_HOME/build-tools" -name apksigner -type f -print | sort -V | tail -n 1)"
+          test -x "$APKSIGNER"
+          SIGNATURE_REPORT="$("$APKSIGNER" verify --verbose --print-certs "$APK_PATH")"
+          printf '%s\n' "$SIGNATURE_REPORT"
+          printf '%s\n' "$SIGNATURE_REPORT" | grep -Fq 'Verified using v2 scheme (APK Signature Scheme v2): true'
+          if printf '%s\n' "$SIGNATURE_REPORT" | grep -Fq 'CN=Android Debug'; then
+            echo 'Refusing to publish an APK signed with an Android Debug certificate.' >&2
+            exit 1
+          fi
+          VERSION="$(node -p "require('./package.json').version")"
+          DESTINATION="artifacts/android/Nito-Wallet-Android-${VERSION}.apk"
+          mkdir -p artifacts/android
+          cp "$APK_PATH" "$DESTINATION"
+          sha256sum "$DESTINATION" > "${DESTINATION}.sha256"
+          cat "${DESTINATION}.sha256"
+
+      - name: Upload Android APK
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: Nito-Wallet-Android-APK
+          path: |
+            artifacts/android/Nito-Wallet-Android-*.apk
+            artifacts/android/Nito-Wallet-Android-*.apk.sha256
+          if-no-files-found: error
+          retention-days: 30

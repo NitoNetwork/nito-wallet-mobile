@@ -1,0 +1,12 @@
+export const NITO_HRP = 'nito';
+export const NITO_DERIVATION_PATH = "m/84'/0'/0'/0/0";
+export const MNEMONIC_CREATION_STRENGTH = 256;
+export const DEFAULT_WORD_COUNT = 24;
+export const ALLOWED_WORD_COUNTS = [12, 24] as const;
+export const AUTO_LOCK_TIMEOUT_MS = 5 * 60 * 1000;
+export const VAULT_KEY = 'nito-mobile-wallet.v1';
+export const VAULT_META_KEY = 'nito-mobile-wallet.meta.v1';
+export const VAULT_VERSION = 1;
+export const SALT_BYTE_LENGTH = 16;
+export const NONCE_BYTE_LENGTH = 24;
+export const PASSWORD_MIN_LENGTH = 10;

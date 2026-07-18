@@ -1,0 +1,22 @@
+{
+  "name": "react-native-qrcode-svg",
+  "version": "6.3.21-nito.1",
+  "description": "Nito-maintained QR renderer for React Native",
+  "private": true,
+  "main": "index.js",
+  "types": "index.d.ts",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/biigbang0001/nito-wallet-mobile.git",
+    "directory": "vendor/react-native-qrcode-svg"
+  },
+  "peerDependencies": {
+    "react": "*",
+    "react-native": ">=0.75.0"
+  },
+  "dependencies": {
+    "prop-types": "15.8.1",
+    "qrcode": "1.5.4"
+  }
+}

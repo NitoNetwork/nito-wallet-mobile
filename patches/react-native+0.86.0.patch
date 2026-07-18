@@ -1,0 +1,213 @@
+diff --git a/node_modules/react-native/Libraries/Network/RCTHTTPRequestHandler.h b/node_modules/react-native/Libraries/Network/RCTHTTPRequestHandler.h
+index c3a27e1..ad46c2e 100644
+--- a/node_modules/react-native/Libraries/Network/RCTHTTPRequestHandler.h
++++ b/node_modules/react-native/Libraries/Network/RCTHTTPRequestHandler.h
+@@ -8,20 +8,23 @@
+ #import <React/RCTInvalidating.h>
+ #import <React/RCTURLRequestHandler.h>
+ 
+-typedef NSURLSessionConfiguration * (^NSURLSessionConfigurationProvider)(void);
++NS_ASSUME_NONNULL_BEGIN
++
++typedef NSURLSessionConfiguration *_Nonnull (^NSURLSessionConfigurationProvider)(void);
+ /**
+  *  The block provided via this function will provide the NSURLSessionConfiguration for all HTTP requests made by the
+  * app.
+  */
+-RCT_EXTERN void RCTSetCustomNSURLSessionConfigurationProvider(NSURLSessionConfigurationProvider /*provider*/);
++RCT_EXTERN void RCTSetCustomNSURLSessionConfigurationProvider(
++    NSURLSessionConfigurationProvider _Nonnull /*provider*/);
+ 
+-typedef NSURLRequest *_Nullable (^RCTHTTPRequestInterceptor)(NSURLRequest *request);
++typedef NSURLRequest *_Nullable (^RCTHTTPRequestInterceptor)(NSURLRequest *_Nonnull request);
+ /**
+  * The block provided via this function can inspect/modify HTTP requests before
+  * they are sent. Return a modified request to override, or nil to use the
+  * original request unchanged.
+  */
+-RCT_EXTERN void RCTSetCustomHTTPRequestInterceptor(RCTHTTPRequestInterceptor /*interceptor*/);
++RCT_EXTERN void RCTSetCustomHTTPRequestInterceptor(RCTHTTPRequestInterceptor _Nonnull /*interceptor*/);
+ 
+ /**
+  * This is the default RCTURLRequestHandler implementation for HTTP requests.
+@@ -29,3 +32,5 @@ RCT_EXTERN void RCTSetCustomHTTPRequestInterceptor(RCTHTTPRequestInterceptor /*i
+ @interface RCTHTTPRequestHandler : NSObject <RCTURLRequestHandler, RCTInvalidating>
+ 
+ @end
++
++NS_ASSUME_NONNULL_END
+diff --git a/node_modules/react-native/React/Base/RCTMultipartDataTask.h b/node_modules/react-native/React/Base/RCTMultipartDataTask.h
+index 9b94a26..4d8910e 100644
+--- a/node_modules/react-native/React/Base/RCTMultipartDataTask.h
++++ b/node_modules/react-native/React/Base/RCTMultipartDataTask.h
+@@ -10,20 +10,23 @@
+ #import <React/RCTDefines.h>
+ #import <React/RCTMultipartStreamReader.h>
+ 
++NS_ASSUME_NONNULL_BEGIN
++
+ typedef void (^RCTMultipartDataTaskCallback)(
+     NSInteger statusCode,
+-    NSDictionary *headers,
+-    NSData *content,
+-    NSError *error,
++    NSDictionary *_Nullable headers,
++    NSData *_Nullable content,
++    NSError *_Nullable error,
+     BOOL done);
+ 
+-typedef NSURLRequest *_Nullable (^RCTMultipartDataTaskRequestInterceptor)(NSURLRequest *request);
++typedef NSURLRequest *_Nullable (^RCTMultipartDataTaskRequestInterceptor)(NSURLRequest *_Nonnull request);
+ /**
+  * The block provided via this function can inspect/modify multipart data task
+  * requests before they are sent. Return a modified request to override, or nil
+  * to use the original request unchanged.
+  */
+-RCT_EXTERN void RCTSetCustomMultipartDataTaskRequestInterceptor(RCTMultipartDataTaskRequestInterceptor /*interceptor*/);
++RCT_EXTERN void RCTSetCustomMultipartDataTaskRequestInterceptor(
++    RCTMultipartDataTaskRequestInterceptor _Nonnull /*interceptor*/);
+ 
+ @interface RCTMultipartDataTask : NSObject
+ 
+@@ -34,3 +37,5 @@ RCT_EXTERN void RCTSetCustomMultipartDataTaskRequestInterceptor(RCTMultipartData
+ - (void)startTask;
+ 
+ @end
++
++NS_ASSUME_NONNULL_END
+diff --git a/node_modules/react-native/React/CoreModules/RCTWebSocketModule.h b/node_modules/react-native/React/CoreModules/RCTWebSocketModule.h
+index 0deba70..9db46b7 100644
+--- a/node_modules/react-native/React/CoreModules/RCTWebSocketModule.h
++++ b/node_modules/react-native/React/CoreModules/RCTWebSocketModule.h
+@@ -20,9 +20,9 @@ NS_ASSUME_NONNULL_BEGIN
+ 
+ @class SRWebSocket;
+ 
+-typedef SRWebSocket * (^SRWebSocketProvider)(NSURLRequest *request);
++typedef SRWebSocket *_Nonnull (^SRWebSocketProvider)(NSURLRequest *_Nonnull request);
+ 
+-RCT_EXTERN void RCTSetCustomSRWebSocketProvider(SRWebSocketProvider provider);
++RCT_EXTERN void RCTSetCustomSRWebSocketProvider(SRWebSocketProvider _Nonnull provider);
+ 
+ @interface RCTWebSocketModule : RCTEventEmitter
+ 
+diff --git a/node_modules/react-native/React/Views/RCTModalHostView.h b/node_modules/react-native/React/Views/RCTModalHostView.h
+index ca2a97a..6e92220 100644
+--- a/node_modules/react-native/React/Views/RCTModalHostView.h
++++ b/node_modules/react-native/React/Views/RCTModalHostView.h
+@@ -18,7 +18,9 @@
+ 
+ @protocol RCTModalHostViewInteractor;
+ 
++#if !__building_module(React)
+ __attribute__((deprecated("This API will be removed along with the legacy architecture.")))
++#endif
+ @interface RCTModalHostView : UIView<RCTInvalidating, UIAdaptivePresentationControllerDelegate>
+ 
+ @property (nonatomic, copy) NSString *animationType;
+diff --git a/node_modules/react-native/React/Views/RCTRootShadowView.h b/node_modules/react-native/React/Views/RCTRootShadowView.h
+index 4755a5a..741d988 100644
+--- a/node_modules/react-native/React/Views/RCTRootShadowView.h
++++ b/node_modules/react-native/React/Views/RCTRootShadowView.h
+@@ -8,7 +8,9 @@
+ #import <React/RCTShadowView.h>
+ #import <yoga/YGEnums.h>
+ 
++#if !__building_module(React)
+ __attribute__((deprecated("This API will be removed along with the legacy architecture.")))
++#endif
+ @interface RCTRootShadowView : RCTShadowView
+ 
+ /**
+diff --git a/node_modules/react-native/ReactCommon/jsinspector-modern/ConsoleTask.h b/node_modules/react-native/ReactCommon/jsinspector-modern/ConsoleTask.h
+index 599396c..0ddfd32 100644
+--- a/node_modules/react-native/ReactCommon/jsinspector-modern/ConsoleTask.h
++++ b/node_modules/react-native/ReactCommon/jsinspector-modern/ConsoleTask.h
+@@ -18,7 +18,6 @@ class ConsoleTaskOrchestrator;
+ class ConsoleTask {
+  public:
+   /**
+-   * \param runtimeTargetDelegate The delegate to the corresponding runtime.
+    * \param taskContext The context that tracks the task.
+    */
+   explicit ConsoleTask(std::shared_ptr<ConsoleTaskContext> taskContext);
+diff --git a/node_modules/react-native/ReactCommon/react/nativemodule/core/platform/ios/ReactCommon/RCTTurboModuleManager.mm b/node_modules/react-native/ReactCommon/react/nativemodule/core/platform/ios/ReactCommon/RCTTurboModuleManager.mm
+index 4f709dc..c76545d 100644
+--- a/node_modules/react-native/ReactCommon/react/nativemodule/core/platform/ios/ReactCommon/RCTTurboModuleManager.mm
++++ b/node_modules/react-native/ReactCommon/react/nativemodule/core/platform/ios/ReactCommon/RCTTurboModuleManager.mm
+@@ -238,9 +238,12 @@ typedef struct {
+     if (RCTTurboModuleInteropEnabled()) {
+       // TODO(T174674274): Implement lazy loading of legacy modules in the new architecture.
+       NSMutableDictionary<NSString *, id<RCTBridgeModule>> *legacyInitializedModules = [NSMutableDictionary new];
+-
+       if ([_delegate respondsToSelector:@selector(extraModulesForBridge:)]) {
+-        for (id<RCTBridgeModule> module in [_delegate extraModulesForBridge:nil]) {
++        using ExtraModulesForBridge = NSArray<id<RCTBridgeModule>> *(*)(id, SEL, RCTBridge *);
++        SEL selector = @selector(extraModulesForBridge:);
++        auto getExtraModules = reinterpret_cast<ExtraModulesForBridge>(
++            class_getMethodImplementation(object_getClass(_delegate), selector));
++        for (id<RCTBridgeModule> module in getExtraModules(_delegate, selector, nil)) {
+           if (!isTurboModuleInstance(module)) {
+             [legacyInitializedModules setObject:module forKey:RCTBridgeModuleNameForClass([module class])];
+           }
+@@ -386,7 +389,7 @@ typedef struct {
+   /**
+    * Step 3: Return an exact sub-class of ObjC TurboModule
+    *
+-   * Use respondsToSelector: below to infer conformance to @protocol(RCTTurboModule). Using conformsToProtocol: is
++   * Use respondsToSelector: below to infer conformance to the RCTTurboModule protocol. Using conformsToProtocol: is
+    * expensive.
+    */
+   Class moduleClass = [module class];
+@@ -409,7 +412,11 @@ typedef struct {
+       [(id<RCTTurboModuleWithJSIBindings>)module installJSIBindingsWithRuntime:*runtime callInvoker:_jsInvoker];
+     } else if ([module respondsToSelector:@selector(installJSIBindingsWithRuntime:)]) {
+       // Old API without CallInvoker (deprecated)
+-      [(id<RCTTurboModuleWithJSIBindings>)module installJSIBindingsWithRuntime:*runtime];
++      using InstallLegacyJSIBindings = void (*)(id, SEL, facebook::jsi::Runtime &);
++      SEL selector = @selector(installJSIBindingsWithRuntime:);
++      auto installBindings = reinterpret_cast<InstallLegacyJSIBindings>(
++          class_getMethodImplementation(object_getClass(module), selector));
++      installBindings(module, selector, *runtime);
+     }
+     return turboModule;
+   }
+@@ -786,15 +793,16 @@ typedef struct {
+    * rollout.
+    */
+   if (_bridge) {
+-    RCTModuleData *data = [[RCTModuleData alloc] initWithModuleInstance:(id<RCTBridgeModule>)module
+-                                                                 bridge:_bridge
+-                                                         moduleRegistry:_bridge.moduleRegistry
+-                                                viewRegistry_DEPRECATED:nil
+-                                                          bundleManager:nil
+-                                                      callableJSModules:nil];
++    using InitializeModuleData = RCTModuleData *(*)(id, SEL, id, id, id, id, id, id);
++    SEL selector = @selector(
++        initWithModuleInstance:bridge:moduleRegistry:viewRegistry_DEPRECATED:bundleManager:callableJSModules:);
++    RCTModuleData *allocation = [RCTModuleData alloc];
++    auto initialize = reinterpret_cast<InitializeModuleData>(
++        class_getMethodImplementation(object_getClass(allocation), selector));
++    RCTModuleData *data = initialize(
++        allocation, selector, module, _bridge, _bridge.moduleRegistry, nil, nil, nil);
+     [_bridge registerModuleForFrameUpdates:(id<RCTBridgeModule>)module withModuleData:data];
+   }
+-
+   /**
+    * Broadcast that this NativeModule was created.
+    *
+diff --git a/node_modules/react-native/ReactCommon/reactperflogger/fusebox/FuseboxTracer.h b/node_modules/react-native/ReactCommon/reactperflogger/fusebox/FuseboxTracer.h
+index 17fb757..b55fd9c 100644
+--- a/node_modules/react-native/ReactCommon/reactperflogger/fusebox/FuseboxTracer.h
++++ b/node_modules/react-native/ReactCommon/reactperflogger/fusebox/FuseboxTracer.h
+@@ -21,9 +21,8 @@ struct BufferEvent {
+   std::string name;
+   std::string track;
+ };
+-
+ /**
+- * @deprecated Replaced by jsinspector_modern::PerformanceTracer and will be
++ * Deprecated: replaced by jsinspector_modern::PerformanceTracer and will be
+  * removed when we delete FuseboxPerfettoDataSource.
+  */
+ class FuseboxTracer {

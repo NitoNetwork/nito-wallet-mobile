@@ -1,0 +1,109 @@
+diff --git a/node_modules/expo/android/build.gradle b/node_modules/expo/android/build.gradle
+index 5c9eb17..68d614d 100644
+--- a/node_modules/expo/android/build.gradle
++++ b/node_modules/expo/android/build.gradle
+@@ -14,11 +14,11 @@ version = '57.0.7'
+ 
+ expoModule {
+   // We can't prebuild the module because it depends on the generated files.
+-  canBePublished false
++  canBePublished = false
+ }
+ 
+ android {
+-  namespace "expo.core"
++  namespace = "expo.core"
+   defaultConfig {
+     versionCode 1
+     versionName "57.0.7"
+diff --git a/node_modules/expo/android/src/main/java/expo/modules/ExpoModulesPackage.kt b/node_modules/expo/android/src/main/java/expo/modules/ExpoModulesPackage.kt
+index 533674e..6f29bd6 100644
+--- a/node_modules/expo/android/src/main/java/expo/modules/ExpoModulesPackage.kt
++++ b/node_modules/expo/android/src/main/java/expo/modules/ExpoModulesPackage.kt
+@@ -17,12 +17,16 @@ class ExpoModulesPackage : ReactPackage {
+   val moduleRegistryAdapter = ModuleRegistryAdapter(packageList)
+ 
+   companion object {
+-    @Suppress("unchecked_cast")
+     val packageList: List<Package> by lazy {
+       try {
+         val expoModules = Class.forName("expo.modules.ExpoModulesPackageList")
+         val getPackageList = expoModules.getMethod("getPackageList")
+-        (getPackageList.invoke(null) as List<Package>)
++        val reflectedPackages = getPackageList.invoke(null)
++        require(reflectedPackages is List<*>) { "Expo package list must be a List" }
++        reflectedPackages.map { reflectedPackage ->
++          require(reflectedPackage is Package) { "Expo package list contains an invalid entry" }
++          reflectedPackage
++        }
+           .sortedByDescending { ModulePriorities.get(it::class.qualifiedName) }
+       } catch (e: Exception) {
+         Log.e("ExpoModulesPackage", "Couldn't get expo package list.", e)
+@@ -31,6 +35,7 @@ class ExpoModulesPackage : ReactPackage {
+     }
+   }
+ 
++  @Deprecated("React Native has deprecated ReactPackage.createNativeModules")
+   override fun createNativeModules(reactContext: ReactApplicationContext): List<NativeModule> {
+     return moduleRegistryAdapter.createNativeModules(reactContext)
+   }
+diff --git a/node_modules/expo/android/src/main/java/expo/modules/ReactActivityDelegateWrapper.kt b/node_modules/expo/android/src/main/java/expo/modules/ReactActivityDelegateWrapper.kt
+index 74f9d8a..cb004dd 100644
+--- a/node_modules/expo/android/src/main/java/expo/modules/ReactActivityDelegateWrapper.kt
++++ b/node_modules/expo/android/src/main/java/expo/modules/ReactActivityDelegateWrapper.kt
+@@ -19,7 +19,6 @@ import com.facebook.react.ReactActivity
+ import com.facebook.react.ReactActivityDelegate
+ import com.facebook.react.ReactDelegate
+ import com.facebook.react.ReactHost
+-import com.facebook.react.ReactInstanceManager
+ import com.facebook.react.ReactRootView
+ import com.facebook.react.modules.core.PermissionListener
+ import expo.modules.core.interfaces.ReactActivityHandler.DelayLoadAppHandler
+@@ -99,10 +98,6 @@ class ReactActivityDelegateWrapper(
+     return _reactHost
+   }
+ 
+-  override fun getReactInstanceManager(): ReactInstanceManager {
+-    return delegate.reactInstanceManager
+-  }
+-
+   override fun getMainComponentName(): String? {
+     return delegate.mainComponentName
+   }
+diff --git a/node_modules/expo/android/src/main/java/expo/modules/fetch/ExpoFetchModule.kt b/node_modules/expo/android/src/main/java/expo/modules/fetch/ExpoFetchModule.kt
+index 7b8e63c..cbd551e 100644
+--- a/node_modules/expo/android/src/main/java/expo/modules/fetch/ExpoFetchModule.kt
++++ b/node_modules/expo/android/src/main/java/expo/modules/fetch/ExpoFetchModule.kt
+@@ -21,7 +21,6 @@ import kotlinx.coroutines.cancel
+ import okhttp3.JavaNetCookieJar
+ import java.net.URL
+ 
+-@Suppress("unused")
+ class ExpoFetchModule : Module() {
+   private val client by lazy {
+     OkHttpClientProvider.createClient(reactContext)
+@@ -30,7 +29,7 @@ class ExpoFetchModule : Module() {
+       .addInterceptor(TransparentCompressionInterceptor)
+       .build()
+   }
+-  private val cookieHandler by lazy { ForwardingCookieHandler(reactContext) }
++  private val cookieHandler by lazy { ForwardingCookieHandler() }
+   private val cookieJarContainer by lazy { client.cookieJar as CookieJarContainer }
+ 
+   private val reactContext: ReactContext
+diff --git a/node_modules/expo/android/src/main/java/expo/modules/fetch/NativeResponse.kt b/node_modules/expo/android/src/main/java/expo/modules/fetch/NativeResponse.kt
+index 02f053e..aae8808 100644
+--- a/node_modules/expo/android/src/main/java/expo/modules/fetch/NativeResponse.kt
++++ b/node_modules/expo/android/src/main/java/expo/modules/fetch/NativeResponse.kt
+@@ -39,9 +39,9 @@ internal class NativeResponse(appContext: AppContext, private val coroutineScope
+   val bodyUsed: Boolean
+     get() = this.sink.bodyUsed
+ 
+-  override fun deallocate() {
++  override fun sharedObjectDidRelease() {
+     this.sink.finalize(directBuffer = false)
+-    super.deallocate()
++    super.sharedObjectDidRelease()
+   }
+ 
+   fun onStarted() {

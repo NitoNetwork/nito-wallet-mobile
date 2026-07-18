@@ -1,0 +1,26 @@
+diff --git a/node_modules/@react-native/codegen/lib/generators/components/GenerateStateCpp.js b/node_modules/@react-native/codegen/lib/generators/components/GenerateStateCpp.js
+index 69bacca..2dbed99 100644
+--- a/node_modules/@react-native/codegen/lib/generators/components/GenerateStateCpp.js
++++ b/node_modules/@react-native/codegen/lib/generators/components/GenerateStateCpp.js
+@@ -25,6 +25,8 @@ namespace facebook::react {
+ ${stateClasses}
+ 
+ } // namespace facebook::react
++
++__attribute__((used)) static unsigned char react_codegen_states_anchor = 0;
+ `;
+ const StateTemplate = ({
+   stateName
+diff --git a/node_modules/@react-native/codegen/lib/generators/components/GenerateStateCpp.js.flow b/node_modules/@react-native/codegen/lib/generators/components/GenerateStateCpp.js.flow
+index 8cbb3fb..b0e61ca 100644
+--- a/node_modules/@react-native/codegen/lib/generators/components/GenerateStateCpp.js.flow
++++ b/node_modules/@react-native/codegen/lib/generators/components/GenerateStateCpp.js.flow
+@@ -39,6 +39,8 @@ namespace facebook::react {
+ ${stateClasses}
+ 
+ } // namespace facebook::react
++
++__attribute__((used)) static unsigned char react_codegen_states_anchor = 0;
+ `;
+ 
+ const StateTemplate = ({stateName}: {stateName: string}) => '';
