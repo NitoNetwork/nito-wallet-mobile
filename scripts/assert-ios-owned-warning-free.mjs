@@ -35,6 +35,28 @@ function classifyWarning(line) {
   return categories.find(({ pattern }) => pattern.test(line))?.name ?? 'Nito project or unknown';
 }
 
+function normalizeLogLines(lines) {
+  const normalized = [];
+
+  for (const line of lines) {
+    const previousIndex = normalized.length - 1;
+    const previous = normalized[previousIndex];
+
+    if (
+      previous &&
+      /\/main\.jsbun\s*$/i.test(previous) &&
+      /^\s*dle:\d+:\d+:\s+warning:/i.test(line)
+    ) {
+      normalized[previousIndex] = `${previous.trimEnd()}${line.trimStart()}`;
+      continue;
+    }
+
+    normalized.push(line);
+  }
+
+  return normalized;
+}
+
 function runSelfTest() {
   const cases = [
     ['/repo/node_modules/react-native/Foo.mm:1: warning: upstream', 'dependency source'],
@@ -56,7 +78,18 @@ function runSelfTest() {
     }
   }
 
-  console.log(`iOS warning classifier self-test passed (${cases.length} cases).`);
+  const wrappedBundleWarning = normalizeLogLines([
+    '/repo/ios-build/Build/Products/Release-iphoneos/main.jsbun',
+    'dle:31530:25: warning: the variable "TextDecoder" was not declared in anonymous function',
+  ]);
+  if (
+    wrappedBundleWarning.length !== 1 ||
+    classifyWarning(wrappedBundleWarning[0]) !== 'generated JavaScript bundle'
+  ) {
+    throw new Error('iOS warning classifier self-test failed for a wrapped bundle warning');
+  }
+
+  console.log(`iOS warning classifier self-test passed (${cases.length + 1} cases).`);
 }
 
 if (logPath === '--self-test') {
@@ -68,7 +101,7 @@ if (!logPath) {
   throw new Error('Usage: node scripts/assert-ios-owned-warning-free.mjs <xcode-log> | --self-test');
 }
 
-const lines = readFileSync(logPath, 'utf8').split(/\r?\n/);
+const lines = normalizeLogLines(readFileSync(logPath, 'utf8').split(/\r?\n/));
 const warnings = lines.filter((line) => warningPattern.test(line));
 const classified = warnings.map((line) => ({ line, category: classifyWarning(line) }));
 const ownedWarnings = classified.filter(({ category }) => category === 'Nito project or unknown');
