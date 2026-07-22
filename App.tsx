@@ -64,6 +64,7 @@ import {
   type PreparedTransparentTx,
 } from './src/wallet/transparentSend';
 import { makeConsolidationTranslator } from './src/i18n.consolidation';
+import { decodeUtf8 } from './src/security/utf8';
 
 declare const require: (path: string) => number;
 
@@ -356,7 +357,7 @@ const decryptVault = async (
     throw new Error(invalidMessage);
   }
 
-  return JSON.parse(new TextDecoder().decode(plaintext)) as VaultPayload;
+  return JSON.parse(decodeUtf8(plaintext)) as VaultPayload;
 };
 
 const loadVault = async () => {
