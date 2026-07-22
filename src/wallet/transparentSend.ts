@@ -450,15 +450,23 @@ export const buildTransparentSend = ({
   const ownedAddressByScript = new Map<string, string>();
   for (const owner of snapshot.addresses) {
     try {
-      const script = btc.OutScript.encode(addressCodec.decode(owner.address));
+      const script = btc.OutScript.encode(
+        addressCodec.decode(owner.address) as Parameters<typeof btc.OutScript.encode>[0],
+      );
       ownedAddressByScript.set(bytesToHex(script), owner.address);
     } catch {
       continue;
     }
   }
+  const ownedAddressByAddress = new Map(
+    snapshot.addresses.map((owner) => [owner.address.toLowerCase(), owner.address]),
+  );
   const walletOutputs = selected.outputs.flatMap((output, vout) => {
-    if (!(output.script instanceof Uint8Array) || output.amount === undefined) return [];
-    const address = ownedAddressByScript.get(bytesToHex(output.script));
+    const address = 'address' in output
+      ? ownedAddressByAddress.get(output.address.toLowerCase())
+      : output.script instanceof Uint8Array
+        ? ownedAddressByScript.get(bytesToHex(output.script))
+        : undefined;
     return address ? [{ vout, valueSats: Number(output.amount), address }] : [];
   });
 
