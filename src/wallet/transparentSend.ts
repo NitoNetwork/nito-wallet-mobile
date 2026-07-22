@@ -30,6 +30,13 @@ export type PreparedTransparentTx = {
   inputCount: number;
   outputCount: number;
   changeUsed: boolean;
+  consolidationAmountSats?: number;
+  consolidationInputs?: {
+    txid: string;
+    vout: number;
+    valueSats: number;
+    address: string;
+  }[];
 };
 
 export type MaxTransparentSendAmount = {
@@ -356,7 +363,16 @@ export const buildTransparentConsolidation = async ({
     if (transaction.hex.length / 2 > 100_000) {
       throw new Error('A consolidation transaction exceeds the standard size limit.');
     }
-    transactions.push(transaction);
+    transactions.push({
+      ...transaction,
+      consolidationAmountSats: Number(amountSats),
+      consolidationInputs: utxos.map((utxo) => ({
+        txid: utxo.txid,
+        vout: utxo.vout,
+        valueSats: utxo.valueSats,
+        address: utxo.address,
+      })),
+    });
   }
 
   return {
