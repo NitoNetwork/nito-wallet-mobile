@@ -272,6 +272,99 @@ export const calculateMaxTransparentSendAmount = ({
   })();
 };
 
+const MAX_STANDARD_CONSOLIDATION_VBYTES = 90_000;
+const CONSOLIDATION_BASE_VBYTES = 44;
+const CONSOLIDATION_INPUT_VBYTES: Record<string, number> = {
+  p2pkh: 148,
+  p2shP2wpkh: 91,
+  p2wpkh: 68,
+  p2tr: 58,
+};
+
+export type PreparedTransparentConsolidation = {
+  transactions: PreparedTransparentTx[];
+  inputCount: number;
+  totalFeeSats: number;
+};
+
+export const buildTransparentConsolidation = async ({
+  mnemonic,
+  snapshot,
+  toAddress,
+  feePerVbyte = DEFAULT_FEE_PER_VBYTE,
+  crypto = nitoWalletCrypto,
+}: {
+  mnemonic: string;
+  snapshot: TransparentWalletSnapshot;
+  toAddress: string;
+  feePerVbyte?: bigint;
+  crypto?: NitoWalletCryptoApi;
+}): Promise<PreparedTransparentConsolidation> => {
+  const confirmedUtxos = snapshot.utxos
+    .filter((utxo) => utxo.confirmations >= 1)
+    .sort((left, right) => left.valueSats - right.valueSats);
+  if (confirmedUtxos.length < 2) {
+    throw new Error('At least two confirmed outputs are required for consolidation.');
+  }
+
+  const scriptTypes = new Map(
+    snapshot.addresses.map((address) => [address.address, address.scriptType] as const),
+  );
+  const batches: typeof confirmedUtxos[] = [];
+  let batch: typeof confirmedUtxos = [];
+  let estimatedVbytes = CONSOLIDATION_BASE_VBYTES;
+
+  for (const utxo of confirmedUtxos) {
+    const inputVbytes = CONSOLIDATION_INPUT_VBYTES[scriptTypes.get(utxo.address) ?? 'p2wpkh'] ?? 148;
+    if (batch.length > 0 && estimatedVbytes + inputVbytes > MAX_STANDARD_CONSOLIDATION_VBYTES) {
+      batches.push(batch);
+      batch = [];
+      estimatedVbytes = CONSOLIDATION_BASE_VBYTES;
+    }
+    batch.push(utxo);
+    estimatedVbytes += inputVbytes;
+  }
+  if (batch.length > 0) batches.push(batch);
+
+  const usefulBatches = batches.filter((candidate) => candidate.length >= 2);
+  if (usefulBatches.length === 0) {
+    throw new Error('No useful consolidation transaction can be created.');
+  }
+
+  const transactions: PreparedTransparentTx[] = [];
+  for (const utxos of usefulBatches) {
+    const batchSnapshot: TransparentWalletSnapshot = { ...snapshot, utxos };
+    const { amountSats } = await calculateMaxTransparentSendAmount({
+      mnemonic,
+      snapshot: batchSnapshot,
+      toAddress,
+      feePerVbyte,
+      crypto,
+    });
+    const transaction = await buildTransparentSend({
+      mnemonic,
+      snapshot: batchSnapshot,
+      toAddress,
+      amountSats,
+      feePerVbyte,
+      crypto,
+    });
+    if (transaction.inputCount !== utxos.length || transaction.changeUsed) {
+      throw new Error('The consolidation plan did not consume the expected outputs.');
+    }
+    if (transaction.hex.length / 2 > 100_000) {
+      throw new Error('A consolidation transaction exceeds the standard size limit.');
+    }
+    transactions.push(transaction);
+  }
+
+  return {
+    transactions,
+    inputCount: transactions.reduce((total, transaction) => total + transaction.inputCount, 0),
+    totalFeeSats: transactions.reduce((total, transaction) => total + transaction.feeSats, 0),
+  };
+};
+
 export const buildTransparentSend = ({
   mnemonic,
   snapshot,
