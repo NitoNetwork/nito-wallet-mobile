@@ -325,13 +325,18 @@ export const refreshKnownUsedAddresses = async ({
   snapshot,
   electrum,
   includeHistory = false,
+  onlyAddresses,
 }: {
   snapshot: TransparentWalletSnapshot;
   electrum: ElectrumReader;
   includeHistory?: boolean;
+  onlyAddresses?: readonly string[];
 }): Promise<TransparentWalletSnapshot> => {
-  const targets = snapshot.addresses.filter(
-    (address) => address.used || address.utxos.length > 0 || address.balance.unconfirmedSats !== 0,
+  const requestedAddresses = onlyAddresses ? new Set(onlyAddresses) : null;
+  const targets = snapshot.addresses.filter((address) =>
+    requestedAddresses
+      ? requestedAddresses.has(address.address)
+      : address.used || address.utxos.length > 0 || address.balance.unconfirmedSats !== 0,
   );
   const refreshed = await Promise.all(
     targets.map((address) => scanDerivedAddress(address, electrum, includeHistory)),

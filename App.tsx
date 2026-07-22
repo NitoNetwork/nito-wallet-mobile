@@ -56,11 +56,14 @@ import {
   type TransparentWalletSnapshot,
 } from './src/wallet/transparentScan';
 import {
+  buildTransparentConsolidation,
   buildTransparentSend,
   calculateMaxTransparentSendAmount,
   parseNitoAmountToSats,
+  type PreparedTransparentConsolidation,
   type PreparedTransparentTx,
 } from './src/wallet/transparentSend';
+import { makeConsolidationTranslator } from './src/i18n.consolidation';
 
 declare const require: (path: string) => number;
 
@@ -88,8 +91,10 @@ type PendingAction =
   | 'protect'
   | 'copy'
   | 'max'
+  | 'consolidate'
   | 'prepare'
   | 'broadcast'
+  | 'broadcastConsolidation'
   | 'history'
   | 'reveal'
   | 'delete'
@@ -500,6 +505,8 @@ export default function App() {
   const [sendAddress, setSendAddress] = useState('');
   const [sendAmount, setSendAmount] = useState('');
   const [preparedTx, setPreparedTx] = useState<PreparedTransparentTx | null>(null);
+  const [preparedConsolidation, setPreparedConsolidation] =
+    useState<PreparedTransparentConsolidation | null>(null);
   const [broadcasting, setBroadcasting] = useState(false);
   const [seedSaved, setSeedSaved] = useState(false);
   const [vaultUnlockMode, setVaultUnlockMode] = useState<'password' | 'biometric'>('password');
@@ -734,6 +741,7 @@ export default function App() {
     setSendAddress('');
     setSendAmount('');
     setPreparedTx(null);
+    setPreparedConsolidation(null);
     setScreen('wallet');
     setStatus(pendingPreload ? t('status.walletSynced') : message);
   };
@@ -758,7 +766,13 @@ export default function App() {
 
   const syncTransparentNetwork = useCallback(async (
     includeHistory = false,
-    options: { force?: boolean; silent?: boolean; pendingOnly?: boolean } = {},
+    options: {
+      force?: boolean;
+      silent?: boolean;
+      pendingOnly?: boolean;
+      onlyAddresses?: readonly string[];
+      rescanGap?: boolean;
+    } = {},
   ) => {
     const activeWallet = walletRef.current;
     const currentNetwork = networkRef.current;
@@ -846,12 +860,13 @@ export default function App() {
         }));
       }
 
-      let snapshot = options.pendingOnly && currentNetwork.snapshot
-        ? await refreshKnownUsedAddresses({
-            snapshot: currentNetwork.snapshot,
-            electrum: client,
-            includeHistory: wantsFullHistory,
-          })
+        let snapshot = currentNetwork.snapshot && !options.rescanGap
+          ? await refreshKnownUsedAddresses({
+              snapshot: currentNetwork.snapshot,
+              electrum: client,
+              includeHistory: wantsFullHistory,
+              onlyAddresses: options.onlyAddresses,
+            })
         : await scanTransparentWallet({
             mnemonic: activeWallet.mnemonic,
             electrum: client,
@@ -913,6 +928,27 @@ export default function App() {
       }
     }
   }, [t]);
+
+  const reconcileBroadcasts = useCallback(async (txids: readonly string[]) => {
+    if (txids.length === 0) return;
+    const client = electrumClientRef.current ?? new NitoElectrumClient();
+    electrumClientRef.current = client;
+    for (const delayMs of [250, 750, 1_500, 3_000]) {
+      await new Promise<void>((resolve) => setTimeout(resolve, delayMs));
+      const visible = await Promise.all(
+        txids.map(async (txid) => {
+          try {
+            await client.getTransactionHex(txid);
+            return true;
+          } catch {
+            return false;
+          }
+        }),
+      );
+      if (visible.every(Boolean)) break;
+    }
+    await syncTransparentNetwork(false, { force: true, silent: true, pendingOnly: true });
+  }, [syncTransparentNetwork]);
 
   useEffect(() => {
     blockHeightUnsubscribeRef.current?.();
@@ -986,6 +1022,14 @@ export default function App() {
 
     const snapshot = network.snapshot;
     let cancelled = false;
+    const activeAddresses = new Set(snapshot.addresses.map(({ address }) => address));
+    for (const [address, unsubscribe] of addressUnsubscribeRef.current) {
+      if (!activeAddresses.has(address)) {
+        unsubscribe();
+        addressUnsubscribeRef.current.delete(address);
+        addressStatusRef.current.delete(address);
+      }
+    }
 
     const subscribeKnownAddresses = async () => {
       const client = electrumClientRef.current;
@@ -994,7 +1038,6 @@ export default function App() {
         return;
       }
 
-      clearAddressSubscriptions();
       subscriptionRefreshInFlightRef.current = true;
 
       try {
@@ -1011,7 +1054,15 @@ export default function App() {
               addressStatusRef.current.set(changedAddress, nextStatus);
 
               if (previousStatus !== undefined && previousStatus !== nextStatus && !syncInFlightRef.current) {
-                void syncTransparentNetwork(false, { force: true });
+                const knownAddress = networkRef.current.snapshot?.addresses.find(
+                  ({ address: candidate }) => candidate === changedAddress,
+                );
+                void syncTransparentNetwork(false, {
+                  force: true,
+                  silent: true,
+                  onlyAddresses: knownAddress?.used ? [changedAddress] : undefined,
+                  rescanGap: !knownAddress?.used,
+                });
               }
             });
 
@@ -1022,6 +1073,9 @@ export default function App() {
 
             addressStatusRef.current.set(address, subscription.status);
             addressUnsubscribeRef.current.set(address, subscription.unsubscribe);
+            if (!scannedAddress.used && subscription.status !== null && !syncInFlightRef.current) {
+              void syncTransparentNetwork(false, { force: true, silent: true, rescanGap: true });
+            }
           } catch {
             addressStatusRef.current.delete(address);
           }
@@ -1036,7 +1090,7 @@ export default function App() {
     return () => {
       cancelled = true;
     };
-  }, [clearAddressSubscriptions, network.snapshot, screen, syncTransparentNetwork, wallet]);
+  }, [network.snapshot, screen, syncTransparentNetwork, wallet]);
 
   const createWallet = async () => {
     await runExclusiveAction('create', async () => {
@@ -1284,6 +1338,7 @@ export default function App() {
     setSendAddress('');
     setSendAmount('');
     setPreparedTx(null);
+    setPreparedConsolidation(null);
     setQrScannerOpen(false);
     setQrScanHandled(false);
     setQrScannerError('');
@@ -1336,6 +1391,8 @@ export default function App() {
     }
 
     try {
+      setPreparedTx(null);
+      setPreparedConsolidation(null);
       const tx = await buildTransparentSend({
         mnemonic: wallet.mnemonic,
         snapshot: network.snapshot,
@@ -1343,6 +1400,7 @@ export default function App() {
         amountSats: parseNitoAmountToSats(sendAmount),
       });
 
+      setPreparedConsolidation(null);
       setPreparedTx(tx);
       setStatus(t('status.transactionReady', { fee: satoshisToNito(tx.feeSats) }));
     } catch (caught) {
@@ -1377,8 +1435,10 @@ export default function App() {
 
         setSendAmount(satoshisToNitoInput(max.amountSats));
         setPreparedTx(null);
+        setPreparedConsolidation(null);
       } catch (caught) {
         setPreparedTx(null);
+        setPreparedConsolidation(null);
         setError(caught instanceof Error ? caught.message : t('errors.txPrepareFailed'));
       }
     });
@@ -1400,6 +1460,7 @@ export default function App() {
       const destinationAddress = sendAddress.trim();
       const txid = await client.broadcastTransaction(preparedTx.hex);
       setPreparedTx(null);
+      setPreparedConsolidation(null);
       setSendAddress('');
       setSendAmount('');
       setStatus(t('status.transactionSent', { txid }));
@@ -1438,7 +1499,7 @@ export default function App() {
           { text: t('actions.ok'), style: 'cancel' },
         ],
       );
-      void syncTransparentNetwork(false, { force: true })
+      void reconcileBroadcasts([txid])
         .catch(() => undefined)
         .finally(rememberSentTransaction);
     } catch (caught) {
@@ -1447,6 +1508,77 @@ export default function App() {
       setBroadcasting(false);
     }
   
+    });
+  };
+
+  const prepareTransparentConsolidation = async () => {
+    await runExclusiveAction('consolidate', async () => {
+      resetFeedback();
+      const consolidationT = makeConsolidationTranslator(language);
+      if (!wallet || !network.snapshot) {
+        setError(t('errors.walletSyncing'));
+        return;
+      }
+      try {
+        const plan = await buildTransparentConsolidation({
+          mnemonic: wallet.mnemonic,
+          snapshot: network.snapshot,
+          toAddress: wallet.address,
+        });
+        setPreparedTx(null);
+        setPreparedConsolidation(plan);
+        setStatus(consolidationT('review'));
+      } catch {
+        setPreparedConsolidation(null);
+        setError(consolidationT('unavailable'));
+      }
+    });
+  };
+
+  const confirmTransparentConsolidation = () => {
+    const consolidationT = makeConsolidationTranslator(language);
+    Alert.alert(consolidationT('title'), consolidationT('explanation'), [
+      { text: consolidationT('cancel'), style: 'cancel' },
+      { text: consolidationT('prepare'), onPress: () => { void prepareTransparentConsolidation(); } },
+    ]);
+  };
+
+  const broadcastPreparedConsolidation = async () => {
+    await runExclusiveAction('broadcastConsolidation', async () => {
+      const consolidationT = makeConsolidationTranslator(language);
+      resetFeedback();
+      if (!preparedConsolidation) {
+        setError(consolidationT('unavailable'));
+        return;
+      }
+
+      setBroadcasting(true);
+      const client = electrumClientRef.current || new NitoElectrumClient();
+      electrumClientRef.current = client;
+      const txids: string[] = [];
+      let sentCount = 0;
+      try {
+        for (const transaction of preparedConsolidation.transactions) {
+          txids.push(await client.broadcastTransaction(transaction.hex));
+          sentCount += 1;
+        }
+        setPreparedConsolidation(null);
+        Alert.alert(consolidationT('successTitle'), consolidationT('successBody'), [
+          { text: t('actions.ok'), style: 'cancel' },
+        ]);
+      } catch {
+        const remaining = preparedConsolidation.transactions.slice(sentCount);
+        setPreparedConsolidation(remaining.length > 0 ? {
+          transactions: remaining,
+          inputCount: remaining.reduce((total, transaction) => total + transaction.inputCount, 0),
+          totalFeeSats: remaining.reduce((total, transaction) => total + transaction.feeSats, 0),
+        } : null);
+        Alert.alert(consolidationT('partialTitle'), consolidationT('partialBody'));
+        setError(consolidationT('partialBody'));
+      } finally {
+        setBroadcasting(false);
+        if (txids.length > 0) void reconcileBroadcasts(txids).catch(() => undefined);
+      }
     });
   };
 
@@ -1676,8 +1808,10 @@ export default function App() {
     protect: t('loading.protect'),
     copy: t('loading.copy'),
     max: t('loading.max'),
+    consolidate: makeConsolidationTranslator(language)('loadingPrepare'),
     prepare: t('loading.prepare'),
     broadcast: t('loading.broadcast'),
+    broadcastConsolidation: makeConsolidationTranslator(language)('loadingSend'),
     history: t('loading.history'),
     reveal: t('loading.reveal'),
     delete: t('loading.delete'),
@@ -1896,6 +2030,7 @@ export default function App() {
               onChangeText={(value) => {
                 setSendAddress(value);
                 setPreparedTx(null);
+                setPreparedConsolidation(null);
               }}
               placeholder={t('send.destination')}
               placeholderTextColor="#6d7892"
@@ -1913,6 +2048,7 @@ export default function App() {
               onChangeText={(value) => {
                 setSendAmount(value);
                 setPreparedTx(null);
+                setPreparedConsolidation(null);
               }}
               placeholder={t('send.amount')}
               placeholderTextColor="#6d7892"
@@ -1936,6 +2072,18 @@ export default function App() {
             disabled={actionLocked || !network.snapshot || network.status === 'syncing' || !sendAddress.trim() || !sendAmount.trim()}
             onPress={prepareTransparentSend}
           />
+          <ActionButton
+            label={makeConsolidationTranslator(language)('action')}
+            variant="secondary"
+            loading={pendingAction === 'consolidate'}
+            disabled={
+              actionLocked
+              || !network.snapshot
+              || network.status === 'syncing'
+              || network.snapshot.utxos.filter((utxo) => utxo.confirmations >= 1).length < 2
+            }
+            onPress={confirmTransparentConsolidation}
+          />
           {preparedTx ? (
             <View style={styles.txBox}>
               <Text style={styles.label}>{t('send.transactionReady')}</Text>
@@ -1947,6 +2095,26 @@ export default function App() {
                 loading={pendingAction === 'broadcast' || broadcasting}
                 disabled={actionLocked || broadcasting}
                 onPress={() => { void broadcastPreparedTx(); }}
+              />
+            </View>
+          ) : null}
+          {preparedConsolidation ? (
+            <View style={styles.txBox}>
+              <Text style={styles.label}>{makeConsolidationTranslator(language)('review')}</Text>
+              <Text style={styles.previewAddress}>
+                {`${makeConsolidationTranslator(language)('transactions')}: ${preparedConsolidation.transactions.length}`}
+              </Text>
+              <Text style={styles.helper}>
+                {`${makeConsolidationTranslator(language)('inputs')}: ${preparedConsolidation.inputCount}`}
+              </Text>
+              <Text style={styles.helper}>
+                {`${makeConsolidationTranslator(language)('fees')}: ${satoshisToNito(preparedConsolidation.totalFeeSats)} NITO`}
+              </Text>
+              <ActionButton
+                label={makeConsolidationTranslator(language)('send')}
+                loading={pendingAction === 'broadcastConsolidation' || broadcasting}
+                disabled={actionLocked || broadcasting}
+                onPress={() => { void broadcastPreparedConsolidation(); }}
               />
             </View>
           ) : null}
