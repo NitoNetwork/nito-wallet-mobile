@@ -1,0 +1,78 @@
+diff --git a/node_modules/expo-splash-screen/plugin/build/withAndroidSplashScreen.js b/node_modules/expo-splash-screen/plugin/build/withAndroidSplashScreen.js
+index 7c11bca..79a64bb 100644
+--- a/node_modules/expo-splash-screen/plugin/build/withAndroidSplashScreen.js
++++ b/node_modules/expo-splash-screen/plugin/build/withAndroidSplashScreen.js
+@@ -3,19 +3,15 @@ Object.defineProperty(exports, "__esModule", { value: true });
+ exports.withAndroidSplashScreen = void 0;
+ const config_plugins_1 = require("expo/config-plugins");
+ const getAndroidSplashConfig_1 = require("./getAndroidSplashConfig");
+-const withAndroidSplashDrawables_1 = require("./withAndroidSplashDrawables");
+ const withAndroidSplashImages_1 = require("./withAndroidSplashImages");
+ const withAndroidSplashMainActivity_1 = require("./withAndroidSplashMainActivity");
+-const withAndroidSplashStrings_1 = require("./withAndroidSplashStrings");
+ const withAndroidSplashStyles_1 = require("./withAndroidSplashStyles");
+ const withAndroidSplashScreen = (config, props) => {
+     const splash = (0, getAndroidSplashConfig_1.getAndroidSplashConfig)(props);
+     return (0, config_plugins_1.withPlugins)(config, [
+         withAndroidSplashMainActivity_1.withAndroidSplashMainActivity,
+         [withAndroidSplashImages_1.withAndroidSplashImages, splash],
+-        [withAndroidSplashDrawables_1.withAndroidSplashDrawables, splash],
+         [withAndroidSplashStyles_1.withAndroidSplashStyles, splash],
+-        [withAndroidSplashStrings_1.withAndroidSplashStrings, splash],
+     ]);
+ };
+ exports.withAndroidSplashScreen = withAndroidSplashScreen;
+diff --git a/node_modules/expo-splash-screen/plugin/build/withAndroidSplashStyles.js b/node_modules/expo-splash-screen/plugin/build/withAndroidSplashStyles.js
+index 1b24eac..7664737 100644
+--- a/node_modules/expo-splash-screen/plugin/build/withAndroidSplashStyles.js
++++ b/node_modules/expo-splash-screen/plugin/build/withAndroidSplashStyles.js
+@@ -48,10 +48,6 @@ function addSplashScreenStyle(styles) {
+             $: { name: 'postSplashScreenTheme' },
+             _: '@style/AppTheme',
+         },
+-        {
+-            $: { name: 'android:windowSplashScreenBehavior' },
+-            _: 'icon_preferred',
+-        },
+     ];
+     styles.resources.style = [
+         ...style.filter(({ $ }) => $.name !== 'Theme.App.SplashScreen'),
+diff --git a/node_modules/expo-splash-screen/plugin/src/withAndroidSplashScreen.ts b/node_modules/expo-splash-screen/plugin/src/withAndroidSplashScreen.ts
+index 09f10f5..0b54ce4 100644
+--- a/node_modules/expo-splash-screen/plugin/src/withAndroidSplashScreen.ts
++++ b/node_modules/expo-splash-screen/plugin/src/withAndroidSplashScreen.ts
+@@ -2,10 +2,8 @@ import { ConfigPlugin, withPlugins } from 'expo/config-plugins';
+
+ import { getAndroidSplashConfig } from './getAndroidSplashConfig';
+ import { Props } from './types';
+-import { withAndroidSplashDrawables } from './withAndroidSplashDrawables';
+ import { withAndroidSplashImages } from './withAndroidSplashImages';
+ import { withAndroidSplashMainActivity } from './withAndroidSplashMainActivity';
+-import { withAndroidSplashStrings } from './withAndroidSplashStrings';
+ import { withAndroidSplashStyles } from './withAndroidSplashStyles';
+
+ export const withAndroidSplashScreen: ConfigPlugin<Props> = (config, props) => {
+@@ -14,8 +12,6 @@ export const withAndroidSplashScreen: ConfigPlugin<Props> = (config, props) => {
+   return withPlugins(config, [
+     withAndroidSplashMainActivity,
+     [withAndroidSplashImages, splash],
+-    [withAndroidSplashDrawables, splash],
+     [withAndroidSplashStyles, splash],
+-    [withAndroidSplashStrings, splash],
+   ]);
+ };
+diff --git a/node_modules/expo-splash-screen/plugin/src/withAndroidSplashStyles.ts b/node_modules/expo-splash-screen/plugin/src/withAndroidSplashStyles.ts
+index 8b044d7..1f9685c 100644
+--- a/node_modules/expo-splash-screen/plugin/src/withAndroidSplashStyles.ts
++++ b/node_modules/expo-splash-screen/plugin/src/withAndroidSplashStyles.ts
+@@ -54,10 +54,6 @@ function addSplashScreenStyle(styles: AndroidConfig.Resources.ResourceXML) {
+       $: { name: 'postSplashScreenTheme' },
+       _: '@style/AppTheme',
+     },
+-    {
+-      $: { name: 'android:windowSplashScreenBehavior' },
+-      _: 'icon_preferred',
+-    },
+   ];
+
+   styles.resources.style = [

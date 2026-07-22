@@ -12,12 +12,13 @@ function withCleanManifest(config) {
   return withAndroidManifest(config, (modConfig) => {
     const manifest = modConfig.modResults.manifest;
     const permissions = manifest['uses-permission'] || [];
-    const blockedStoragePermissions = new Set([
+    const blockedPermissions = new Set([
       'android.permission.READ_EXTERNAL_STORAGE',
+      'android.permission.SYSTEM_ALERT_WINDOW',
       'android.permission.WRITE_EXTERNAL_STORAGE',
     ]);
     manifest['uses-permission'] = permissions.filter(
-      (permission) => !blockedStoragePermissions.has(permission.$?.['android:name'])
+      (permission) => !blockedPermissions.has(permission.$?.['android:name'])
     );
 
     const features = manifest['uses-feature'] || [];
