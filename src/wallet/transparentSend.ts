@@ -30,9 +30,13 @@ export type PreparedTransparentTx = {
   inputCount: number;
   outputCount: number;
   changeUsed: boolean;
-  consolidationAmountSats?: number;
-  consolidationInputs?: {
+  walletInputs: {
     txid: string;
+    vout: number;
+    valueSats: number;
+    address: string;
+  }[];
+  walletOutputs: {
     vout: number;
     valueSats: number;
     address: string;
@@ -100,7 +104,13 @@ type PreparedSpendableInput = {
   input: Record<string, unknown>;
   signer: NativePsbtSigner;
   valueSats: number;
+  address: string;
 };
+
+const bytesToHex = (value: Uint8Array) => Array.from(
+  value,
+  (byte) => byte.toString(16).padStart(2, '0'),
+).join('');
 
 const cloneInput = (input: Record<string, unknown>) => ({
   ...input,
@@ -167,6 +177,7 @@ const prepareSpendableInputs = async (
         scriptType: owner.scriptType,
       },
       valueSats: utxo.valueSats,
+      address: utxo.address,
     });
   }
 
@@ -363,16 +374,7 @@ export const buildTransparentConsolidation = async ({
     if (transaction.hex.length / 2 > 100_000) {
       throw new Error('A consolidation transaction exceeds the standard size limit.');
     }
-    transactions.push({
-      ...transaction,
-      consolidationAmountSats: Number(amountSats),
-      consolidationInputs: utxos.map((utxo) => ({
-        txid: utxo.txid,
-        vout: utxo.vout,
-        valueSats: utxo.valueSats,
-        address: utxo.address,
-      })),
-    });
+    transactions.push(transaction);
   }
 
   return {
@@ -422,6 +424,44 @@ export const buildTransparentSend = ({
   const signedTransaction = btc.Transaction.fromPSBT(base64ToBytes(signed.psbtBase64));
   signedTransaction.finalize();
 
+  const spendableByOutpoint = new Map(spendable.map((item) => [
+    `${item.signer.txid}:${item.signer.vout}`,
+    item,
+  ]));
+  const walletInputs = selected.inputs.flatMap((input) => {
+    if (input.index === undefined) return [];
+    const txids = typeof input.txid === 'string'
+      ? [input.txid]
+      : input.txid instanceof Uint8Array
+        ? [bytesToHex(input.txid), bytesToHex(Uint8Array.from(input.txid).reverse())]
+        : [];
+    const source = txids
+      .map((txid) => spendableByOutpoint.get(`${txid}:${input.index}`))
+      .find((candidate) => candidate !== undefined);
+    return source ? [{
+      txid: source.signer.txid,
+      vout: source.signer.vout,
+      valueSats: source.valueSats,
+      address: source.address,
+    }] : [];
+  });
+
+  const addressCodec = btc.Address(NITO_SIGNER_NETWORK);
+  const ownedAddressByScript = new Map<string, string>();
+  for (const owner of snapshot.addresses) {
+    try {
+      const script = btc.OutScript.encode(addressCodec.decode(owner.address));
+      ownedAddressByScript.set(bytesToHex(script), owner.address);
+    } catch {
+      continue;
+    }
+  }
+  const walletOutputs = selected.outputs.flatMap((output, vout) => {
+    if (!(output.script instanceof Uint8Array) || output.amount === undefined) return [];
+    const address = ownedAddressByScript.get(bytesToHex(output.script));
+    return address ? [{ vout, valueSats: Number(output.amount), address }] : [];
+  });
+
   return {
     txid: signedTransaction.id,
     hex: signedTransaction.hex,
@@ -429,6 +469,8 @@ export const buildTransparentSend = ({
     inputCount: selected.inputs.length,
     outputCount: selected.outputs.length,
     changeUsed: selected.change,
+    walletInputs,
+    walletOutputs,
   };
   })();
 };
