@@ -1,6 +1,6 @@
 # Nito Wallet
 
-[![Version](assets/version-badge.svg)](package.json)
+[![Version](https://img.shields.io/github/package-json/v/NitoNetwork/nito-wallet-mobile?label=version)](package.json)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 Nito Wallet is a non-custodial mobile wallet for Android and iOS. Wallet keys
@@ -56,7 +56,7 @@ cargo test --manifest-path native/nito-wallet-crypto/Cargo.toml --all-features
 Update every public and native version source with one command:
 
 ```bash
-npm version 1.1.6 --no-git-tag-version
+npm version <major.minor.patch> --no-git-tag-version
 ```
 
 Use the two manual GitHub Actions workflows for reproducible device artifacts:
