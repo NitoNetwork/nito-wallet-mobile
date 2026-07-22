@@ -2350,15 +2350,13 @@ export default function App() {
         {!preparedConsolidation && network.snapshot && network.snapshot.utxos.filter((utxo) => (
           utxo.confirmations >= 101 || (utxo.confirmations > 0 && utxo.isCoinbase === false)
         )).length >= CONSOLIDATION_MIN_UTXOS ? (
-          <TouchableOpacity
-            accessibilityRole="button"
-            disabled={actionLocked || network.status === 'syncing'}
+          <ActionButton
+            label={makeConsolidationTranslator(language)('action')}
             onPress={confirmTransparentConsolidation}
-            style={[styles.walletToolButton, (actionLocked || network.status === 'syncing') && styles.walletToolButtonDisabled]}
-          >
-            {pendingAction === 'consolidate' ? <ActivityIndicator color="#8cc6ff" size="small" /> : null}
-            <Text style={styles.walletToolButtonText}>{makeConsolidationTranslator(language)('action')}</Text>
-          </TouchableOpacity>
+            variant="secondary"
+            disabled={actionLocked || network.status === 'syncing'}
+            loading={pendingAction === 'consolidate'}
+          />
         ) : null}
       </View>
     );
