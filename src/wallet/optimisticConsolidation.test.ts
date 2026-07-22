@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { applyOptimisticConsolidationBroadcast } from './optimisticConsolidation';
+import { applyOptimisticWalletBroadcast } from './optimisticConsolidation';
 import type { TransparentWalletSnapshot } from './transparentScan';
 import type { PreparedTransparentTx } from './transparentSend';
 
@@ -50,20 +50,21 @@ const transaction: PreparedTransparentTx = {
   inputCount: 2,
   outputCount: 1,
   changeUsed: false,
-  consolidationAmountSats: 29_500,
-  consolidationInputs: [
+  walletInputs: [
     { txid: 'a', vout: 0, valueSats: 10_000, address: mainAddress },
     { txid: 'b', vout: 1, valueSats: 20_000, address: mainAddress },
   ],
+  walletOutputs: [
+    { vout: 0, valueSats: 29_500, address: mainAddress },
+  ],
 };
 
-describe('applyOptimisticConsolidationBroadcast', () => {
+describe('applyOptimisticWalletBroadcast', () => {
   it('moves consolidated funds to pending immediately and only once', () => {
-    const pending = applyOptimisticConsolidationBroadcast({
+    const pending = applyOptimisticWalletBroadcast({
       snapshot,
       transaction,
       txid: 'broadcast',
-      mainAddress,
     });
 
     expect(pending.spendableSats).toBe(0);
@@ -74,11 +75,10 @@ describe('applyOptimisticConsolidationBroadcast', () => {
       expect.objectContaining({ txid: 'broadcast', vout: 0, valueSats: 29_500, confirmations: 0 }),
     ]);
 
-    const repeated = applyOptimisticConsolidationBroadcast({
+    const repeated = applyOptimisticWalletBroadcast({
       snapshot: pending,
       transaction,
       txid: 'broadcast',
-      mainAddress,
     });
     expect(repeated.unconfirmedSats).toBe(29_500);
     expect(repeated.utxos).toHaveLength(1);

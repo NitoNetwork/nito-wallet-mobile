@@ -64,7 +64,7 @@ import {
   type PreparedTransparentTx,
 } from './src/wallet/transparentSend';
 import { makeConsolidationTranslator } from './src/i18n.consolidation';
-import { applyOptimisticConsolidationBroadcast } from './src/wallet/optimisticConsolidation';
+import { applyOptimisticWalletBroadcast } from './src/wallet/optimisticConsolidation';
 import { decodeUtf8 } from './src/security/utf8';
 
 declare const require: (path: string) => number;
@@ -77,6 +77,7 @@ const LANGUAGE_PREFERENCE_KEY = 'nito.wallet.language.v1';
 const BALANCE_REFRESH_COOLDOWN_KEY = 'nito.wallet.balance-refresh-until.v1';
 const BALANCE_REFRESH_COOLDOWN_MS = 120_000;
 const HISTORY_PAGE_SIZE = 12;
+const CONSOLIDATION_MIN_UTXOS = 9;
 const PBKDF2_ROUNDS = 120_000;
 const MNEMONIC_REVEAL_MS = 60_000;
 const ADDRESS_CLIPBOARD_MS = 60_000;
@@ -1491,35 +1492,28 @@ export default function App() {
       setBroadcasting(true);
       const client = electrumClientRef.current || new NitoElectrumClient();
       electrumClientRef.current = client;
-      const destinationAddress = sendAddress.trim();
-      const txid = await client.broadcastTransaction(preparedTx.hex);
+      const transaction = preparedTx;
+      const txid = await client.broadcastTransaction(transaction.hex);
+
+      const currentNetwork = networkRef.current;
+      if (currentNetwork.snapshot) {
+        const optimisticNetwork = {
+          ...currentNetwork,
+          snapshot: applyOptimisticWalletBroadcast({
+            snapshot: currentNetwork.snapshot,
+            transaction,
+            txid,
+          }),
+        };
+        networkRef.current = optimisticNetwork;
+        setNetwork(optimisticNetwork);
+      }
+
       setPreparedTx(null);
       setPreparedConsolidation(null);
       setSendAddress('');
       setSendAmount('');
       setStatus(t('status.transactionSent', { txid }));
-
-      const rememberSentTransaction = () => setNetwork((current) => {
-        if (!current.snapshot) {
-          return current;
-        }
-
-        const existing = current.snapshot.history.find((entry) => entry.txid === txid);
-        const sentEntry = existing || { txid, height: 0, address: destinationAddress };
-
-        return {
-          ...current,
-          snapshot: {
-            ...current.snapshot,
-            history: [
-              sentEntry,
-              ...current.snapshot.history.filter((entry) => entry.txid !== txid),
-            ],
-          },
-        };
-      });
-
-      rememberSentTransaction();
       Alert.alert(
         t('dialog.sentTitle'),
         t('dialog.sentBody', { txid: shortAddress(txid) }),
@@ -1534,8 +1528,7 @@ export default function App() {
         ],
       );
       void reconcileBroadcasts([txid])
-        .catch(() => undefined)
-        .finally(rememberSentTransaction);
+        .catch(() => undefined);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : t('errors.sendFailed'));
     } finally {
@@ -1561,6 +1554,7 @@ export default function App() {
         });
         setPreparedTx(null);
         setPreparedConsolidation(plan);
+        setWalletTab('send');
         setStatus(consolidationT('review'));
       } catch {
         setPreparedConsolidation(null);
@@ -1598,11 +1592,10 @@ export default function App() {
           sentCount += 1;
           const currentNetwork = networkRef.current;
           if (currentNetwork.snapshot && wallet) {
-            const optimisticSnapshot = applyOptimisticConsolidationBroadcast({
+            const optimisticSnapshot = applyOptimisticWalletBroadcast({
               snapshot: currentNetwork.snapshot,
               transaction,
               txid,
-              mainAddress: wallet.address,
             });
             const optimisticNetwork = { ...currentNetwork, snapshot: optimisticSnapshot };
             networkRef.current = optimisticNetwork;
@@ -2122,19 +2115,6 @@ export default function App() {
           <Text style={styles.helper}>
             {t('send.available', { amount: network.snapshot ? satoshisToNito(network.snapshot.spendableSats) : '0' })}
           </Text>
-          {!preparedConsolidation && network.snapshot && network.snapshot.utxos.filter((utxo) => (
-            utxo.confirmations >= 101 || (utxo.confirmations > 0 && utxo.isCoinbase === false)
-          )).length >= 2 ? (
-            <TouchableOpacity
-              accessibilityRole="button"
-              disabled={actionLocked || network.status === 'syncing'}
-              onPress={confirmTransparentConsolidation}
-              style={[styles.walletToolButton, (actionLocked || network.status === 'syncing') && styles.walletToolButtonDisabled]}
-            >
-              {pendingAction === 'consolidate' ? <ActivityIndicator color="#8cc6ff" size="small" /> : null}
-              <Text style={styles.walletToolButtonText}>{makeConsolidationTranslator(language)('action')}</Text>
-            </TouchableOpacity>
-          ) : null}
           {preparedTx ? (
             <View style={styles.txBox}>
               <Text style={styles.label}>{t('send.transactionReady')}</Text>
@@ -2367,7 +2347,19 @@ export default function App() {
           <Text style={styles.label}>{t('home.mainAddress')}</Text>
           <Text style={styles.previewAddress}>{shortAddress(wallet.address)}</Text>
         </View>
-        <ActionButton label={t('actions.receive')} onPress={() => setWalletTab('receive')} />
+        {!preparedConsolidation && network.snapshot && network.snapshot.utxos.filter((utxo) => (
+          utxo.confirmations >= 101 || (utxo.confirmations > 0 && utxo.isCoinbase === false)
+        )).length >= CONSOLIDATION_MIN_UTXOS ? (
+          <TouchableOpacity
+            accessibilityRole="button"
+            disabled={actionLocked || network.status === 'syncing'}
+            onPress={confirmTransparentConsolidation}
+            style={[styles.walletToolButton, (actionLocked || network.status === 'syncing') && styles.walletToolButtonDisabled]}
+          >
+            {pendingAction === 'consolidate' ? <ActivityIndicator color="#8cc6ff" size="small" /> : null}
+            <Text style={styles.walletToolButtonText}>{makeConsolidationTranslator(language)('action')}</Text>
+          </TouchableOpacity>
+        ) : null}
       </View>
     );
   };
