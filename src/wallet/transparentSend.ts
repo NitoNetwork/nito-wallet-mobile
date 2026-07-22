@@ -6,6 +6,7 @@ import type {
   NativePsbtSigner,
   NitoWalletCryptoApi,
 } from '../native/nitoWalletCryptoContract';
+import { isTransparentUtxoSpendable } from './coinbaseMaturity';
 import type { ScannedAddress, TransparentWalletSnapshot } from './transparentScan';
 
 export const NITO_SIGNER_NETWORK = {
@@ -111,7 +112,7 @@ const prepareSpendableInputs = async (
   const spendable: PreparedSpendableInput[] = [];
   let skippedLegacyCount = 0;
   const candidates = snapshot.utxos
-    .filter((entry) => entry.confirmations > 0)
+    .filter(isTransparentUtxoSpendable)
     .map((utxo) => ({ utxo, owner: owners.get(utxo.address) }))
     .filter((candidate): candidate is typeof candidate & { owner: ScannedAddress } => Boolean(candidate.owner?.spendable));
   const uniqueOwners = [...new Map(candidates.map(({ owner }) => [owner.path, owner])).values()];
@@ -301,7 +302,7 @@ export const buildTransparentConsolidation = async ({
   crypto?: NitoWalletCryptoApi;
 }): Promise<PreparedTransparentConsolidation> => {
   const confirmedUtxos = snapshot.utxos
-    .filter((utxo) => utxo.confirmations >= 1)
+    .filter(isTransparentUtxoSpendable)
     .sort((left, right) => left.valueSats - right.valueSats);
   if (confirmedUtxos.length < 2) {
     throw new Error('At least two confirmed outputs are required for consolidation.');
