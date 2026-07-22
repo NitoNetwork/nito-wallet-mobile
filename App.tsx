@@ -64,6 +64,7 @@ import {
   type PreparedTransparentTx,
 } from './src/wallet/transparentSend';
 import { makeConsolidationTranslator } from './src/i18n.consolidation';
+import { applyOptimisticConsolidationBroadcast } from './src/wallet/optimisticConsolidation';
 import { decodeUtf8 } from './src/security/utf8';
 
 declare const require: (path: string) => number;
@@ -1592,8 +1593,21 @@ export default function App() {
       let sentCount = 0;
       try {
         for (const transaction of preparedConsolidation.transactions) {
-          txids.push(await client.broadcastTransaction(transaction.hex));
+          const txid = await client.broadcastTransaction(transaction.hex);
+          txids.push(txid);
           sentCount += 1;
+          const currentNetwork = networkRef.current;
+          if (currentNetwork.snapshot && wallet) {
+            const optimisticSnapshot = applyOptimisticConsolidationBroadcast({
+              snapshot: currentNetwork.snapshot,
+              transaction,
+              txid,
+              mainAddress: wallet.address,
+            });
+            const optimisticNetwork = { ...currentNetwork, snapshot: optimisticSnapshot };
+            networkRef.current = optimisticNetwork;
+            setNetwork(optimisticNetwork);
+          }
         }
         setPreparedConsolidation(null);
         Alert.alert(consolidationT('successTitle'), consolidationT('successBody'), [
@@ -2105,20 +2119,22 @@ export default function App() {
             disabled={actionLocked || !network.snapshot || network.status === 'syncing' || !sendAddress.trim() || !sendAmount.trim()}
             onPress={prepareTransparentSend}
           />
-          <ActionButton
-            label={makeConsolidationTranslator(language)('action')}
-            variant="secondary"
-            loading={pendingAction === 'consolidate'}
-            disabled={
-              actionLocked
-              || !network.snapshot
-              || network.status === 'syncing'
-              || network.snapshot.utxos.filter((utxo) => (
-                utxo.confirmations >= 101 || (utxo.confirmations > 0 && utxo.isCoinbase === false)
-              )).length < 2
-            }
-            onPress={confirmTransparentConsolidation}
-          />
+          <Text style={styles.helper}>
+            {t('send.available', { amount: network.snapshot ? satoshisToNito(network.snapshot.spendableSats) : '0' })}
+          </Text>
+          {!preparedConsolidation && network.snapshot && network.snapshot.utxos.filter((utxo) => (
+            utxo.confirmations >= 101 || (utxo.confirmations > 0 && utxo.isCoinbase === false)
+          )).length >= 2 ? (
+            <TouchableOpacity
+              accessibilityRole="button"
+              disabled={actionLocked || network.status === 'syncing'}
+              onPress={confirmTransparentConsolidation}
+              style={[styles.walletToolButton, (actionLocked || network.status === 'syncing') && styles.walletToolButtonDisabled]}
+            >
+              {pendingAction === 'consolidate' ? <ActivityIndicator color="#8cc6ff" size="small" /> : null}
+              <Text style={styles.walletToolButtonText}>{makeConsolidationTranslator(language)('action')}</Text>
+            </TouchableOpacity>
+          ) : null}
           {preparedTx ? (
             <View style={styles.txBox}>
               <Text style={styles.label}>{t('send.transactionReady')}</Text>
@@ -2153,9 +2169,6 @@ export default function App() {
               />
             </View>
           ) : null}
-          <Text style={styles.helper}>
-            {t('send.available', { amount: network.snapshot ? satoshisToNito(network.snapshot.spendableSats) : '0' })}
-          </Text>
         </View>
       );
     }
@@ -2682,6 +2695,22 @@ const styles = StyleSheet.create({
     color: '#8390a8',
     fontSize: 13,
     lineHeight: 19,
+  },
+  walletToolButton: {
+    alignSelf: 'flex-start',
+    minHeight: 36,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingVertical: 7,
+    paddingHorizontal: 2,
+  },
+  walletToolButtonDisabled: { opacity: 0.42 },
+  walletToolButtonText: {
+    color: '#8cc6ff',
+    fontSize: 13,
+    lineHeight: 18,
+    fontWeight: '800',
   },
   label: {
     color: '#8ea0bd',
