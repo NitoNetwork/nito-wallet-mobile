@@ -1,6 +1,6 @@
 Pod::Spec.new do |s|
   s.name = 'NitoWalletCrypto'
-  s.version = '1.1.5'
+  s.version = '1.1.6'
   s.summary = 'Native Rust cryptographic core for Nito Wallet'
   s.homepage = 'https://nito.network'
   s.license = { :type => 'MIT' }
