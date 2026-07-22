@@ -80,6 +80,8 @@ const en = {
   'home.title': 'Balance',
   'home.transparentBalance': 'Transparent balance',
   'home.pendingBalance': 'Pending balance: {amount} NITO',
+  'home.immatureMiningRewards': 'Immature mining rewards: {amount} NITO',
+  'home.coinbaseBlocksRemaining': 'Next reward matures in {blocks} block(s)',
   'home.updatingBalance': 'Updating balance...',
   'home.mainAddress': 'Main public address',
   'receive.title': 'Receive',
@@ -511,6 +513,8 @@ export const REQUIRED_TRANSLATED_KEYS = [
   'home.title',
   'home.transparentBalance',
   'home.pendingBalance',
+  'home.immatureMiningRewards',
+  'home.coinbaseBlocksRemaining',
   'home.updatingBalance',
   'home.mainAddress',
   'receive.title',
@@ -1116,6 +1120,8 @@ const SEED_VALIDATION_TRANSLATIONS: Record<LanguageCode, Pick<TranslationSet, 's
 
 const FEATURE_TRANSLATIONS: Record<LanguageCode, Partial<TranslationSet>> = {
   en: {
+    'home.immatureMiningRewards': 'Immature mining rewards: {amount} NITO',
+    'home.coinbaseBlocksRemaining': 'Next reward matures in {blocks} block(s)',
     'loading.max': 'Calculating maximum...',
     'actions.scanQr': 'Scan QR', 'actions.refreshBalance': 'Refresh balance',
     'home.updatingBalance': 'Updating balance...', 'send.scanQrTitle': 'Scan Nito QR code',
@@ -1125,6 +1131,8 @@ const FEATURE_TRANSLATIONS: Record<LanguageCode, Partial<TranslationSet>> = {
     'dialog.sentTitle': 'Transaction sent', 'dialog.sentBody': 'Your transaction was broadcast. Transaction: {txid}',
   },
   zh: {
+    'home.immatureMiningRewards': '未成熟挖矿奖励：{amount} NITO',
+    'home.coinbaseBlocksRemaining': '下一笔奖励将在 {blocks} 个区块后成熟',
     'loading.max': '正在计算最大金额...',
     'actions.scanQr': '扫描二维码', 'actions.refreshBalance': '刷新余额',
     'home.updatingBalance': '正在更新余额...', 'send.scanQrTitle': '扫描 Nito 二维码',
@@ -1133,6 +1141,8 @@ const FEATURE_TRANSLATIONS: Record<LanguageCode, Partial<TranslationSet>> = {
     'dialog.sentTitle': '交易已发送', 'dialog.sentBody': '交易已广播。交易编号：{txid}',
   },
   hi: {
+    'home.immatureMiningRewards': 'अपरिपक्व खनन पुरस्कार: {amount} NITO',
+    'home.coinbaseBlocksRemaining': 'अगला पुरस्कार {blocks} ब्लॉक में परिपक्व होगा',
     'loading.max': 'अधिकतम राशि की गणना हो रही है...',
     'actions.scanQr': 'QR स्कैन करें', 'actions.refreshBalance': 'शेष राशि रीफ़्रेश करें',
     'home.updatingBalance': 'शेष राशि अपडेट हो रही है...', 'send.scanQrTitle': 'Nito QR कोड स्कैन करें',
@@ -1141,6 +1151,8 @@ const FEATURE_TRANSLATIONS: Record<LanguageCode, Partial<TranslationSet>> = {
     'dialog.sentTitle': 'लेनदेन भेजा गया', 'dialog.sentBody': 'आपका लेनदेन प्रसारित हो गया। लेनदेन: {txid}',
   },
   es: {
+    'home.immatureMiningRewards': 'Recompensas de minería inmaduras: {amount} NITO',
+    'home.coinbaseBlocksRemaining': 'La próxima recompensa madura en {blocks} bloque(s)',
     'loading.max': 'Calculando el máximo...',
     'actions.scanQr': 'Escanear QR', 'actions.refreshBalance': 'Actualizar saldo',
     'home.updatingBalance': 'Actualizando saldo...', 'send.scanQrTitle': 'Escanear código QR de Nito',
@@ -1149,6 +1161,8 @@ const FEATURE_TRANSLATIONS: Record<LanguageCode, Partial<TranslationSet>> = {
     'dialog.sentTitle': 'Transacción enviada', 'dialog.sentBody': 'Tu transacción se ha transmitido. Transacción: {txid}',
   },
   fr: {
+    'home.immatureMiningRewards': 'Récompenses de minage immatures : {amount} NITO',
+    'home.coinbaseBlocksRemaining': 'La prochaine récompense sera disponible dans {blocks} bloc(s)',
     'loading.max': 'Calcul du montant maximum...',
     'actions.scanQr': 'Scanner le QR', 'actions.refreshBalance': 'Actualiser le solde',
     'home.updatingBalance': 'Mise à jour du solde...', 'send.scanQrTitle': 'Scanner un QR code Nito',
@@ -1157,6 +1171,8 @@ const FEATURE_TRANSLATIONS: Record<LanguageCode, Partial<TranslationSet>> = {
     'dialog.sentTitle': 'Transaction envoyée', 'dialog.sentBody': 'Ta transaction a été diffusée. Transaction : {txid}',
   },
   ar: {
+    'home.immatureMiningRewards': 'مكافآت التعدين غير الناضجة: {amount} NITO',
+    'home.coinbaseBlocksRemaining': 'تنضج المكافأة التالية بعد {blocks} كتلة',
     'loading.max': 'جارٍ حساب الحد الأقصى...',
     'actions.scanQr': 'مسح رمز QR', 'actions.refreshBalance': 'تحديث الرصيد',
     'home.updatingBalance': 'جارٍ تحديث الرصيد...', 'send.scanQrTitle': 'مسح رمز Nito QR',
@@ -1165,6 +1181,8 @@ const FEATURE_TRANSLATIONS: Record<LanguageCode, Partial<TranslationSet>> = {
     'dialog.sentTitle': 'تم إرسال المعاملة', 'dialog.sentBody': 'تم بث معاملتك. المعرّف: {txid}',
   },
   bn: {
+    'home.immatureMiningRewards': 'অপরিপক্ব মাইনিং পুরস্কার: {amount} NITO',
+    'home.coinbaseBlocksRemaining': 'পরবর্তী পুরস্কার {blocks} ব্লক পরে পরিপক্ব হবে',
     'loading.max': 'সর্বোচ্চ পরিমাণ গণনা করা হচ্ছে...',
     'actions.scanQr': 'QR স্ক্যান করুন', 'actions.refreshBalance': 'ব্যালেন্স রিফ্রেশ করুন',
     'home.updatingBalance': 'ব্যালেন্স আপডেট হচ্ছে...', 'send.scanQrTitle': 'Nito QR কোড স্ক্যান করুন',
@@ -1173,6 +1191,8 @@ const FEATURE_TRANSLATIONS: Record<LanguageCode, Partial<TranslationSet>> = {
     'dialog.sentTitle': 'লেনদেন পাঠানো হয়েছে', 'dialog.sentBody': 'আপনার লেনদেন সম্প্রচার করা হয়েছে। লেনদেন: {txid}',
   },
   pt: {
+    'home.immatureMiningRewards': 'Recompensas de mineração imaturas: {amount} NITO',
+    'home.coinbaseBlocksRemaining': 'A próxima recompensa amadurece em {blocks} bloco(s)',
     'loading.max': 'Calculando o máximo...',
     'actions.scanQr': 'Ler QR', 'actions.refreshBalance': 'Atualizar saldo',
     'home.updatingBalance': 'Atualizando saldo...', 'send.scanQrTitle': 'Ler código QR Nito',
@@ -1181,6 +1201,8 @@ const FEATURE_TRANSLATIONS: Record<LanguageCode, Partial<TranslationSet>> = {
     'dialog.sentTitle': 'Transação enviada', 'dialog.sentBody': 'Sua transação foi transmitida. Transação: {txid}',
   },
   ru: {
+    'home.immatureMiningRewards': 'Незрелые награды за майнинг: {amount} NITO',
+    'home.coinbaseBlocksRemaining': 'Следующая награда созреет через {blocks} блок(а/ов)',
     'loading.max': 'Расчет максимальной суммы...',
     'actions.scanQr': 'Сканировать QR', 'actions.refreshBalance': 'Обновить баланс',
     'home.updatingBalance': 'Баланс обновляется...', 'send.scanQrTitle': 'Сканировать QR-код Nito',

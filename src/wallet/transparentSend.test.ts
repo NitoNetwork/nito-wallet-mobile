@@ -24,6 +24,7 @@ const makeSnapshot = async (): Promise<TransparentWalletSnapshot> => {
         height: 100,
         address: primary.address,
         confirmations: 12,
+        isCoinbase: false,
       },
     ],
     history: [{ txid: '22'.repeat(32), height: 100, address: primary.address }],
@@ -80,6 +81,7 @@ describe('transparent send builder', () => {
       height: 100 + index,
       address: snapshot.addresses[0]!.address,
       confirmations: 12,
+      isCoinbase: false,
     }));
     snapshot.addresses[0]!.balance = { confirmedSats: 100_000_000_000, unconfirmedSats: 0, totalSats: 100_000_000_000 };
 

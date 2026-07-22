@@ -236,9 +236,15 @@ const createEmptyNetworkState = (): NetworkState => ({
 });
 
 const toQuickWalletSnapshot = (snapshot: TransparentWalletSnapshot): TransparentWalletSnapshot => {
+  const spendableUtxos = snapshot.utxos.filter((utxo) => (
+    utxo.confirmations >= 101 || (utxo.confirmations > 0 && utxo.isCoinbase === false)
+  ));
   const currentUtxoTxids = new Set(
-    snapshot.utxos.filter((utxo) => utxo.confirmations > 0).map((utxo) => utxo.txid),
+    spendableUtxos.map((utxo) => utxo.txid),
   );
+  const immatureCoinbaseUtxos = snapshot.utxos.filter((utxo) => (
+    utxo.isCoinbase === true && utxo.confirmations > 0 && utxo.confirmations < 101
+  ));
   const keepCurrentUtxoHistory = (history: TransparentWalletSnapshot['history']) =>
     normalizeWalletHistory(history.filter((entry) => currentUtxoTxids.has(entry.txid)));
   const stripAddressHistory = (address: TransparentWalletSnapshot['addresses'][number]) => ({
@@ -248,6 +254,11 @@ const toQuickWalletSnapshot = (snapshot: TransparentWalletSnapshot): Transparent
 
   return {
     ...snapshot,
+    spendableSats: spendableUtxos.reduce((total, utxo) => total + utxo.valueSats, 0),
+    immatureCoinbaseSats: immatureCoinbaseUtxos.reduce((total, utxo) => total + utxo.valueSats, 0),
+    immatureCoinbaseBlocksRemaining: immatureCoinbaseUtxos.length === 0
+      ? 0
+      : Math.min(...immatureCoinbaseUtxos.map((utxo) => 101 - utxo.confirmations)),
     history: keepCurrentUtxoHistory(snapshot.history),
     addresses: snapshot.addresses.map(stripAddressHistory),
     usedAddresses: snapshot.usedAddresses.map(stripAddressHistory),
@@ -964,7 +975,14 @@ export default function App() {
       const snapshot = current.snapshot;
       if (!snapshot || height <= current.height) return;
 
-      const hasPending = snapshot.unconfirmedSats !== 0 || snapshot.history.some((entry) => entry.height <= 0);
+      const hasPending = snapshot.unconfirmedSats !== 0
+        || (snapshot.immatureCoinbaseSats ?? 0) > 0
+        || snapshot.history.some((entry) => entry.height <= 0)
+        || snapshot.utxos.some((utxo) => (
+          utxo.confirmations > 0
+          && utxo.confirmations < 101
+          && utxo.isCoinbase !== false
+        ));
       if (!hasPending) {
         const nextNetwork = { ...current, height };
         networkRef.current = nextNetwork;
@@ -973,7 +991,21 @@ export default function App() {
       }
 
       if (!syncInFlightRef.current) {
-        void syncTransparentNetwork(false, { force: true, silent: true, pendingOnly: true });
+        void syncTransparentNetwork(false, {
+          force: true,
+          silent: true,
+          pendingOnly: true,
+          onlyAddresses: snapshot.addresses
+            .filter((address) => address.utxos.some((utxo) => (
+              utxo.confirmations <= 0
+              || (
+                utxo.confirmations > 0
+                && utxo.confirmations < 101
+                && utxo.isCoinbase !== false
+              )
+            )))
+            .map((address) => address.address),
+        });
       }
     });
 
@@ -2080,7 +2112,9 @@ export default function App() {
               actionLocked
               || !network.snapshot
               || network.status === 'syncing'
-              || network.snapshot.utxos.filter((utxo) => utxo.confirmations >= 1).length < 2
+              || network.snapshot.utxos.filter((utxo) => (
+                utxo.confirmations >= 101 || (utxo.confirmations > 0 && utxo.isCoinbase === false)
+              )).length < 2
             }
             onPress={confirmTransparentConsolidation}
           />
@@ -2295,6 +2329,17 @@ export default function App() {
           {network.snapshot && network.snapshot.unconfirmedSats > 0 ? (
             <Text style={styles.pendingBalance}>
               {t('home.pendingBalance', { amount: satoshisToNito(network.snapshot.unconfirmedSats) })}
+            </Text>
+          ) : null}
+          {network.snapshot && (network.snapshot.immatureCoinbaseSats ?? 0) > 0 ? (
+            <Text style={styles.immatureCoinbaseBalance}>
+              {t('home.immatureMiningRewards', {
+                amount: satoshisToNito(network.snapshot.immatureCoinbaseSats ?? 0),
+              })}
+              {'\n'}
+              {t('home.coinbaseBlocksRemaining', {
+                blocks: network.snapshot.immatureCoinbaseBlocksRemaining ?? 0,
+              })}
             </Text>
           ) : null}
           {balanceRefreshing ? (
@@ -2997,6 +3042,13 @@ const styles = StyleSheet.create({
     fontSize: 15,
     fontWeight: '800',
     marginTop: 2,
+  },
+  immatureCoinbaseBalance: {
+    color: '#ffc52f',
+    fontSize: 15,
+    fontWeight: '700',
+    lineHeight: 22,
+    marginTop: 10,
   },
   balanceUpdating: { flexDirection: 'row', alignItems: 'center', gap: 7, marginTop: 6 },
   balanceHourglass: { color: '#8cc6ff', fontSize: 15 },

@@ -25,6 +25,7 @@ export type ElectrumUtxo = {
   height: number;
   address: string;
   confirmations: number;
+  isCoinbase?: boolean;
   rawTx?: string;
 };
 

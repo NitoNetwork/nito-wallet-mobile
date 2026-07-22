@@ -4,6 +4,11 @@ import type {
   NitoWalletCryptoApi,
   TransparentScriptType as NativeTransparentScriptType,
 } from '../native/nitoWalletCryptoContract';
+import {
+  annotateCoinbaseMaturity,
+  getImmatureCoinbaseSummary,
+  isTransparentUtxoSpendable,
+} from './coinbaseMaturity';
 
 const DEFAULT_GAP_LIMIT = 20;
 const SCAN_BATCH_SIZE = 5;
@@ -50,6 +55,8 @@ export type TransparentWalletSnapshot = {
   unconfirmedSats: number;
   balanceSats: number;
   spendableSats: number;
+  immatureCoinbaseSats?: number;
+  immatureCoinbaseBlocksRemaining?: number;
   utxos: ElectrumUtxo[];
   history: ElectrumHistoryEntry[];
   addresses: ScannedAddress[];
@@ -117,13 +124,18 @@ const buildSnapshot = (addresses: ScannedAddress[], gapLimit: number): Transpare
   const unconfirmedSats = addresses.reduce((total, address) => total + address.balance.unconfirmedSats, 0);
   const spendableSats = addresses
     .filter((address) => spendableAddressSet.has(address.address))
-    .reduce((total, address) => total + address.balance.confirmedSats, 0);
+    .flatMap((address) => address.utxos)
+    .filter(isTransparentUtxoSpendable)
+    .reduce((total, utxo) => total + utxo.valueSats, 0);
+  const immatureCoinbase = getImmatureCoinbaseSummary([...utxoMap.values()]);
 
   return {
     confirmedSats,
     unconfirmedSats,
     balanceSats: confirmedSats + unconfirmedSats,
     spendableSats,
+    immatureCoinbaseSats: immatureCoinbase.amountSats,
+    immatureCoinbaseBlocksRemaining: immatureCoinbase.blocksRemaining,
     utxos: [...utxoMap.values()],
     history: [...historyMap.values()].sort((a, b) => {
       if (a.height !== b.height) {
@@ -177,6 +189,7 @@ const scanDerivedAddress = async (
   derived: DerivedAddress,
   electrum: ElectrumReader,
   includeHistory: boolean,
+  previousAddress?: ScannedAddress,
 ): Promise<ScannedAddress> => {
   const addressHistory = await electrum.getAddressHistory(derived.address).catch(() => [] as ElectrumHistoryEntry[]);
   const used = addressHistory.length > 0;
@@ -192,10 +205,21 @@ const scanDerivedAddress = async (
   }
 
   const baseUtxos = await electrum.getAddressUtxos(derived.address).catch(() => [] as ElectrumUtxo[]);
-  const confirmedSats = baseUtxos
+  const hydratedUtxos = derived.scriptType === 'p2pkh' ? await hydrateLegacyUtxos(baseUtxos, electrum) : baseUtxos;
+  const utxos = await annotateCoinbaseMaturity(
+    hydratedUtxos,
+    previousAddress?.utxos ?? [],
+    async (txid) => {
+      const cached = hydratedUtxos.find((utxo) => utxo.txid === txid)?.rawTx;
+      if (cached) return cached;
+      if (!electrum.getTransactionHex) throw new Error('Transaction lookup unavailable.');
+      return electrum.getTransactionHex(txid);
+    },
+  );
+  const confirmedSats = utxos
     .filter((utxo) => utxo.confirmations > 0)
     .reduce((total, utxo) => total + utxo.valueSats, 0);
-  const unconfirmedSats = baseUtxos
+  const unconfirmedSats = utxos
     .filter((utxo) => utxo.confirmations <= 0)
     .reduce((total, utxo) => total + utxo.valueSats, 0);
   const balance: ElectrumBalance = {
@@ -204,13 +228,11 @@ const scanDerivedAddress = async (
     totalSats: confirmedSats + unconfirmedSats,
   };
   const spendableUtxoTxids = new Set(
-    baseUtxos.filter((utxo) => utxo.confirmations > 0).map((utxo) => utxo.txid),
+    utxos.filter(isTransparentUtxoSpendable).map((utxo) => utxo.txid),
   );
   const history = includeHistory
     ? addressHistory
     : addressHistory.filter((entry) => spendableUtxoTxids.has(entry.txid));
-  const utxos = derived.scriptType === 'p2pkh' ? await hydrateLegacyUtxos(baseUtxos, electrum) : baseUtxos;
-
   return { ...derived, balance, utxos, history, used };
 };
 
@@ -233,7 +255,7 @@ const scanBranch = async (
   let index = previousBranch.length > 0 ? Math.max(...previousBranch.map((address) => address.index)) + 1 : 0;
 
   if (previousBranch.length > 0) {
-    const refreshed = await Promise.all(previousBranch.map((address) => scanDerivedAddress(address, electrum, includeHistory)));
+    const refreshed = await Promise.all(previousBranch.map((address) => scanDerivedAddress(address, electrum, includeHistory, address)));
     addresses.push(...refreshed);
 
     const sorted = [...refreshed].sort((a, b) => a.index - b.index);
@@ -339,7 +361,7 @@ export const refreshKnownUsedAddresses = async ({
       : address.used || address.utxos.length > 0 || address.balance.unconfirmedSats !== 0,
   );
   const refreshed = await Promise.all(
-    targets.map((address) => scanDerivedAddress(address, electrum, includeHistory)),
+    targets.map((address) => scanDerivedAddress(address, electrum, includeHistory, address)),
   );
   const refreshedByPath = new Map(refreshed.map((address) => [address.path, address]));
   const addresses = snapshot.addresses.map((address) => refreshedByPath.get(address.path) ?? address);

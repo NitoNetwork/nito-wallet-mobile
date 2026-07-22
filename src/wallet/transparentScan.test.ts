@@ -25,8 +25,8 @@ describe('transparent HD scan', () => {
       async getAddressUtxos(address: string): Promise<ElectrumUtxo[]> {
         return address === usedAddress
           ? [
-              { txid: 'a'.repeat(64), vout: 0, valueSats: 125_000_000, height: 100, address, confirmations: 4 },
-              { txid: 'c'.repeat(64), vout: 1, valueSats: 25_000_000, height: 0, address, confirmations: 0 },
+              { txid: 'a'.repeat(64), vout: 0, valueSats: 125_000_000, height: 100, address, confirmations: 4, isCoinbase: false },
+              { txid: 'c'.repeat(64), vout: 1, valueSats: 25_000_000, height: 0, address, confirmations: 0, isCoinbase: false },
             ]
           : [];
       },
@@ -83,6 +83,7 @@ describe('transparent HD scan', () => {
           height: confirmed ? 101 : 0,
           address,
           confirmations: confirmed ? 1 : 0,
+          isCoinbase: false,
         }];
       },
       async getAddressHistory(address: string): Promise<ElectrumHistoryEntry[]> {
