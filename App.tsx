@@ -47,6 +47,7 @@ import {
   loadWalletHistoryCache,
   loadWalletSnapshotCache,
   normalizeWalletHistory,
+  saveEnrichedHistoryRecords,
   saveWalletHistoryCache,
   saveWalletSnapshotCache,
 } from './src/services/walletHistoryDb';
@@ -79,6 +80,7 @@ const LANGUAGE_PREFERENCE_KEY = 'nito.wallet.language.v1';
 const BALANCE_REFRESH_COOLDOWN_KEY = 'nito.wallet.balance-refresh-until.v1';
 const BALANCE_REFRESH_COOLDOWN_MS = 120_000;
 const HISTORY_PAGE_SIZE = 12;
+const HISTORY_AUTO_IMPORT = true;
 const MNEMONIC_REVEAL_MS = 60_000;
 const ADDRESS_CLIPBOARD_MS = 60_000;
 const BIP39_WORDS = new Set<string>(wordlist);
@@ -517,6 +519,8 @@ export default function App() {
   const skipNextAutoSyncRef = useRef(false);
   const silentNextAutoSyncRef = useRef(false);
   const syncInFlightRef = useRef(false);
+  const enrichInFlightRef = useRef(false);
+  const enrichAttemptedRef = useRef<Set<string>>(new Set());
   const appStateRef = useRef(AppState.currentState);
   const systemPromptActiveRef = useRef(false);
   const pendingActionRef = useRef<PendingAction | null>(null);
@@ -786,6 +790,68 @@ export default function App() {
     }
   }, []);
 
+  const enrichWalletHistory = useCallback(async () => {
+    if (enrichInFlightRef.current) return;
+    const activeWallet = walletRef.current;
+    const snapshot = networkRef.current.snapshot;
+    if (!activeWallet || !snapshot) return;
+    const pending = snapshot.history.filter((entry) =>
+      entry.height > 0 && entry.direction === undefined && !enrichAttemptedRef.current.has(entry.txid),
+    );
+    if (pending.length === 0) return;
+
+    enrichInFlightRef.current = true;
+    pending.forEach((entry) => enrichAttemptedRef.current.add(entry.txid));
+    try {
+      const client = electrumClientRef.current || new NitoElectrumClient();
+      electrumClientRef.current = client;
+      await client.connect().catch(() => undefined);
+      const records = await buildHistoryExportRecords({
+        history: pending,
+        walletAddresses: snapshot.addresses.map((address) => address.address),
+        reader: client,
+      });
+      await saveEnrichedHistoryRecords(
+        activeWallet.address,
+        records.map((record) => ({
+          txid: record.txid,
+          height: record.blockHeight,
+          amountSats: record.amountSats,
+          direction: record.direction,
+          feeSats: record.feeSats,
+        })),
+      ).catch(() => undefined);
+
+      const byTxid = new Map(records.map((record) => [record.txid, record]));
+      const current = networkRef.current;
+      if (!current.snapshot) return;
+      const enrichedHistory = current.snapshot.history.map((entry) => {
+        const record = byTxid.get(entry.txid);
+        if (!record || entry.direction !== undefined || record.blockHeight !== entry.height) {
+          return entry;
+        }
+        return {
+          ...entry,
+          direction: record.direction,
+          amountSats: record.amountSats,
+          feeSats: record.feeSats,
+          counterparty: record.counterpartyAddresses[0],
+          walletAddresses: record.walletAddresses,
+        };
+      });
+      const nextNetwork: NetworkState = {
+        ...current,
+        snapshot: { ...current.snapshot, history: enrichedHistory },
+      };
+      networkRef.current = nextNetwork;
+      setNetwork(nextNetwork);
+    } catch {
+      // Enrichment is best-effort; the plain history list stays available.
+    } finally {
+      enrichInFlightRef.current = false;
+    }
+  }, []);
+
   const syncTransparentNetwork = useCallback(async (
     includeHistory = false,
     options: {
@@ -823,7 +889,7 @@ export default function App() {
         history: [],
         fullHistoryHeight: 0,
       }));
-      const wantsFullHistory = includeHistory || cache.fullHistoryHeight > 0;
+      const wantsFullHistory = HISTORY_AUTO_IMPORT || includeHistory || cache.fullHistoryHeight > 0;
       const cacheAlreadyFresh =
         wantsFullHistory &&
         knownHeight > 0 &&
@@ -950,6 +1016,16 @@ export default function App() {
       }
     }
   }, [t]);
+
+  useEffect(() => {
+    if (screen !== 'wallet' || !network.snapshot) return;
+    const hasPending = network.snapshot.history.some(
+      (entry) => entry.height > 0 && entry.direction === undefined && !enrichAttemptedRef.current.has(entry.txid),
+    );
+    if (hasPending) {
+      void enrichWalletHistory();
+    }
+  }, [screen, network.snapshot, enrichWalletHistory]);
 
   const reconcileBroadcasts = useCallback(async (txids: readonly string[]) => {
     if (txids.length === 0) return;
@@ -2220,8 +2296,23 @@ export default function App() {
                 >
                   <View style={styles.historyRowTop}>
                     <View style={styles.historyRowText}>
-                      <Text style={styles.historyTxid}>{shortAddress(entry.txid)}</Text>
-                      <Text style={styles.helper}>{entry.height > 0 ? t('history.block', { height: entry.height }) : t('history.mempool')}</Text>
+                      <Text style={styles.historyTxid}>
+                        {entry.direction !== undefined
+                          ? `${entry.direction === 'received' ? '+' : entry.direction === 'sent' ? '−' : ''}${satoshisToNito(entry.amountSats ?? 0)} NITO`
+                          : shortAddress(entry.txid)}
+                      </Text>
+                      <Text style={styles.helper}>
+                        {[
+                          entry.direction === 'received'
+                            ? t('history.received')
+                            : entry.direction === 'sent'
+                              ? t('history.sent')
+                              : entry.direction === 'self'
+                                ? t('history.self')
+                                : '',
+                          entry.height > 0 ? t('history.block', { height: entry.height }) : t('history.mempool'),
+                        ].filter(Boolean).join(' · ')}
+                      </Text>
                     </View>
                     <View style={styles.viewTxBadge}>
                       <Text style={styles.viewTxText}>{t('actions.viewTx')}</Text>

@@ -2,6 +2,11 @@ import * as SQLite from 'expo-sqlite';
 
 import type { ElectrumHistoryEntry } from '../network/electrum';
 import type { TransparentWalletSnapshot } from '../wallet/transparentScan';
+import { normalizeWalletHistory } from './walletHistory';
+import type { EnrichedHistoryRecord } from './walletHistory';
+
+export { normalizeWalletHistory } from './walletHistory';
+export type { EnrichedHistoryRecord } from './walletHistory';
 
 const DB_NAME = 'nito-wallet-history.db';
 
@@ -9,7 +14,11 @@ type HistoryRow = {
   txid: string;
   height: number;
   address: string;
+  amount_sats: number | null;
+  direction: string | null;
+  fee_sats: number | null;
 };
+
 
 type SyncStateRow = {
   full_history_height: number;
@@ -58,37 +67,27 @@ const openHistoryDb = async () => {
         updated_at TEXT NOT NULL
       );
     `);
+
+    for (const column of [
+      'amount_sats INTEGER',
+      'direction TEXT',
+      'fee_sats INTEGER',
+      'enriched_at TEXT',
+    ]) {
+      await db.execAsync(`ALTER TABLE wallet_transactions ADD COLUMN ${column};`).catch(() => undefined);
+    }
+
     return db;
   });
 
   return dbPromise;
 };
 
-export const normalizeWalletHistory = (history: ElectrumHistoryEntry[]) => {
-  const byTxid = new Map<string, ElectrumHistoryEntry>();
-
-  for (const entry of history) {
-    const existing = byTxid.get(entry.txid);
-
-    if (!existing || entry.height > existing.height || (entry.height === existing.height && entry.address < existing.address)) {
-      byTxid.set(entry.txid, entry);
-    }
-  }
-
-  return [...byTxid.values()].sort((a, b) => {
-    if (a.height !== b.height) {
-      return b.height - a.height;
-    }
-
-    return a.txid.localeCompare(b.txid);
-  });
-};
-
 export const loadWalletHistoryCache = async (walletId: string): Promise<WalletHistoryCache> => {
   const db = await openHistoryDb();
   const [rows, state] = await Promise.all([
     db.getAllAsync<HistoryRow>(
-      'SELECT txid, height, address FROM wallet_transactions WHERE wallet_id = ? ORDER BY height DESC, txid ASC',
+      'SELECT txid, height, address, amount_sats, direction, fee_sats FROM wallet_transactions WHERE wallet_id = ? ORDER BY height DESC, txid ASC',
       walletId,
     ),
     db.getFirstAsync<SyncStateRow>(
@@ -97,8 +96,18 @@ export const loadWalletHistoryCache = async (walletId: string): Promise<WalletHi
     ),
   ]);
 
+  const history: ElectrumHistoryEntry[] = rows.map((row) => {
+    const entry: ElectrumHistoryEntry = { txid: row.txid, height: row.height, address: row.address };
+    if (row.direction === 'received' || row.direction === 'sent' || row.direction === 'self') {
+      entry.direction = row.direction;
+      entry.amountSats = row.amount_sats ?? 0;
+      entry.feeSats = row.fee_sats ?? 0;
+    }
+    return entry;
+  });
+
   return {
-    history: normalizeWalletHistory(rows),
+    history: normalizeWalletHistory(history),
     fullHistoryHeight: state?.full_history_height ?? 0,
   };
 };
@@ -177,6 +186,37 @@ export const saveWalletHistoryCache = async (
       now,
     );
 
+    await db.execAsync('COMMIT');
+  } catch (error) {
+    await db.execAsync('ROLLBACK').catch(() => undefined);
+    throw error;
+  }
+};
+
+export const saveEnrichedHistoryRecords = async (
+  walletId: string,
+  records: EnrichedHistoryRecord[],
+) => {
+  if (records.length === 0) return;
+  const db = await openHistoryDb();
+  const now = new Date().toISOString();
+
+  await db.execAsync('BEGIN IMMEDIATE TRANSACTION');
+  try {
+    for (const record of records) {
+      await db.runAsync(
+        `UPDATE wallet_transactions
+         SET amount_sats = ?, direction = ?, fee_sats = ?, enriched_at = ?
+         WHERE wallet_id = ? AND txid = ? AND height = ?`,
+        Math.max(0, Math.trunc(record.amountSats)),
+        record.direction,
+        Math.max(0, Math.trunc(record.feeSats)),
+        now,
+        walletId,
+        record.txid,
+        record.height,
+      );
+    }
     await db.execAsync('COMMIT');
   } catch (error) {
     await db.execAsync('ROLLBACK').catch(() => undefined);
