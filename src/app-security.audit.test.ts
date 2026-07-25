@@ -5,6 +5,8 @@ import { describe, expect, it } from 'vitest';
 import appSource from '../App.tsx?raw';
 import stylesSource from './ui/styles.ts?raw';
 import tabsSource from './ui/tabs.tsx?raw';
+import vaultSource from './services/vault.ts?raw';
+import vaultCryptoSource from './services/vaultCrypto.ts?raw';
 import expoConfig from '../app.config.js?raw';
 
 describe('mobile wallet UX and security invariants', () => {
@@ -50,8 +52,16 @@ describe('mobile wallet UX and security invariants', () => {
 
   it('lets the user turn biometric unlock off again without losing the vault', () => {
     expect(appSource).toContain('const disableBiometricUnlock = async ()');
-    expect(appSource).toContain('SecureStore.deleteItemAsync(BIOMETRIC_SECRET_KEY)');
+    expect(appSource).toContain('await deleteBiometricSecret();');
     expect(appSource).toContain("saveVault({ ...vault, biometricsEnabled: false, unlockMode: 'password' })");
+  });
+
+  it('keeps the vault at rest encrypted and device-bound', () => {
+    expect(vaultCryptoSource).toContain('nacl.secretbox(plaintext, nonce, key)');
+    expect(vaultCryptoSource).toContain('rounds: PBKDF2_ROUNDS');
+    expect(vaultSource).toMatch(/setItemAsync\(\s*VAULT_KEY[\s\S]*?WHEN_UNLOCKED_THIS_DEVICE_ONLY/);
+    expect(vaultSource).toMatch(/setItemAsync\(\s*BIOMETRIC_SECRET_KEY[\s\S]*?requireAuthentication: true/);
+    expect(vaultSource).toMatch(/getItemAsync\(BIOMETRIC_SECRET_KEY,[\s\S]*?requireAuthentication: true/);
   });
 
   it('renders blocking work above the scroll view with a rotating Nito logo', () => {

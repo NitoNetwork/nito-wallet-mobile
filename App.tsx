@@ -81,15 +81,22 @@ import {
 } from './src/wallet/transparentSend';
 import { makeConsolidationTranslator } from './src/i18n.consolidation';
 import { AutoLock } from './src/services/session';
+import {
+  decryptVault,
+  deleteBiometricSecret,
+  deleteVault,
+  encryptVault,
+  loadBiometricSecret,
+  loadVault,
+  saveBiometricSecret,
+  saveVault,
+} from './src/services/vault';
 import { applyOptimisticWalletBroadcast } from './src/wallet/optimisticConsolidation';
-import { decodeUtf8 } from './src/security/utf8';
 
 declare const require: (path: string) => number;
 
 const NITO_LOGO = require('./assets/nito-logo.png');
 const PRIMARY_DERIVATION_PATH = "m/84'/0'/0'/0/0";
-const VAULT_KEY = 'nito.wallet.vault.v1';
-const BIOMETRIC_SECRET_KEY = 'nito.wallet.biometric.secret.v1';
 const LANGUAGE_PREFERENCE_KEY = 'nito.wallet.language.v1';
 const BALANCE_REFRESH_COOLDOWN_KEY = 'nito.wallet.balance-refresh-until.v1';
 const BALANCE_REFRESH_COOLDOWN_MS = 120_000;
@@ -97,28 +104,6 @@ const HISTORY_AUTO_IMPORT = true;
 const MNEMONIC_REVEAL_MS = 60_000;
 const ADDRESS_CLIPBOARD_MS = 60_000;
 const BIP39_WORDS = new Set<string>(wordlist);
-
-type VaultPayload = {
-  version: 1;
-  mnemonic: string;
-  address: string;
-  derivationPath: string;
-  createdAt: string;
-};
-
-type EncryptedVault = {
-  version: 1;
-  kdf: 'pbkdf2-sha256';
-  rounds: number;
-  salt: string;
-  nonce: string;
-  ciphertext: string;
-  address: string;
-  derivationPath: string;
-  createdAt: string;
-  biometricsEnabled: boolean;
-  unlockMode?: 'password' | 'biometric';
-};
 
 const BASE_WALLET_TABS: { key: WalletTab; labelKey: Parameters<Translator>[0] }[] = [
   { key: 'home', labelKey: 'tabs.home' },
@@ -128,8 +113,6 @@ const BASE_WALLET_TABS: { key: WalletTab; labelKey: Parameters<Translator>[0] }[
   { key: 'security', labelKey: 'tabs.security' },
 ];
 
-const uint8ArrayToBase64 = (value: Uint8Array) => btoa(String.fromCharCode(...value));
-const base64ToUint8Array = (value: string) => Uint8Array.from(atob(value), (char) => char.charCodeAt(0));
 const yieldToUi = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
 const normalizeMnemonic = (value: string) => value.trim().toLowerCase().replace(/\s+/g, ' ');
 const isLanguageCode = (value: string | null): value is LanguageCode =>
@@ -288,87 +271,6 @@ const validateImportMnemonic = (value: string, t: Translator) => {
 
   return normalized;
 };
-
-const deriveKey = async (password: string, salt: Uint8Array, rounds = PBKDF2_ROUNDS) => {
-  const { keyBase64 } = await nitoWalletCrypto.pbkdf2({
-    password,
-    saltBase64: uint8ArrayToBase64(salt),
-    rounds,
-    outputLength: 32,
-  });
-  return base64ToUint8Array(keyBase64);
-};
-
-const encryptVault = async (
-  payload: VaultPayload,
-  password: string,
-  biometricsEnabled: boolean,
-  unlockMode: 'password' | 'biometric' = 'password',
-): Promise<EncryptedVault> => {
-  const salt = nacl.randomBytes(16);
-  const nonce = nacl.randomBytes(nacl.secretbox.nonceLength);
-  const key = await deriveKey(password, salt);
-  const plaintext = new TextEncoder().encode(JSON.stringify(payload));
-  const ciphertext = nacl.secretbox(plaintext, nonce, key);
-
-  return {
-    version: 1,
-    kdf: 'pbkdf2-sha256',
-    rounds: PBKDF2_ROUNDS,
-    salt: uint8ArrayToBase64(salt),
-    nonce: uint8ArrayToBase64(nonce),
-    ciphertext: uint8ArrayToBase64(ciphertext),
-    address: payload.address,
-    derivationPath: payload.derivationPath,
-    createdAt: payload.createdAt,
-    biometricsEnabled,
-    unlockMode,
-  };
-};
-
-const decryptVault = async (
-  vault: EncryptedVault,
-  password: string,
-  invalidMessage = 'Invalid password or corrupted vault.',
-): Promise<VaultPayload> => {
-  const key = await deriveKey(password, base64ToUint8Array(vault.salt), vault.rounds || PBKDF2_ROUNDS);
-  const plaintext = nacl.secretbox.open(
-    base64ToUint8Array(vault.ciphertext),
-    base64ToUint8Array(vault.nonce),
-    key,
-  );
-
-  if (!plaintext) {
-    throw new Error(invalidMessage);
-  }
-
-  return JSON.parse(decodeUtf8(plaintext)) as VaultPayload;
-};
-
-const loadVault = async () => {
-  const raw = await SecureStore.getItemAsync(VAULT_KEY);
-  return raw ? (JSON.parse(raw) as EncryptedVault) : null;
-};
-
-const saveVault = async (vault: EncryptedVault) => {
-  await SecureStore.setItemAsync(VAULT_KEY, JSON.stringify(vault), {
-    keychainAccessible: SecureStore.WHEN_UNLOCKED_THIS_DEVICE_ONLY,
-  });
-};
-
-const saveBiometricSecret = async (secret: string) => {
-  await SecureStore.setItemAsync(BIOMETRIC_SECRET_KEY, secret, {
-    keychainAccessible: SecureStore.WHEN_UNLOCKED_THIS_DEVICE_ONLY,
-    requireAuthentication: true,
-    authenticationPrompt: 'Unlock Nito Wallet',
-  });
-};
-
-const loadBiometricSecret = async () =>
-  SecureStore.getItemAsync(BIOMETRIC_SECRET_KEY, {
-    requireAuthentication: true,
-    authenticationPrompt: 'Unlock Nito Wallet',
-  });
 
 const getBiometricMethod = async (): Promise<BiometricMethod> => {
   const types = await LocalAuthentication.supportedAuthenticationTypesAsync();
@@ -1311,7 +1213,7 @@ export default function App() {
       return;
     }
 
-    await SecureStore.deleteItemAsync(BIOMETRIC_SECRET_KEY).catch(() => undefined);
+    await deleteBiometricSecret();
     setPersistBusy(true);
     setStatus(t('loading.protect'));
     await yieldToUi();
@@ -1371,8 +1273,8 @@ export default function App() {
           onPress: () => {
             void (async () => {
               try {
-                await SecureStore.deleteItemAsync(VAULT_KEY);
-                await SecureStore.deleteItemAsync(BIOMETRIC_SECRET_KEY).catch(() => undefined);
+                await deleteVault();
+                await deleteBiometricSecret();
                 if (walletId) {
                   await clearWalletHistoryCache(walletId).catch(() => undefined);
                 }
@@ -1766,7 +1668,7 @@ export default function App() {
   };
 
   const disableBiometricUnlock = async () => {
-    await SecureStore.deleteItemAsync(BIOMETRIC_SECRET_KEY).catch(() => undefined);
+    await deleteBiometricSecret();
     const vault = await loadVault();
     if (vault) {
       await saveVault({ ...vault, biometricsEnabled: false, unlockMode: 'password' });
