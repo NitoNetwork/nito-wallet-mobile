@@ -28,6 +28,14 @@ describe('mobile wallet UX and security invariants', () => {
     expect(appSource).toContain('if (!walletRef.current) {');
   });
 
+  it('never re-prompts biometrics automatically once the user dismissed it', () => {
+    expect(appSource).toContain('biometricDismissedRef.current = true;');
+    expect(appSource).toContain('|| biometricDismissedRef.current');
+    expect(appSource).toContain('&& !biometricDismissedRef.current');
+    expect(appSource).toContain('&& biometricInterruptedRef.current');
+    expect(appSource).toMatch(/if \(auto\) \{\s*return;/);
+  });
+
   it('clears the typed vault password when the wallet locks', () => {
     expect(appSource).toMatch(/const lockWallet = useCallback\(\(\) => \{[\s\S]*?setSensitivePassword\(''\);/);
   });

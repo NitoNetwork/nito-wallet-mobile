@@ -414,7 +414,9 @@ export default function App() {
   const syncInFlightRef = useRef(false);
   const enrichInFlightRef = useRef(false);
   const autoBiometricAttemptedRef = useRef(false);
-  const unlockSavedWalletRef = useRef<(useBiometrics?: boolean) => Promise<void>>(async () => undefined);
+  const unlockSavedWalletRef = useRef<(useBiometrics?: boolean, auto?: boolean) => Promise<void>>(async () => undefined);
+  const biometricDismissedRef = useRef(false);
+  const biometricInterruptedRef = useRef(false);
   const enrichAttemptedRef = useRef<Set<string>>(new Set());
   const appStateRef = useRef(AppState.currentState);
   const systemPromptActiveRef = useRef(false);
@@ -1156,7 +1158,7 @@ export default function App() {
     });
   };
 
-  const unlockSavedWallet = async (useBiometrics = false) => {
+  const unlockSavedWallet = async (useBiometrics = false, auto = false) => {
     await runExclusiveAction('unlock', async () => {
     resetFeedback();
 
@@ -1239,7 +1241,17 @@ export default function App() {
         })();
       }
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : t('errors.unlockFailed'));
+      if (useBiometrics) {
+        biometricDismissedRef.current = true;
+      }
+      if (auto) {
+        return;
+      }
+      setError(
+        useBiometrics
+          ? t('errors.biometricCancelled', { method: biometricMethod })
+          : caught instanceof Error ? caught.message : t('errors.unlockFailed'),
+      );
     }
 
     });
@@ -1252,14 +1264,21 @@ export default function App() {
   useEffect(() => {
     if (screen !== 'unlock') {
       autoBiometricAttemptedRef.current = false;
+      biometricDismissedRef.current = false;
+      biometricInterruptedRef.current = false;
       return;
     }
-    if (autoBiometricAttemptedRef.current || !vaultBiometricsEnabled || biometricUnavailableReason) {
+    if (
+      autoBiometricAttemptedRef.current
+      || biometricDismissedRef.current
+      || !vaultBiometricsEnabled
+      || biometricUnavailableReason
+    ) {
       return;
     }
     autoBiometricAttemptedRef.current = true;
     const timer = setTimeout(() => {
-      void unlockSavedWalletRef.current(true);
+      void unlockSavedWalletRef.current(true, true);
     }, 350);
     return () => clearTimeout(timer);
   }, [screen, vaultBiometricsEnabled, biometricUnavailableReason]);
@@ -1394,6 +1413,9 @@ export default function App() {
       if (previousState === 'active' && nextState !== 'active' && screen === 'wallet' && seedSaved && !systemPromptActiveRef.current) {
         lockWallet();
       }
+      if (previousState === 'active' && nextState !== 'active' && systemPromptActiveRef.current) {
+        biometricInterruptedRef.current = true;
+      }
       if (
         previousState === 'background'
         && nextState === 'active'
@@ -1401,8 +1423,11 @@ export default function App() {
         && vaultBiometricsEnabled
         && !biometricUnavailableReason
         && !systemPromptActiveRef.current
+        && biometricInterruptedRef.current
+        && !biometricDismissedRef.current
       ) {
-        void unlockSavedWalletRef.current(true);
+        biometricInterruptedRef.current = false;
+        void unlockSavedWalletRef.current(true, true);
       }
     });
     return () => subscription.remove();
