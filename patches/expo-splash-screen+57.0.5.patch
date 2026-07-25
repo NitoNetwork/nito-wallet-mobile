@@ -42,7 +42,7 @@ index 09f10f5..0b54ce4 100644
 --- a/node_modules/expo-splash-screen/plugin/src/withAndroidSplashScreen.ts
 +++ b/node_modules/expo-splash-screen/plugin/src/withAndroidSplashScreen.ts
 @@ -2,10 +2,8 @@ import { ConfigPlugin, withPlugins } from 'expo/config-plugins';
-
+ 
  import { getAndroidSplashConfig } from './getAndroidSplashConfig';
  import { Props } from './types';
 -import { withAndroidSplashDrawables } from './withAndroidSplashDrawables';
@@ -50,7 +50,7 @@ index 09f10f5..0b54ce4 100644
  import { withAndroidSplashMainActivity } from './withAndroidSplashMainActivity';
 -import { withAndroidSplashStrings } from './withAndroidSplashStrings';
  import { withAndroidSplashStyles } from './withAndroidSplashStyles';
-
+ 
  export const withAndroidSplashScreen: ConfigPlugin<Props> = (config, props) => {
 @@ -14,8 +12,6 @@ export const withAndroidSplashScreen: ConfigPlugin<Props> = (config, props) => {
    return withPlugins(config, [
@@ -74,5 +74,5 @@ index 8b044d7..1f9685c 100644
 -      _: 'icon_preferred',
 -    },
    ];
-
+ 
    styles.resources.style = [
