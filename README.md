@@ -16,8 +16,10 @@ transactions and new blocks, and to broadcast signed transactions.
 - Discover standard transparent HD branches with gap-limit scanning.
 - Receive with a Bech32 address and QR code.
 - Send transparent transactions with local signing and a review step.
-- Track confirmed, pending and optional full transaction history.
-- Export reconstructed history as CSV.
+- Consolidate many small outputs into a few equal-value outputs.
+- Import the full transaction history automatically, with each entry's amount
+  and direction (received, sent or internal).
+- Export the reconstructed history as CSV.
 - Use the interface in nine languages.
 
 Private Orchard/Bech32x functionality is intentionally not exposed until its
