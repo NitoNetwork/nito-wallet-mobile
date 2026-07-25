@@ -21,6 +21,17 @@ describe('mobile wallet UX and security invariants', () => {
     expect(appSource).toMatch(/encryptVault\(\s*\{[\s\S]*?\},\s*persistPassword,\s*false,\s*'password',/);
   });
 
+  it('never keeps the vault password inside the biometric opt-in dialog', () => {
+    expect(appSource).toContain('const promptBiometricOptIn = () => {');
+    expect(appSource).not.toMatch(/promptBiometricOptIn\((?!\))/);
+    expect(appSource).toContain('disableDeviceFallback: true');
+    expect(appSource).toContain('if (!walletRef.current) {');
+  });
+
+  it('clears the typed vault password when the wallet locks', () => {
+    expect(appSource).toMatch(/const lockWallet = useCallback\(\(\) => \{[\s\S]*?setSensitivePassword\(''\);/);
+  });
+
   it('lets the user turn biometric unlock off again without losing the vault', () => {
     expect(appSource).toContain('const disableBiometricUnlock = async ()');
     expect(appSource).toContain('SecureStore.deleteItemAsync(BIOMETRIC_SECRET_KEY)');

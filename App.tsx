@@ -206,6 +206,8 @@ const getImportMnemonicStatus = (value: string, t: Translator) => {
 
   return '';
 };
+const enrichKey = (entry: { txid: string; height: number }) => `${entry.txid}:${entry.height}`;
+
 const openTransactionExplorer = async (txid: string): Promise<void> => {
   if (!isValidTransactionId(txid)) return;
   await Linking.openURL(transactionExplorerUrl(txid));
@@ -386,7 +388,7 @@ const requestBiometricGate = async (promptMessage: string) => {
   const result = await LocalAuthentication.authenticateAsync({
     promptMessage,
     cancelLabel: 'Cancel',
-    disableDeviceFallback: false,
+    disableDeviceFallback: true,
     requireConfirmation: true,
   });
 
@@ -649,6 +651,7 @@ export default function App() {
     setSeedSaved(saved);
     setWalletTab('home');
     setHistoryPage(0);
+    enrichAttemptedRef.current.clear();
     setBalanceRefreshing(!pendingPreload);
     setNetwork(preloaded ? {
       status: 'connected',
@@ -690,12 +693,12 @@ export default function App() {
     const snapshot = networkRef.current.snapshot;
     if (!activeWallet || !snapshot) return;
     const pending = snapshot.history.filter((entry) =>
-      entry.height > 0 && entry.direction === undefined && !enrichAttemptedRef.current.has(entry.txid),
+      entry.direction === undefined && !enrichAttemptedRef.current.has(enrichKey(entry)),
     );
     if (pending.length === 0) return;
 
     enrichInFlightRef.current = true;
-    pending.forEach((entry) => enrichAttemptedRef.current.add(entry.txid));
+    pending.forEach((entry) => enrichAttemptedRef.current.add(enrichKey(entry)));
     setHistoryProgress({ done: 0, total: pending.length });
     try {
       const client = electrumClientRef.current || new NitoElectrumClient();
@@ -709,15 +712,17 @@ export default function App() {
       });
       await saveEnrichedHistoryRecords(
         activeWallet.address,
-        records.map((record) => ({
-          txid: record.txid,
-          height: record.blockHeight,
-          amountSats: record.amountSats,
-          direction: record.direction,
-          feeSats: record.feeSats,
-          counterparty: record.counterparty,
-          blockTime: record.blockTime,
-        })),
+        records
+          .filter((record) => record.blockHeight > 0)
+          .map((record) => ({
+            txid: record.txid,
+            height: record.blockHeight,
+            amountSats: record.amountSats,
+            direction: record.direction,
+            feeSats: record.feeSats,
+            counterparty: record.counterparty,
+            blockTime: record.blockTime,
+          })),
       ).catch(() => undefined);
 
       const byTxid = new Map(records.map((record) => [record.txid, record]));
@@ -744,7 +749,7 @@ export default function App() {
       networkRef.current = nextNetwork;
       setNetwork(nextNetwork);
     } catch {
-      // Enrichment is best-effort; the plain history list stays available.
+      pending.forEach((entry) => enrichAttemptedRef.current.delete(enrichKey(entry)));
     } finally {
       enrichInFlightRef.current = false;
       setHistoryProgress(null);
@@ -919,7 +924,7 @@ export default function App() {
   useEffect(() => {
     if (screen !== 'wallet' || !network.snapshot) return;
     const hasPending = network.snapshot.history.some(
-      (entry) => entry.height > 0 && entry.direction === undefined && !enrichAttemptedRef.current.has(entry.txid),
+      (entry) => entry.direction === undefined && !enrichAttemptedRef.current.has(enrichKey(entry)),
     );
     if (hasPending) {
       void enrichWalletHistory();
@@ -1222,7 +1227,12 @@ export default function App() {
               Boolean(vault.biometricsEnabled),
               vault.unlockMode === 'biometric' ? 'biometric' : 'password',
             );
-            await saveVault(upgraded);
+            const latest = await loadVault();
+            await saveVault({
+              ...upgraded,
+              biometricsEnabled: latest?.biometricsEnabled ?? upgraded.biometricsEnabled,
+              unlockMode: latest?.unlockMode ?? upgraded.unlockMode,
+            });
           } catch {
             // Best-effort KDF upgrade; the vault stays usable at its stored rounds.
           }
@@ -1295,14 +1305,13 @@ export default function App() {
       );
 
       await saveVault(encrypted);
-      const chosenPassword = persistPassword;
       setSeedSaved(true);
       setVaultUnlockMode('password');
       setVaultBiometricsEnabled(false);
       setPersistPassword('');
       setPersistConfirmPassword('');
       enterWallet(walletToPersist, true, t('status.walletOpened'));
-      promptBiometricOptIn(chosenPassword);
+      promptBiometricOptIn();
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : t('errors.saveFailed'));
     } finally {
@@ -1370,6 +1379,10 @@ export default function App() {
     setQrScanHandled(false);
     setQrScannerError('');
     setBalanceRefreshing(false);
+    setSensitiveAction(null);
+    setSensitivePassword('');
+    setShowSensitivePassword(false);
+    enrichAttemptedRef.current.clear();
     setNetwork(createEmptyNetworkState());
     setScreen(seedSaved ? 'unlock' : 'landing');
   }, [clearAddressSubscriptions, resetFeedback, seedSaved]);
@@ -1689,6 +1702,9 @@ export default function App() {
     if (biometricUnavailableReason) {
       throw new Error(biometricUnavailableReason);
     }
+    if (!walletRef.current) {
+      throw new Error(t('errors.noActiveWallet'));
+    }
 
     systemPromptActiveRef.current = true;
     try {
@@ -1731,7 +1747,7 @@ export default function App() {
     setSensitivePassword('');
   };
 
-  const promptBiometricOptIn = (password: string) => {
+  const promptBiometricOptIn = () => {
     if (biometricUnavailableReason) return;
     Alert.alert(
       t('dialog.biometricTitle', { method: biometricMethod }),
@@ -1741,14 +1757,9 @@ export default function App() {
         {
           text: t('dialog.biometricEnable'),
           onPress: () => {
-            void (async () => {
-              try {
-                await enableBiometricUnlock(password);
-                setStatus(t('status.biometricEnabled', { method: biometricMethod }));
-              } catch (caught) {
-                setError(caught instanceof Error ? caught.message : t('errors.biometricUnavailable'));
-              }
-            })();
+            if (!walletRef.current) return;
+            setWalletTab('security');
+            askEnableBiometrics();
           },
         },
       ],
@@ -1834,50 +1845,76 @@ export default function App() {
           throw new Error(t('errors.historyExportUnavailable'));
         }
 
-        const history = networkRef.current.snapshot.history;
-        const missing = history.filter((entry) => entry.direction === undefined);
-
-        if (missing.length > 0) {
-          const client = electrumClientRef.current || new NitoElectrumClient();
-          electrumClientRef.current = client;
-          await client.connect().catch(() => undefined);
-          const fresh = await buildHistoryExportRecords({
-            history: missing,
-            walletAddresses: networkRef.current.snapshot.addresses.map((address) => address.address),
-            reader: client,
-            onProgress: (done, total) => {
-              setStatus(t('status.historyExporting', { done, total }));
-            },
-          });
-          await saveEnrichedHistoryRecords(
-            walletRef.current?.address ?? '',
-            fresh.map((record) => ({
-              txid: record.txid,
-              height: record.blockHeight,
-              amountSats: record.amountSats,
-              direction: record.direction,
-              feeSats: record.feeSats,
-              counterparty: record.counterparty,
-              blockTime: record.blockTime,
-            })),
-          ).catch(() => undefined);
-          const byTxid = new Map(fresh.map((record) => [record.txid, record]));
-          for (const [index, entry] of history.entries()) {
-            const record = byTxid.get(entry.txid);
-            if (record) {
-              history[index] = {
-                ...entry,
-                direction: record.direction,
-                amountSats: record.amountSats,
-                feeSats: record.feeSats,
-                counterparty: record.counterparty,
-                blockTime: record.blockTime ?? undefined,
-              };
-            }
-          }
+        const activeWallet = walletRef.current;
+        if (!activeWallet) {
+          throw new Error(t('errors.noActiveWallet'));
         }
 
-        const records = historyRecordsFromEntries(history);
+        while (enrichInFlightRef.current) {
+          await new Promise((resolve) => setTimeout(resolve, 150));
+        }
+        enrichInFlightRef.current = true;
+        try {
+          const snapshot = networkRef.current.snapshot;
+          const missing = snapshot.history.filter((entry) => entry.direction === undefined);
+
+          if (missing.length > 0) {
+            const client = electrumClientRef.current || new NitoElectrumClient();
+            electrumClientRef.current = client;
+            await client.connect().catch(() => undefined);
+            const fresh = await buildHistoryExportRecords({
+              history: missing,
+              walletAddresses: snapshot.addresses.map((address) => address.address),
+              reader: client,
+              onProgress: (done, total) => {
+                setStatus(t('status.historyExporting', { done, total }));
+              },
+            });
+            await saveEnrichedHistoryRecords(
+              activeWallet.address,
+              fresh
+                .filter((record) => record.blockHeight > 0)
+                .map((record) => ({
+                  txid: record.txid,
+                  height: record.blockHeight,
+                  amountSats: record.amountSats,
+                  direction: record.direction,
+                  feeSats: record.feeSats,
+                  counterparty: record.counterparty,
+                  blockTime: record.blockTime,
+                })),
+            ).catch(() => undefined);
+            const byTxid = new Map(fresh.map((record) => [record.txid, record]));
+            const current = networkRef.current;
+            if (current.snapshot) {
+              const merged = current.snapshot.history.map((entry) => {
+                const record = byTxid.get(entry.txid);
+                if (!record || entry.direction !== undefined || record.blockHeight !== entry.height) {
+                  return entry;
+                }
+                return {
+                  ...entry,
+                  direction: record.direction,
+                  amountSats: record.amountSats,
+                  feeSats: record.feeSats,
+                  counterparty: record.counterparty,
+                  blockTime: record.blockTime ?? undefined,
+                };
+              });
+              const nextNetwork: NetworkState = {
+                ...current,
+                snapshot: { ...current.snapshot, history: merged },
+              };
+              networkRef.current = nextNetwork;
+              setNetwork(nextNetwork);
+            }
+            missing.forEach((entry) => enrichAttemptedRef.current.add(enrichKey(entry)));
+          }
+        } finally {
+          enrichInFlightRef.current = false;
+        }
+
+        const records = historyRecordsFromEntries(networkRef.current.snapshot?.history ?? []);
         const rows = historyExportCsvRows(records);
         const csv = `\uFEFF${rows.map((row) => row.map(escapeCsvCell).join(',')).join('\r\n')}`;
         const date = new Date().toISOString().slice(0, 10);

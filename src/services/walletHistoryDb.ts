@@ -81,11 +81,19 @@ const openHistoryDb = async () => {
       await db.execAsync(`ALTER TABLE wallet_transactions ADD COLUMN ${column};`).catch(() => undefined);
     }
 
-    await db.execAsync(
-      `UPDATE wallet_transactions
-       SET amount_sats = NULL, direction = NULL, fee_sats = NULL, counterparty = NULL, enriched_at = NULL
-       WHERE direction IS NOT NULL AND block_time IS NULL`,
-    ).catch(() => undefined);
+    try {
+      const version = await db.getFirstAsync<{ user_version: number }>('PRAGMA user_version');
+      if ((version?.user_version ?? 0) < 1) {
+        await db.execAsync(
+          `UPDATE wallet_transactions
+           SET amount_sats = NULL, direction = NULL, fee_sats = NULL, counterparty = NULL, enriched_at = NULL
+           WHERE direction IS NOT NULL AND block_time IS NULL`,
+        );
+        await db.execAsync('PRAGMA user_version = 1');
+      }
+    } catch {
+      // Version bump is retried on the next launch if the migration failed.
+    }
 
     return db;
   });

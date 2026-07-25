@@ -180,9 +180,10 @@ export function HistoryTab({
   onExportHistory: () => void;
   onOpenTx: (txid: string) => void;
 }) {
-  const historyEntries = (network.snapshot?.history ?? []).filter((entry) => entry.direction !== undefined);
-  const pendingEnrichment = (network.snapshot?.history ?? []).some((entry) => entry.direction === undefined);
-  const loading = network.status === 'syncing' || historyProgress !== null || pendingEnrichment;
+  const historyEntries = (network.snapshot?.history ?? []).filter(
+    (entry) => entry.direction !== undefined || entry.height <= 0,
+  );
+  const loading = network.status === 'syncing' || historyProgress !== null;
   const historyPageCount = Math.max(1, Math.ceil(historyEntries.length / HISTORY_PAGE_SIZE));
   const activeHistoryPage = Math.min(historyPage, historyPageCount - 1);
   const visibleHistory = historyEntries.slice(
@@ -240,7 +241,9 @@ export function HistoryTab({
               <View style={styles.historyRowTop}>
                 <View style={styles.historyRowText}>
                   <Text style={styles.historyTxid}>
-                    {`${entry.direction === 'received' ? '+' : entry.direction === 'sent' ? '−' : ''}${satoshisToNito(entry.amountSats ?? 0)} NITO`}
+                    {entry.direction === undefined
+                      ? shortAddress(entry.txid)
+                      : `${entry.direction === 'received' ? '+' : entry.direction === 'sent' ? '−' : ''}${satoshisToNito(entry.amountSats ?? 0)} NITO`}
                   </Text>
                   <Text style={styles.helper}>
                     {[
@@ -248,7 +251,9 @@ export function HistoryTab({
                         ? t('history.received')
                         : entry.direction === 'sent'
                           ? t('history.sent')
-                          : t('history.self'),
+                          : entry.direction === 'self'
+                            ? t('history.self')
+                            : '',
                       entry.height > 0 ? t('history.block', { height: entry.height }) : t('history.mempool'),
                     ].filter(Boolean).join(' · ')}
                   </Text>
