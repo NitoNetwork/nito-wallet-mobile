@@ -1758,10 +1758,14 @@ export default function App() {
 
         const client = electrumClientRef.current || new NitoElectrumClient();
         electrumClientRef.current = client;
+        await client.connect().catch(() => undefined);
         const records = await buildHistoryExportRecords({
           history: networkRef.current.snapshot.history,
           walletAddresses: networkRef.current.snapshot.addresses.map((address) => address.address),
           reader: client,
+          onProgress: (done, total) => {
+            setStatus(t('status.historyExporting', { done, total }));
+          },
         });
         const rows = historyExportCsvRows(records);
         const csv = `\uFEFF${rows.map((row) => row.map(escapeCsvCell).join(',')).join('\r\n')}`;
