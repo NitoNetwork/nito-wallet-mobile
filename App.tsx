@@ -417,6 +417,7 @@ export default function App() {
   const unlockSavedWalletRef = useRef<(useBiometrics?: boolean, auto?: boolean) => Promise<void>>(async () => undefined);
   const biometricDismissedRef = useRef(false);
   const biometricInterruptedRef = useRef(false);
+  const lockedDuringSessionRef = useRef(false);
   const enrichAttemptedRef = useRef<Set<string>>(new Set());
   const appStateRef = useRef(AppState.currentState);
   const systemPromptActiveRef = useRef(false);
@@ -1276,6 +1277,7 @@ export default function App() {
     if (
       autoBiometricAttemptedRef.current
       || biometricDismissedRef.current
+      || lockedDuringSessionRef.current
       || !vaultBiometricsEnabled
       || biometricUnavailableReason
     ) {
@@ -1396,6 +1398,7 @@ export default function App() {
   };
 
   const lockWallet = useCallback(() => {
+    lockedDuringSessionRef.current = true;
     resetFeedback();
     clearAddressSubscriptions();
     setWallet(null);
@@ -1440,6 +1443,7 @@ export default function App() {
         && !systemPromptActiveRef.current
         && biometricInterruptedRef.current
         && !biometricDismissedRef.current
+        && !lockedDuringSessionRef.current
       ) {
         biometricInterruptedRef.current = false;
         void unlockSavedWalletRef.current(true, true);

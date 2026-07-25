@@ -30,6 +30,12 @@ describe('mobile wallet UX and security invariants', () => {
     expect(appSource).toContain('if (!persistingMnemonic && !walletRef.current) {');
   });
 
+  it('never unlocks itself right after the wallet was locked', () => {
+    expect(appSource).toMatch(/const lockWallet = useCallback\(\(\) => \{\s*lockedDuringSessionRef\.current = true;/);
+    expect(appSource).toContain('|| lockedDuringSessionRef.current');
+    expect(appSource).toContain('&& !lockedDuringSessionRef.current');
+  });
+
   it('never re-prompts biometrics automatically once the user dismissed it', () => {
     expect(appSource).toContain('biometricDismissedRef.current = true;');
     expect(appSource).toContain('|| biometricDismissedRef.current');
