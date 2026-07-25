@@ -3,6 +3,7 @@
 import { describe, expect, it } from 'vitest';
 
 import appSource from '../App.tsx?raw';
+import stylesSource from './ui/styles.ts?raw';
 import expoConfig from '../app.config.js?raw';
 
 describe('mobile wallet UX and security invariants', () => {
@@ -18,13 +19,13 @@ describe('mobile wallet UX and security invariants', () => {
     const loadingOverlay = appSource.indexOf('{pendingAction ? (', scrollViewEnd);
     expect(scrollViewEnd).toBeGreaterThan(0);
     expect(loadingOverlay).toBeGreaterThan(scrollViewEnd);
-    expect(appSource).toContain('...StyleSheet.absoluteFill');
+    expect(stylesSource).toContain('...StyleSheet.absoluteFill');
     expect(appSource).toContain('transform: [{ rotate: loadingRotation }]');
   });
 
   it('clips the QR background and preserves splash artwork proportions', () => {
     expect(appSource).toContain('quietZone={12}');
-    expect(appSource).toMatch(/qrPlaceholder:[\s\S]*?overflow: 'hidden'/);
+    expect(stylesSource).toMatch(/qrPlaceholder:[\s\S]*?overflow: 'hidden'/);
     expect(expoConfig).toContain('"expo-splash-screen"');
     expect(expoConfig).toContain('resizeMode: "contain"');
   });
