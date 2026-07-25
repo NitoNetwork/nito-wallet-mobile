@@ -1,6 +1,6 @@
 # Nito Wallet
 
-[![Version](https://img.shields.io/github/package-json/v/NitoNetwork/nito-wallet-mobile?label=version)](package.json)
+[![Version](assets/version-badge.svg)](package.json)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 Nito Wallet is a non-custodial mobile wallet for Android and iOS. Wallet keys
