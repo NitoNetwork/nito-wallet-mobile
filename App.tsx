@@ -408,10 +408,11 @@ export default function App() {
   const addressUnsubscribeRef = useRef<Map<string, () => void>>(new Map());
   const blockHeightUnsubscribeRef = useRef<(() => void) | null>(null);
   const subscriptionRefreshInFlightRef = useRef(false);
-  const skipNextAutoSyncRef = useRef(false);
   const silentNextAutoSyncRef = useRef(false);
   const syncInFlightRef = useRef(false);
   const enrichInFlightRef = useRef(false);
+  const autoBiometricAttemptedRef = useRef(false);
+  const unlockSavedWalletRef = useRef<(useBiometrics?: boolean) => Promise<void>>(async () => undefined);
   const enrichAttemptedRef = useRef<Set<string>>(new Set());
   const appStateRef = useRef(AppState.currentState);
   const systemPromptActiveRef = useRef(false);
@@ -444,7 +445,7 @@ export default function App() {
   const [showMnemonic, setShowMnemonic] = useState(false);
   const [sensitivePassword, setSensitivePassword] = useState('');
   const [showSensitivePassword, setShowSensitivePassword] = useState(false);
-  const [sensitiveAction, setSensitiveAction] = useState<'reveal' | 'delete' | 'enableBiometrics' | null>(null);
+  const [sensitiveAction, setSensitiveAction] = useState<'reveal' | 'delete' | 'enableBiometrics' | 'disableBiometrics' | null>(null);
   const [sensitiveBusy, setSensitiveBusy] = useState(false);
   const [pendingAction, setPendingAction] = useState<PendingAction | null>(null);
   const [historyPage, setHistoryPage] = useState(0);
@@ -638,7 +639,7 @@ export default function App() {
 
     if (pendingPreload) {
       pendingNetworkRef.current = null;
-      skipNextAutoSyncRef.current = true;
+      silentNextAutoSyncRef.current = true;
     } else if (cachedQuickNetwork) {
       silentNextAutoSyncRef.current = true;
     }
@@ -1010,11 +1011,6 @@ export default function App() {
   useEffect(() => {
     if (screen === 'wallet' && wallet) {
       const timer = setTimeout(() => {
-        if (skipNextAutoSyncRef.current) {
-          skipNextAutoSyncRef.current = false;
-          return;
-        }
-
         const silent = silentNextAutoSyncRef.current;
         silentNextAutoSyncRef.current = false;
         void syncTransparentNetwork(false, silent ? { silent: true } : {});
@@ -1235,9 +1231,28 @@ export default function App() {
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : t('errors.unlockFailed'));
     }
-  
+
     });
   };
+
+  useEffect(() => {
+    unlockSavedWalletRef.current = unlockSavedWallet;
+  });
+
+  useEffect(() => {
+    if (screen !== 'unlock') {
+      autoBiometricAttemptedRef.current = false;
+      return;
+    }
+    if (autoBiometricAttemptedRef.current || !vaultBiometricsEnabled || biometricUnavailableReason) {
+      return;
+    }
+    autoBiometricAttemptedRef.current = true;
+    const timer = setTimeout(() => {
+      void unlockSavedWalletRef.current(true);
+    }, 350);
+    return () => clearTimeout(timer);
+  }, [screen, vaultBiometricsEnabled, biometricUnavailableReason]);
 
   const persistWallet = async () => {
     await runExclusiveAction('protect', async () => {
@@ -1366,9 +1381,19 @@ export default function App() {
       if (previousState === 'active' && nextState !== 'active' && screen === 'wallet' && seedSaved && !systemPromptActiveRef.current) {
         lockWallet();
       }
+      if (
+        previousState === 'background'
+        && nextState === 'active'
+        && screen === 'unlock'
+        && vaultBiometricsEnabled
+        && !biometricUnavailableReason
+        && !systemPromptActiveRef.current
+      ) {
+        void unlockSavedWalletRef.current(true);
+      }
     });
     return () => subscription.remove();
-  }, [lockWallet, screen, seedSaved]);
+  }, [lockWallet, screen, seedSaved, vaultBiometricsEnabled, biometricUnavailableReason]);
 
   useEffect(() => {
     if (screen !== 'wallet' || !seedSaved) {
@@ -1623,7 +1648,7 @@ export default function App() {
     });
   };
 
-  const verifySensitiveAction = async () => {
+  const verifySensitiveAction = async (requirePassword = false) => {
     const vault = await loadVault();
 
     if (!vault) {
@@ -1632,7 +1657,11 @@ export default function App() {
 
     let vaultSecret = sensitivePassword;
 
-    if (vault.unlockMode === 'biometric') {
+    if (requirePassword) {
+      if (sensitivePassword.length < 8) {
+        throw new Error(t('errors.enterVaultPassword'));
+      }
+    } else if (vault.unlockMode === 'biometric') {
       systemPromptActiveRef.current = true;
       const secret = await loadBiometricSecret().finally(() => {
         systemPromptActiveRef.current = false;
@@ -1677,21 +1706,19 @@ export default function App() {
   };
 
   const disableBiometricUnlock = async () => {
-    await runExclusiveAction('protect', async () => {
-      resetFeedback();
-      try {
-        await SecureStore.deleteItemAsync(BIOMETRIC_SECRET_KEY).catch(() => undefined);
-        const vault = await loadVault();
-        if (vault) {
-          await saveVault({ ...vault, biometricsEnabled: false, unlockMode: 'password' });
-        }
-        setVaultBiometricsEnabled(false);
-        setVaultUnlockMode('password');
-        setStatus(t('status.biometricDisabled'));
-      } catch (caught) {
-        setError(caught instanceof Error ? caught.message : t('errors.saveFailed'));
-      }
-    });
+    await SecureStore.deleteItemAsync(BIOMETRIC_SECRET_KEY).catch(() => undefined);
+    const vault = await loadVault();
+    if (vault) {
+      await saveVault({ ...vault, biometricsEnabled: false, unlockMode: 'password' });
+    }
+    setVaultBiometricsEnabled(false);
+    setVaultUnlockMode('password');
+  };
+
+  const askDisableBiometrics = () => {
+    resetFeedback();
+    setSensitiveAction('disableBiometrics');
+    setSensitivePassword('');
   };
 
   const askEnableBiometrics = () => {
@@ -1729,7 +1756,9 @@ export default function App() {
   };
 
   const confirmSensitiveAction = async () => {
-    await runExclusiveAction(sensitiveAction === 'delete' ? 'delete' : 'reveal', async () => {
+    await runExclusiveAction(
+      sensitiveAction === 'delete' ? 'delete' : sensitiveAction === 'reveal' ? 'reveal' : 'protect',
+      async () => {
     resetFeedback();
 
     if (!wallet || !sensitiveAction) {
@@ -1739,7 +1768,7 @@ export default function App() {
     setSensitiveBusy(true);
 
     try {
-      const vaultSecret = await verifySensitiveAction();
+      const vaultSecret = await verifySensitiveAction(sensitiveAction === 'disableBiometrics');
 
       if (sensitiveAction === 'reveal') {
         setShowMnemonic(true);
@@ -1747,6 +1776,9 @@ export default function App() {
       } else if (sensitiveAction === 'enableBiometrics') {
         await enableBiometricUnlock(vaultSecret);
         setStatus(t('status.biometricEnabled', { method: biometricMethod }));
+      } else if (sensitiveAction === 'disableBiometrics') {
+        await disableBiometricUnlock();
+        setStatus(t('status.biometricDisabled'));
       } else {
         removeSavedWallet();
       }
@@ -2205,7 +2237,7 @@ export default function App() {
           languageSettings={languageSettings}
           biometricAvailable={!biometricUnavailableReason}
           onEnableBiometrics={askEnableBiometrics}
-          onDisableBiometrics={() => { void disableBiometricUnlock(); }}
+          onDisableBiometrics={askDisableBiometrics}
         />
       );
     }

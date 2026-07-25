@@ -79,7 +79,6 @@ const buildHistoryExportRecord = async (
 
   let totalInputSats = 0;
   let walletInputSats = 0;
-  const externalInputAddresses = new Set<string>();
 
   await Promise.all(transaction.vin.map(async (input) => {
     if (!input.txid || typeof input.vout !== 'number') return;
@@ -91,8 +90,6 @@ const buildHistoryExportRecord = async (
     totalInputSats += valueSats;
     if (addresses.some((address) => owned.has(address))) {
       walletInputSats += valueSats;
-    } else {
-      addresses.forEach((address) => externalInputAddresses.add(address));
     }
   }));
 
@@ -100,9 +97,12 @@ const buildHistoryExportRecord = async (
   const externalOutputSats = externalOutputs.reduce((total, output) => total + output.valueSats, 0);
   const isSent = walletInputSats > 0 && externalOutputSats > 0;
   const direction: HistoryExportDirection = isSent ? 'sent' : walletInputSats > 0 ? 'self' : 'received';
+  const ownedOutputAddress = currentOutputs
+    .flatMap((output) => output.addresses)
+    .find((address) => owned.has(address)) ?? '';
   const counterparty = isSent
     ? [...new Set(externalOutputs.flatMap((output) => output.addresses))][0] ?? ''
-    : [...externalInputAddresses][0] ?? '';
+    : ownedOutputAddress;
   const blockTime = transaction.blocktime ?? transaction.time ?? null;
 
   return {
@@ -170,7 +170,7 @@ export const historyRecordsFromEntries = (entries: ElectrumHistoryEntry[]): Hist
   });
 
 export const historyExportCsvRows = (records: HistoryExportRecord[]) => [
-  ['date', 'direction', 'amount_nito', 'fee_nito', 'status', 'block_height', 'counterparty_address', 'txid'],
+  ['date', 'direction', 'amount_nito', 'fee_nito', 'status', 'block_height', 'address', 'txid'],
   ...records.map((record) => [
     formatUtcDate(record.blockTime),
     record.direction,

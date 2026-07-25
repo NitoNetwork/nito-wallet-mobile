@@ -81,6 +81,12 @@ const openHistoryDb = async () => {
       await db.execAsync(`ALTER TABLE wallet_transactions ADD COLUMN ${column};`).catch(() => undefined);
     }
 
+    await db.execAsync(
+      `UPDATE wallet_transactions
+       SET amount_sats = NULL, direction = NULL, fee_sats = NULL, counterparty = NULL, enriched_at = NULL
+       WHERE direction IS NOT NULL AND block_time IS NULL`,
+    ).catch(() => undefined);
+
     return db;
   });
 

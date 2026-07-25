@@ -329,7 +329,7 @@ export function SecurityTab({
   biometricMethod: BiometricMethod;
   showMnemonic: boolean;
   vaultUnlockMode: 'password' | 'biometric';
-  sensitiveAction: 'reveal' | 'delete' | 'enableBiometrics' | null;
+  sensitiveAction: 'reveal' | 'delete' | 'enableBiometrics' | 'disableBiometrics' | null;
   sensitivePassword: string;
   onChangeSensitivePassword: (value: string) => void;
   showSensitivePassword: boolean;
@@ -379,9 +379,11 @@ export function SecurityTab({
               ? t('security.confirmReveal')
               : sensitiveAction === 'enableBiometrics'
                 ? t('security.confirmEnableBiometric', { method: biometricMethod })
-                : t('security.confirmDelete')}
+                : sensitiveAction === 'disableBiometrics'
+                  ? t('security.confirmDisableBiometric', { method: biometricMethod })
+                  : t('security.confirmDelete')}
           </Text>
-          {vaultUnlockMode === 'password' ? (
+          {vaultUnlockMode === 'password' || sensitiveAction === 'disableBiometrics' ? (
             <PasswordField
               value={sensitivePassword}
               onChangeText={onChangeSensitivePassword}

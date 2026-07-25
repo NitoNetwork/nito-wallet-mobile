@@ -48,12 +48,12 @@ describe('wallet history export', () => {
     });
     expect(records[1]).toMatchObject({
       direction: 'received',
-      counterparty: 'external-source',
+      counterparty: 'wallet-address',
       amountSats: 990_000_000,
     });
     const rows = historyExportCsvRows(records);
     expect(rows[0]).toEqual([
-      'date', 'direction', 'amount_nito', 'fee_nito', 'status', 'block_height', 'counterparty_address', 'txid',
+      'date', 'direction', 'amount_nito', 'fee_nito', 'status', 'block_height', 'address', 'txid',
     ]);
     expect(rows[1]).toContain('recipient-address');
   });
