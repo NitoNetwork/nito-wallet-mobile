@@ -66,6 +66,7 @@ import {
   type PreparedTransparentTx,
 } from './src/wallet/transparentSend';
 import { makeConsolidationTranslator } from './src/i18n.consolidation';
+import { AutoLock } from './src/services/session';
 import { isTransparentUtxoSpendable } from './src/wallet/coinbaseMaturity';
 import { applyOptimisticWalletBroadcast } from './src/wallet/optimisticConsolidation';
 import { decodeUtf8 } from './src/security/utf8';
@@ -523,6 +524,7 @@ export default function App() {
   const enrichAttemptedRef = useRef<Set<string>>(new Set());
   const appStateRef = useRef(AppState.currentState);
   const systemPromptActiveRef = useRef(false);
+  const autoLockRef = useRef<AutoLock | null>(null);
   const pendingActionRef = useRef<PendingAction | null>(null);
   const [loadingSpin] = useState(() => new Animated.Value(0));
   const [network, setNetwork] = useState<NetworkState>(createEmptyNetworkState);
@@ -1320,6 +1322,22 @@ export default function App() {
       setVaultBiometricsEnabled(Boolean(vault.biometricsEnabled || vault.unlockMode === 'biometric'));
       setUnlockPassword('');
       enterWallet(unlockedWallet, true, t('status.walletUnlocked'), cachedNetwork, cachedHistory);
+
+      if ((vault.rounds || 0) < PBKDF2_ROUNDS) {
+        void (async () => {
+          try {
+            const upgraded = await encryptVault(
+              payload,
+              vaultSecret,
+              Boolean(vault.biometricsEnabled),
+              vault.unlockMode === 'biometric' ? 'biometric' : 'password',
+            );
+            await saveVault(upgraded);
+          } catch {
+            // Best-effort KDF upgrade; the vault stays usable at its stored rounds.
+          }
+        })();
+      }
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : t('errors.unlockFailed'));
     }
@@ -1476,6 +1494,29 @@ export default function App() {
     });
     return () => subscription.remove();
   }, [lockWallet, screen, seedSaved]);
+
+  useEffect(() => {
+    if (screen !== 'wallet' || !seedSaved) {
+      autoLockRef.current?.stop();
+      autoLockRef.current = null;
+      return;
+    }
+    const lock = new AutoLock(() => {
+      if (!systemPromptActiveRef.current) {
+        lockWallet();
+      }
+    });
+    autoLockRef.current = lock;
+    lock.resetTimer();
+    return () => {
+      lock.stop();
+      autoLockRef.current = null;
+    };
+  }, [screen, seedSaved, lockWallet]);
+
+  const registerActivity = useCallback(() => {
+    autoLockRef.current?.resetTimer();
+  }, []);
 
   const copyAddressToClipboard = async () => {
     await runExclusiveAction('copy', async () => {
@@ -2528,7 +2569,10 @@ export default function App() {
 
   return (
     <SafeAreaProvider>
-      <SafeAreaView style={styles.safeArea}>
+      <SafeAreaView
+        style={styles.safeArea}
+        onStartShouldSetResponderCapture={() => { registerActivity(); return false; }}
+      >
         <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={styles.keyboard}>
           <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={styles.screen}>
             {screen !== 'loading' ? hero : null}

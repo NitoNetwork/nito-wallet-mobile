@@ -15,6 +15,15 @@ Opening a transaction in the explorer sends the transaction identifier to the
 device browser. QR scanning uses the device camera only while the scanner is
 open. Copying an address places public data on the system clipboard.
 
+## Network trust model
+
+Nito Wallet is a lightweight client. Balances, unspent outputs and history are
+reported by the ElectrumX servers it connects to and are not independently
+verified with block Merkle proofs (no full SPV verification). A malicious or
+compromised server could therefore misreport balances or the result of a
+broadcast. The wallet mitigates this by using more than one server, but users
+who require full verification should run and connect to their own trusted node.
+
 ## Local data
 
 Wallet metadata, synchronization checkpoints and optional reconstructed history
