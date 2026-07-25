@@ -65,6 +65,7 @@ import {
   type PreparedTransparentTx,
 } from './src/wallet/transparentSend';
 import { makeConsolidationTranslator } from './src/i18n.consolidation';
+import { isTransparentUtxoSpendable } from './src/wallet/coinbaseMaturity';
 import { applyOptimisticWalletBroadcast } from './src/wallet/optimisticConsolidation';
 import { decodeUtf8 } from './src/security/utf8';
 
@@ -1618,6 +1619,7 @@ export default function App() {
         setPreparedConsolidation(remaining.length > 0 ? {
           transactions: remaining,
           inputCount: remaining.reduce((total, transaction) => total + transaction.inputCount, 0),
+          outputCount: remaining.reduce((total, transaction) => total + transaction.outputCount, 0),
           totalFeeSats: remaining.reduce((total, transaction) => total + transaction.feeSats, 0),
         } : null);
         Alert.alert(consolidationT('partialTitle'), consolidationT('partialBody'));
@@ -2146,6 +2148,9 @@ export default function App() {
                 {`${makeConsolidationTranslator(language)('inputs')}: ${preparedConsolidation.inputCount}`}
               </Text>
               <Text style={styles.helper}>
+                {`${makeConsolidationTranslator(language)('outputs')}: ${preparedConsolidation.outputCount}`}
+              </Text>
+              <Text style={styles.helper}>
                 {`${makeConsolidationTranslator(language)('fees')}: ${satoshisToNito(preparedConsolidation.totalFeeSats)} NITO`}
               </Text>
               <ActionButton
@@ -2310,6 +2315,10 @@ export default function App() {
       );
     }
 
+    const spendableAddressSet = new Set(
+      (network.snapshot?.spendableAddresses ?? []).map((address) => address.address),
+    );
+
     return (
       <View style={styles.card}>
         <View style={styles.sectionTitleRow}>
@@ -2355,7 +2364,8 @@ export default function App() {
           <Text style={styles.previewAddress}>{shortAddress(wallet.address)}</Text>
         </View>
         {!preparedConsolidation && network.snapshot && network.snapshot.utxos.filter((utxo) => (
-          utxo.confirmations >= 101 || (utxo.confirmations > 0 && utxo.isCoinbase === false)
+          isTransparentUtxoSpendable(utxo)
+          && (spendableAddressSet.has(utxo.address))
         )).length >= CONSOLIDATION_MIN_UTXOS ? (
           <ActionButton
             label={makeConsolidationTranslator(language)('action')}

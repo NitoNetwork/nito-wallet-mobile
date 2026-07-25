@@ -1,5 +1,10 @@
 import * as btc from '@scure/btc-signer';
 
+import {
+  CONSOLIDATION_MIN_SATS_PER_OUTPUT,
+  CONSOLIDATION_MIN_UTXOS,
+  CONSOLIDATION_TARGET_OUTPUTS,
+} from '../constants/nito';
 import { nitoWalletCrypto } from '../native/nitoWalletCrypto';
 import type {
   NativeDerivedAddress,
@@ -210,14 +215,12 @@ const resolveChangeAddress = (snapshot: TransparentWalletSnapshot, changeAddress
 
 const selectSpend = ({
   spendable,
-  toAddress,
-  amountSats,
+  outputs,
   feePerVbyte,
   changeAddress,
 }: {
   spendable: PreparedSpendableInput[];
-  toAddress: string;
-  amountSats: bigint;
+  outputs: { address: string; amount: bigint }[];
   feePerVbyte: bigint;
   changeAddress: string;
 }) => {
@@ -225,7 +228,7 @@ const selectSpend = ({
 
   return btc.selectUTXO(
     inputs,
-    [{ address: toAddress.trim(), amount: amountSats }],
+    outputs.map((output) => ({ address: output.address.trim(), amount: output.amount })),
     'default',
     {
       changeAddress,
@@ -263,8 +266,7 @@ export const calculateMaxTransparentSendAmount = ({
     const amountSats = (low + high) / 2n;
     const selected = selectSpend({
       spendable,
-      toAddress,
-      amountSats,
+      outputs: [{ address: toAddress, amount: amountSats }],
       feePerVbyte,
       changeAddress: resolvedChangeAddress,
     });
@@ -292,18 +294,59 @@ export const calculateMaxTransparentSendAmount = ({
 };
 
 const MAX_STANDARD_CONSOLIDATION_VBYTES = 90_000;
-const CONSOLIDATION_BASE_VBYTES = 44;
+const CONSOLIDATION_TX_OVERHEAD_VBYTES = 11;
+const CONSOLIDATION_OUTPUT_VBYTES = 31;
 const CONSOLIDATION_INPUT_VBYTES: Record<string, number> = {
-  p2pkh: 148,
-  p2shP2wpkh: 91,
-  p2wpkh: 68,
-  p2tr: 58,
+  'p2pkh': 148,
+  'p2sh-p2wpkh': 91,
+  'p2wpkh': 68,
+  'p2tr': 58,
 };
+const CONSOLIDATION_OUTPUT_STEPS = [CONSOLIDATION_TARGET_OUTPUTS, 4, 2, 1];
 
 export type PreparedTransparentConsolidation = {
   transactions: PreparedTransparentTx[];
   inputCount: number;
+  outputCount: number;
   totalFeeSats: number;
+};
+
+const calculateMaxEqualSplit = async ({
+  mnemonic,
+  snapshot,
+  toAddress,
+  outputCount,
+  feePerVbyte,
+  crypto,
+}: {
+  mnemonic: string;
+  snapshot: TransparentWalletSnapshot;
+  toAddress: string;
+  outputCount: number;
+  feePerVbyte: bigint;
+  crypto: NitoWalletCryptoApi;
+}): Promise<bigint | null> => {
+  const { spendable, totalSats } = await prepareSpendableInputs(mnemonic, snapshot, crypto);
+  const resolvedChangeAddress = resolveChangeAddress(snapshot);
+  const count = BigInt(outputCount);
+  let low = DUST_LIMIT_SATS;
+  let high = totalSats / count;
+  let best: bigint | null = null;
+
+  while (low <= high) {
+    const perOutput = (low + high) / 2n;
+    const outputs = Array.from({ length: outputCount }, () => ({ address: toAddress, amount: perOutput }));
+    const selected = selectSpend({ spendable, outputs, feePerVbyte, changeAddress: resolvedChangeAddress });
+
+    if (selected?.tx) {
+      best = perOutput;
+      low = perOutput + 1n;
+    } else {
+      high = perOutput - 1n;
+    }
+  }
+
+  return best;
 };
 
 export const buildTransparentConsolidation = async ({
@@ -322,23 +365,24 @@ export const buildTransparentConsolidation = async ({
   const confirmedUtxos = snapshot.utxos
     .filter(isTransparentUtxoSpendable)
     .sort((left, right) => left.valueSats - right.valueSats);
-  if (confirmedUtxos.length < 2) {
-    throw new Error('At least two confirmed outputs are required for consolidation.');
+  if (confirmedUtxos.length < CONSOLIDATION_MIN_UTXOS) {
+    throw new Error(`At least ${CONSOLIDATION_MIN_UTXOS} confirmed spendable outputs are required for consolidation.`);
   }
 
   const scriptTypes = new Map(
     snapshot.addresses.map((address) => [address.address, address.scriptType] as const),
   );
+  const outputsBaseVbytes = CONSOLIDATION_TX_OVERHEAD_VBYTES + CONSOLIDATION_TARGET_OUTPUTS * CONSOLIDATION_OUTPUT_VBYTES;
   const batches: typeof confirmedUtxos[] = [];
   let batch: typeof confirmedUtxos = [];
-  let estimatedVbytes = CONSOLIDATION_BASE_VBYTES;
+  let estimatedVbytes = outputsBaseVbytes;
 
   for (const utxo of confirmedUtxos) {
     const inputVbytes = CONSOLIDATION_INPUT_VBYTES[scriptTypes.get(utxo.address) ?? 'p2wpkh'] ?? 148;
     if (batch.length > 0 && estimatedVbytes + inputVbytes > MAX_STANDARD_CONSOLIDATION_VBYTES) {
       batches.push(batch);
       batch = [];
-      estimatedVbytes = CONSOLIDATION_BASE_VBYTES;
+      estimatedVbytes = outputsBaseVbytes;
     }
     batch.push(utxo);
     estimatedVbytes += inputVbytes;
@@ -353,50 +397,72 @@ export const buildTransparentConsolidation = async ({
   const transactions: PreparedTransparentTx[] = [];
   for (const utxos of usefulBatches) {
     const batchSnapshot: TransparentWalletSnapshot = { ...snapshot, utxos };
-    const { amountSats } = await calculateMaxTransparentSendAmount({
-      mnemonic,
-      snapshot: batchSnapshot,
-      toAddress,
-      feePerVbyte,
-      crypto,
-    });
-    const transaction = await buildTransparentSend({
-      mnemonic,
-      snapshot: batchSnapshot,
-      toAddress,
-      amountSats,
-      feePerVbyte,
-      crypto,
-    });
-    if (transaction.inputCount !== utxos.length || transaction.changeUsed) {
-      throw new Error('The consolidation plan did not consume the expected outputs.');
+    let built: PreparedTransparentTx | null = null;
+
+    for (const target of CONSOLIDATION_OUTPUT_STEPS) {
+      const outputCount = Math.min(target, utxos.length);
+      if (outputCount < 1) continue;
+
+      const perOutput = await calculateMaxEqualSplit({
+        mnemonic,
+        snapshot: batchSnapshot,
+        toAddress,
+        outputCount,
+        feePerVbyte,
+        crypto,
+      });
+      if (perOutput === null || perOutput < BigInt(CONSOLIDATION_MIN_SATS_PER_OUTPUT)) {
+        continue;
+      }
+
+      const outputs = Array.from({ length: outputCount }, () => ({ address: toAddress, amount: perOutput }));
+      const transaction = await buildTransparentTx({
+        mnemonic,
+        snapshot: batchSnapshot,
+        outputs,
+        feePerVbyte,
+        crypto,
+      });
+      if (
+        transaction.inputCount !== utxos.length
+        || transaction.changeUsed
+        || transaction.outputCount !== outputCount
+      ) {
+        continue;
+      }
+      if (transaction.hex.length / 2 > 100_000) {
+        throw new Error('A consolidation transaction exceeds the standard size limit.');
+      }
+
+      built = transaction;
+      break;
     }
-    if (transaction.hex.length / 2 > 100_000) {
-      throw new Error('A consolidation transaction exceeds the standard size limit.');
+
+    if (!built) {
+      throw new Error('No useful consolidation transaction can be created.');
     }
-    transactions.push(transaction);
+    transactions.push(built);
   }
 
   return {
     transactions,
     inputCount: transactions.reduce((total, transaction) => total + transaction.inputCount, 0),
+    outputCount: transactions.reduce((total, transaction) => total + transaction.outputCount, 0),
     totalFeeSats: transactions.reduce((total, transaction) => total + transaction.feeSats, 0),
   };
 };
 
-export const buildTransparentSend = ({
+const buildTransparentTx = ({
   mnemonic,
   snapshot,
-  toAddress,
-  amountSats,
+  outputs,
   feePerVbyte = DEFAULT_FEE_PER_VBYTE,
   changeAddress,
   crypto = nitoWalletCrypto,
 }: {
   mnemonic: string;
   snapshot: TransparentWalletSnapshot;
-  toAddress: string;
-  amountSats: bigint;
+  outputs: { address: string; amount: bigint }[];
   feePerVbyte?: bigint;
   changeAddress?: string;
   crypto?: NitoWalletCryptoApi;
@@ -406,8 +472,7 @@ export const buildTransparentSend = ({
   const resolvedChangeAddress = resolveChangeAddress(snapshot, changeAddress);
   const selected = selectSpend({
     spendable,
-    toAddress,
-    amountSats,
+    outputs,
     feePerVbyte,
     changeAddress: resolvedChangeAddress,
   });
@@ -482,3 +547,29 @@ export const buildTransparentSend = ({
   };
   })();
 };
+
+export const buildTransparentSend = ({
+  mnemonic,
+  snapshot,
+  toAddress,
+  amountSats,
+  feePerVbyte = DEFAULT_FEE_PER_VBYTE,
+  changeAddress,
+  crypto = nitoWalletCrypto,
+}: {
+  mnemonic: string;
+  snapshot: TransparentWalletSnapshot;
+  toAddress: string;
+  amountSats: bigint;
+  feePerVbyte?: bigint;
+  changeAddress?: string;
+  crypto?: NitoWalletCryptoApi;
+}): Promise<PreparedTransparentTx> =>
+  buildTransparentTx({
+    mnemonic,
+    snapshot,
+    outputs: [{ address: toAddress, amount: amountSats }],
+    feePerVbyte,
+    changeAddress,
+    crypto,
+  });
