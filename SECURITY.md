@@ -2,7 +2,7 @@
 
 ## Supported versions
 
-Security fixes are applied to the latest 1.1.x release line. Users should run
+Security fixes are applied to the latest 1.2.x release line. Users should run
 the most recent published build.
 
 ## Reporting a vulnerability
