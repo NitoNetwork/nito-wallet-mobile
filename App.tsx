@@ -454,6 +454,7 @@ export default function App() {
   const [pendingAction, setPendingAction] = useState<PendingAction | null>(null);
   const [historyPage, setHistoryPage] = useState(0);
   const [historyProgress, setHistoryProgress] = useState<{ done: number; total: number } | null>(null);
+  const [historySyncing, setHistorySyncing] = useState(false);
   const [language, setLanguage] = useState<LanguageCode>(detectSystemLanguage);
   const [languagePickerOpen, setLanguagePickerOpen] = useState(false);
   const [balanceRefreshing, setBalanceRefreshing] = useState(false);
@@ -796,6 +797,9 @@ export default function App() {
         fullHistoryHeight: 0,
       }));
       const wantsFullHistory = HISTORY_AUTO_IMPORT || includeHistory || cache.fullHistoryHeight > 0;
+      if (wantsFullHistory) {
+        setHistorySyncing(true);
+      }
       const cacheAlreadyFresh =
         wantsFullHistory &&
         knownHeight > 0 &&
@@ -917,6 +921,7 @@ export default function App() {
       setNetwork(nextNetwork);
     } finally {
       syncInFlightRef.current = false;
+      setHistorySyncing(false);
       if (!includeHistory) {
         setBalanceRefreshing(false);
       }
@@ -1327,10 +1332,20 @@ export default function App() {
       setSeedSaved(true);
       setVaultUnlockMode('password');
       setVaultBiometricsEnabled(false);
+
+      let biometricNotice = '';
+      if (!biometricUnavailableReason && await askBiometricOptIn()) {
+        try {
+          await enableBiometricUnlock(persistPassword, walletToPersist.mnemonic);
+          biometricNotice = t('status.biometricEnabled', { method: biometricMethod });
+        } catch {
+          biometricNotice = t('errors.biometricUnavailable');
+        }
+      }
+
       setPersistPassword('');
       setPersistConfirmPassword('');
-      enterWallet(walletToPersist, true, t('status.walletOpened'));
-      promptBiometricOptIn();
+      enterWallet(walletToPersist, true, biometricNotice || t('status.walletOpened'));
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : t('errors.saveFailed'));
     } finally {
@@ -1723,11 +1738,11 @@ export default function App() {
     return vaultSecret;
   };
 
-  const enableBiometricUnlock = async (password: string) => {
+  const enableBiometricUnlock = async (password: string, persistingMnemonic?: string) => {
     if (biometricUnavailableReason) {
       throw new Error(biometricUnavailableReason);
     }
-    if (!walletRef.current) {
+    if (!persistingMnemonic && !walletRef.current) {
       throw new Error(t('errors.noActiveWallet'));
     }
 
@@ -1772,24 +1787,22 @@ export default function App() {
     setSensitivePassword('');
   };
 
-  const promptBiometricOptIn = () => {
-    if (biometricUnavailableReason) return;
-    Alert.alert(
-      t('dialog.biometricTitle', { method: biometricMethod }),
-      t('dialog.biometricBody', { method: biometricMethod }),
-      [
-        { text: t('dialog.biometricLater'), style: 'cancel' },
-        {
-          text: t('dialog.biometricEnable'),
-          onPress: () => {
-            if (!walletRef.current) return;
-            setWalletTab('security');
-            askEnableBiometrics();
-          },
-        },
-      ],
-    );
-  };
+  const askBiometricOptIn = () =>
+    new Promise<boolean>((resolve) => {
+      if (biometricUnavailableReason) {
+        resolve(false);
+        return;
+      }
+      Alert.alert(
+        t('dialog.biometricTitle', { method: biometricMethod }),
+        t('dialog.biometricBody', { method: biometricMethod }),
+        [
+          { text: t('dialog.biometricLater'), style: 'cancel', onPress: () => resolve(false) },
+          { text: t('dialog.biometricEnable'), onPress: () => resolve(true) },
+        ],
+        { cancelable: false },
+      );
+    });
 
   const confirmSensitiveAction = async () => {
     await runExclusiveAction(
@@ -2266,6 +2279,7 @@ export default function App() {
           pendingAction={pendingAction}
           historyPage={historyPage}
           historyProgress={historyProgress}
+          historySyncing={historySyncing}
           onChangeHistoryPage={setHistoryPage}
           onExportHistory={() => { void exportFullHistory(); }}
           onOpenTx={(txid) => { void openTransactionExplorer(txid); }}

@@ -166,6 +166,7 @@ export function HistoryTab({
   pendingAction,
   historyPage,
   historyProgress,
+  historySyncing,
   onChangeHistoryPage,
   onExportHistory,
   onOpenTx,
@@ -176,6 +177,7 @@ export function HistoryTab({
   pendingAction: PendingAction | null;
   historyPage: number;
   historyProgress: { done: number; total: number } | null;
+  historySyncing: boolean;
   onChangeHistoryPage: (next: number) => void;
   onExportHistory: () => void;
   onOpenTx: (txid: string) => void;
@@ -183,7 +185,7 @@ export function HistoryTab({
   const historyEntries = (network.snapshot?.history ?? []).filter(
     (entry) => entry.direction !== undefined || entry.height <= 0,
   );
-  const loading = network.status === 'syncing' || historyProgress !== null;
+  const loading = network.status === 'syncing' || historyProgress !== null || historySyncing;
   const historyPageCount = Math.max(1, Math.ceil(historyEntries.length / HISTORY_PAGE_SIZE));
   const activeHistoryPage = Math.min(historyPage, historyPageCount - 1);
   const visibleHistory = historyEntries.slice(

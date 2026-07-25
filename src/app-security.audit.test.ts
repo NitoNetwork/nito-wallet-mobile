@@ -21,11 +21,13 @@ describe('mobile wallet UX and security invariants', () => {
     expect(appSource).toMatch(/encryptVault\(\s*\{[\s\S]*?\},\s*persistPassword,\s*false,\s*'password',/);
   });
 
-  it('never keeps the vault password inside the biometric opt-in dialog', () => {
-    expect(appSource).toContain('const promptBiometricOptIn = () => {');
-    expect(appSource).not.toMatch(/promptBiometricOptIn\((?!\))/);
+  it('only offers biometrics inside the authenticated persist flow', () => {
+    expect(appSource).toContain('const askBiometricOptIn = () =>');
+    expect(appSource).toContain('cancelable: false');
+    expect(appSource).toMatch(/await askBiometricOptIn\(\)\) \{[\s\S]*?enableBiometricUnlock\(persistPassword, walletToPersist\.mnemonic\)/);
+    expect(appSource).toMatch(/enableBiometricUnlock\(persistPassword[\s\S]*?setPersistPassword\(''\);/);
     expect(appSource).toContain('disableDeviceFallback: true');
-    expect(appSource).toContain('if (!walletRef.current) {');
+    expect(appSource).toContain('if (!persistingMnemonic && !walletRef.current) {');
   });
 
   it('never re-prompts biometrics automatically once the user dismissed it', () => {
