@@ -57,13 +57,7 @@ import {
   historyExportCsvRows,
   historyRecordsFromEntries,
 } from './src/services/historyExport';
-import {
-  DEFAULT_LANGUAGE,
-  LANGUAGES,
-  makeTranslator,
-  type LanguageCode,
-  type Translator,
-} from './src/i18n';
+import { type Translator } from './src/i18n';
 import { nitoWalletCrypto } from './src/native/nitoWalletCrypto';
 import {
   clearWalletHistoryCache,
@@ -89,6 +83,8 @@ import {
   type PreparedTransparentTx,
 } from './src/wallet/transparentSend';
 import { makeConsolidationTranslator } from './src/i18n.consolidation';
+import { useLanguage } from './src/hooks/useLanguage';
+import { useWalletSubscriptions } from './src/hooks/useWalletSubscriptions';
 import { AutoLock } from './src/services/session';
 import {
   decryptVault,
@@ -103,7 +99,6 @@ import {
 import { applyOptimisticWalletBroadcast } from './src/wallet/optimisticConsolidation';
 
 const PRIMARY_DERIVATION_PATH = "m/84'/0'/0'/0/0";
-const LANGUAGE_PREFERENCE_KEY = 'nito.wallet.language.v1';
 const BALANCE_REFRESH_COOLDOWN_KEY = 'nito.wallet.balance-refresh-until.v1';
 const BALANCE_REFRESH_COOLDOWN_MS = 120_000;
 const HISTORY_AUTO_IMPORT = true;
@@ -121,17 +116,6 @@ const BASE_WALLET_TABS: { key: WalletTab; labelKey: Parameters<Translator>[0] }[
 
 const yieldToUi = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
 const normalizeMnemonic = (value: string) => value.trim().toLowerCase().replace(/\s+/g, ' ');
-const isLanguageCode = (value: string | null): value is LanguageCode =>
-  LANGUAGES.some((entry) => entry.code === value);
-const detectSystemLanguage = (): LanguageCode => {
-  try {
-    const locale = Intl.DateTimeFormat().resolvedOptions().locale;
-    const primaryLanguage = locale.toLowerCase().replace('_', '-').split('-', 1)[0] ?? '';
-    return isLanguageCode(primaryLanguage) ? primaryLanguage : DEFAULT_LANGUAGE;
-  } catch {
-    return DEFAULT_LANGUAGE;
-  }
-};
 const parseNitoQrAddress = (value: string) => {
   const trimmed = value.trim();
   const addressPart = /^nito:(?:\/\/)?/i.test(trimmed)
@@ -314,10 +298,6 @@ export default function App() {
   const pendingNetworkRef = useRef<{ address: string; snapshot: TransparentWalletSnapshot; height: number } | null>(null);
   const walletRef = useRef<Wallet | null>(null);
   const networkRef = useRef<NetworkState>(createEmptyNetworkState());
-  const addressStatusRef = useRef<Map<string, string | null>>(new Map());
-  const addressUnsubscribeRef = useRef<Map<string, () => void>>(new Map());
-  const blockHeightUnsubscribeRef = useRef<(() => void) | null>(null);
-  const subscriptionRefreshInFlightRef = useRef(false);
   const silentNextAutoSyncRef = useRef(false);
   const syncInFlightRef = useRef(false);
   const enrichInFlightRef = useRef(false);
@@ -364,20 +344,14 @@ export default function App() {
   const [historyPage, setHistoryPage] = useState(0);
   const [historyProgress, setHistoryProgress] = useState<{ done: number; total: number } | null>(null);
   const [historySyncing, setHistorySyncing] = useState(false);
-  const [language, setLanguage] = useState<LanguageCode>(detectSystemLanguage);
-  const [languagePickerOpen, setLanguagePickerOpen] = useState(false);
+  const { language, t, selected: selectedLanguage, pickerOpen: languagePickerOpen, togglePicker: toggleLanguagePicker, select: selectLanguage } = useLanguage();
   const [balanceRefreshing, setBalanceRefreshing] = useState(false);
   const [refreshCooldownUntil, setRefreshCooldownUntil] = useState(0);
   const [qrScannerOpen, setQrScannerOpen] = useState(false);
   const [qrScanHandled, setQrScanHandled] = useState(false);
   const [qrScannerError, setQrScannerError] = useState('');
   const [cameraPermission, requestCameraPermission] = useCameraPermissions();
-  const t = useMemo(() => makeTranslator(language), [language]);
   const tRef = useRef(t);
-  const selectedLanguage = useMemo(
-    () => LANGUAGES.find((entry) => entry.code === language) ?? LANGUAGES[0],
-    [language],
-  );
 
   useEffect(() => {
     tRef.current = t;
@@ -448,12 +422,11 @@ export default function App() {
 
     const bootstrap = async () => {
       try {
-        const [vault, hasHardware, isEnrolled, method, savedLanguage, savedRefreshUntil] = await Promise.all([
+        const [vault, hasHardware, isEnrolled, method, savedRefreshUntil] = await Promise.all([
           loadVault(),
           LocalAuthentication.hasHardwareAsync(),
           LocalAuthentication.isEnrolledAsync(),
           getBiometricMethod(),
-          SecureStore.getItemAsync(LANGUAGE_PREFERENCE_KEY),
           SecureStore.getItemAsync(BALANCE_REFRESH_COOLDOWN_KEY),
         ]);
 
@@ -466,7 +439,6 @@ export default function App() {
         setVaultUnlockMode(vault?.unlockMode === 'biometric' ? 'biometric' : 'password');
         setVaultBiometricsEnabled(Boolean(vault?.biometricsEnabled || vault?.unlockMode === 'biometric'));
 
-        setLanguage(isLanguageCode(savedLanguage) ? savedLanguage : detectSystemLanguage());
 
         const savedCooldown = Number(savedRefreshUntil);
         if (Number.isFinite(savedCooldown) && savedCooldown > Date.now()) {
@@ -868,66 +840,26 @@ export default function App() {
     await syncTransparentNetwork(false, { force: true, silent: true, pendingOnly: true });
   }, [syncTransparentNetwork]);
 
-  useEffect(() => {
-    blockHeightUnsubscribeRef.current?.();
-    blockHeightUnsubscribeRef.current = null;
-
-    const client = electrumClientRef.current;
-    if (screen !== 'wallet' || !wallet || !network.snapshot || !client) {
-      return undefined;
-    }
-
-    blockHeightUnsubscribeRef.current = client.subscribeBlockHeight((height) => {
-      const current = networkRef.current;
-      const snapshot = current.snapshot;
-      if (!snapshot || height <= current.height) return;
-
-      const hasPending = snapshot.unconfirmedSats !== 0
-        || (snapshot.immatureCoinbaseSats ?? 0) > 0
-        || snapshot.history.some((entry) => entry.height <= 0)
-        || snapshot.utxos.some((utxo) => (
-          utxo.confirmations > 0
-          && utxo.confirmations < 101
-          && utxo.isCoinbase !== false
-        ));
-      if (!hasPending) {
-        const nextNetwork = { ...current, height };
-        networkRef.current = nextNetwork;
-        setNetwork(nextNetwork);
-        return;
-      }
-
-      if (!syncInFlightRef.current) {
-        void syncTransparentNetwork(false, {
-          force: true,
-          silent: true,
-          pendingOnly: true,
-          onlyAddresses: snapshot.addresses
-            .filter((address) => address.utxos.some((utxo) => (
-              utxo.confirmations <= 0
-              || (
-                utxo.confirmations > 0
-                && utxo.confirmations < 101
-                && utxo.isCoinbase !== false
-              )
-            )))
-            .map((address) => address.address),
-        });
-      }
-    });
-
-    return () => {
-      blockHeightUnsubscribeRef.current?.();
-      blockHeightUnsubscribeRef.current = null;
-    };
-  }, [network.snapshot, screen, syncTransparentNetwork, wallet]);
-
-  const clearAddressSubscriptions = useCallback(() => {
-    addressUnsubscribeRef.current.forEach((unsubscribe) => unsubscribe());
-    addressUnsubscribeRef.current.clear();
-    addressStatusRef.current.clear();
-    subscriptionRefreshInFlightRef.current = false;
+  const advanceBlockHeight = useCallback((height: number) => {
+    const nextNetwork = { ...networkRef.current, height };
+    networkRef.current = nextNetwork;
+    setNetwork(nextNetwork);
   }, []);
+
+  const requestSync = useCallback((options: Parameters<typeof syncTransparentNetwork>[1]) => {
+    void syncTransparentNetwork(false, options);
+  }, [syncTransparentNetwork]);
+
+  const { clearSubscriptions: clearAddressSubscriptions } = useWalletSubscriptions({
+    enabled: screen === 'wallet' && Boolean(wallet),
+    walletAddress: wallet?.address,
+    snapshot: network.snapshot,
+    clientRef: electrumClientRef,
+    networkRef,
+    syncInFlightRef,
+    onHeightAdvance: advanceBlockHeight,
+    requestSync,
+  });
 
   useEffect(() => {
     if (screen === 'wallet' && wallet) {
@@ -944,87 +876,6 @@ export default function App() {
 
     return undefined;
   }, [screen, syncTransparentNetwork, wallet]);
-
-  useEffect(() => () => {
-    clearAddressSubscriptions();
-  }, [clearAddressSubscriptions, wallet?.address]);
-
-  useEffect(() => {
-    if (screen !== 'wallet' || !wallet || !network.snapshot) {
-      return undefined;
-    }
-
-    const snapshot = network.snapshot;
-    let cancelled = false;
-    const activeAddresses = new Set(snapshot.addresses.map(({ address }) => address));
-    for (const [address, unsubscribe] of addressUnsubscribeRef.current) {
-      if (!activeAddresses.has(address)) {
-        unsubscribe();
-        addressUnsubscribeRef.current.delete(address);
-        addressStatusRef.current.delete(address);
-      }
-    }
-
-    const subscribeKnownAddresses = async () => {
-      const client = electrumClientRef.current;
-
-      if (!client || subscriptionRefreshInFlightRef.current) {
-        return;
-      }
-
-      subscriptionRefreshInFlightRef.current = true;
-
-      try {
-        for (const scannedAddress of snapshot.addresses) {
-          const address = scannedAddress.address;
-
-          if (cancelled || addressUnsubscribeRef.current.has(address)) {
-            continue;
-          }
-
-          try {
-            const subscription = await client.subscribeAddressStatus(address, (nextStatus, changedAddress) => {
-              const previousStatus = addressStatusRef.current.get(changedAddress);
-              addressStatusRef.current.set(changedAddress, nextStatus);
-
-              if (previousStatus !== undefined && previousStatus !== nextStatus && !syncInFlightRef.current) {
-                const knownAddress = networkRef.current.snapshot?.addresses.find(
-                  ({ address: candidate }) => candidate === changedAddress,
-                );
-                void syncTransparentNetwork(false, {
-                  force: true,
-                  silent: true,
-                  onlyAddresses: knownAddress?.used ? [changedAddress] : undefined,
-                  rescanGap: !knownAddress?.used,
-                });
-              }
-            });
-
-            if (cancelled) {
-              subscription.unsubscribe();
-              return;
-            }
-
-            addressStatusRef.current.set(address, subscription.status);
-            addressUnsubscribeRef.current.set(address, subscription.unsubscribe);
-            if (!scannedAddress.used && subscription.status !== null && !syncInFlightRef.current) {
-              void syncTransparentNetwork(false, { force: true, silent: true, rescanGap: true });
-            }
-          } catch {
-            addressStatusRef.current.delete(address);
-          }
-        }
-      } finally {
-        subscriptionRefreshInFlightRef.current = false;
-      }
-    };
-
-    void subscribeKnownAddresses();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [network.snapshot, screen, syncTransparentNetwork, wallet]);
 
   const createWallet = async () => {
     await runExclusiveAction('create', async () => {
@@ -1939,12 +1790,6 @@ export default function App() {
     }
   };
 
-  const selectLanguage = (nextLanguage: LanguageCode) => {
-    setLanguage(nextLanguage);
-    setLanguagePickerOpen(false);
-    void SecureStore.setItemAsync(LANGUAGE_PREFERENCE_KEY, nextLanguage);
-  };
-
   const actionLocked = pendingAction !== null;
   const importWordChecks = useMemo(() => getImportWordChecks(importText), [importText]);
   const invalidImportWords = importWordChecks.filter((entry) => entry.complete && !entry.valid);
@@ -1976,7 +1821,7 @@ export default function App() {
       language={language}
       selectedLanguageName={selectedLanguage.name}
       open={languagePickerOpen}
-      onToggle={() => setLanguagePickerOpen((current) => !current)}
+      onToggle={toggleLanguagePicker}
       onSelect={selectLanguage}
     />
   );
