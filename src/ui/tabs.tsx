@@ -1,0 +1,475 @@
+import type { ReactNode } from 'react';
+import { ActivityIndicator, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import QRCode from 'react-native-qrcode-svg';
+
+import { CONSOLIDATION_MIN_UTXOS } from '../constants/nito';
+import type { LanguageCode, Translator } from '../i18n';
+import { makeConsolidationTranslator } from '../i18n.consolidation';
+import { isTransparentUtxoSpendable } from '../wallet/coinbaseMaturity';
+import { satoshisToNito } from '../wallet/transparentScan';
+import type { PreparedTransparentConsolidation, PreparedTransparentTx } from '../wallet/transparentSend';
+import { ActionButton, PasswordField } from './components';
+import { shortAddress } from './format';
+import { styles } from './styles';
+import type { BiometricMethod, NetworkState, PendingAction, Wallet } from './types';
+
+const HISTORY_PAGE_SIZE = 12;
+
+export function ReceiveTab({ wallet, t, pendingAction, actionLocked, onCopyAddress }: {
+  wallet: Wallet;
+  t: Translator;
+  pendingAction: PendingAction | null;
+  actionLocked: boolean;
+  onCopyAddress: () => void;
+}) {
+  return (
+    <View style={styles.card}>
+      <Text style={styles.sectionTitle}>{t('receive.title')}</Text>
+      <View style={styles.qrPlaceholder}>
+        <QRCode value={wallet.address} size={204} quietZone={12} color="#071326" backgroundColor="#f8fbff" />
+      </View>
+      <Text style={styles.label}>{t('receive.bech32Address')}</Text>
+      <Text selectable style={styles.address}>{wallet.address}</Text>
+      <ActionButton label={t('actions.copyAddress')} loading={pendingAction === 'copy'} disabled={actionLocked} onPress={onCopyAddress} />
+    </View>
+  );
+}
+
+export function SendTab({
+  t,
+  language,
+  network,
+  actionLocked,
+  pendingAction,
+  broadcasting,
+  sendAddress,
+  sendAmount,
+  preparedTx,
+  preparedConsolidation,
+  onChangeSendAddress,
+  onChangeSendAmount,
+  onOpenQrScanner,
+  onFillMax,
+  onPrepareSend,
+  onBroadcastTx,
+  onBroadcastConsolidation,
+}: {
+  t: Translator;
+  language: LanguageCode;
+  network: NetworkState;
+  actionLocked: boolean;
+  pendingAction: PendingAction | null;
+  broadcasting: boolean;
+  sendAddress: string;
+  sendAmount: string;
+  preparedTx: PreparedTransparentTx | null;
+  preparedConsolidation: PreparedTransparentConsolidation | null;
+  onChangeSendAddress: (value: string) => void;
+  onChangeSendAmount: (value: string) => void;
+  onOpenQrScanner: () => void;
+  onFillMax: () => void;
+  onPrepareSend: () => void;
+  onBroadcastTx: () => void;
+  onBroadcastConsolidation: () => void;
+}) {
+  const consolidationT = makeConsolidationTranslator(language);
+  const amountDisabled = actionLocked || !network.snapshot || network.status === 'syncing' || !sendAddress.trim();
+  return (
+    <View style={styles.card}>
+      <Text style={styles.sectionTitle}>{t('send.title')}</Text>
+      <Text style={styles.body}>{t('send.body')}</Text>
+      <View style={styles.destinationRow}>
+        <TextInput
+          value={sendAddress}
+          onChangeText={onChangeSendAddress}
+          placeholder={t('send.destination')}
+          placeholderTextColor="#6d7892"
+          autoCapitalize="none"
+          autoCorrect={false}
+          style={[styles.input, styles.destinationInput]}
+        />
+        <TouchableOpacity disabled={actionLocked} onPress={onOpenQrScanner} style={[styles.scanButton, actionLocked && styles.scanButtonDisabled]}>
+          <Text style={styles.scanButtonText}>{t('actions.scanQr')}</Text>
+        </TouchableOpacity>
+      </View>
+      <View style={styles.amountRow}>
+        <TextInput
+          value={sendAmount}
+          onChangeText={onChangeSendAmount}
+          placeholder={t('send.amount')}
+          placeholderTextColor="#6d7892"
+          keyboardType="decimal-pad"
+          style={[styles.input, styles.amountInput]}
+        />
+        <TouchableOpacity
+          disabled={amountDisabled}
+          onPress={onFillMax}
+          style={[styles.maxButton, amountDisabled && styles.maxButtonDisabled]}
+        >
+          <Text style={styles.maxButtonText}>{t('actions.max')}</Text>
+        </TouchableOpacity>
+      </View>
+      <ActionButton
+        label={network.status === 'syncing' ? t('send.updating') : t('actions.prepareSend')}
+        loading={pendingAction === 'prepare'}
+        disabled={actionLocked || !network.snapshot || network.status === 'syncing' || !sendAddress.trim() || !sendAmount.trim()}
+        onPress={onPrepareSend}
+      />
+      <Text style={styles.helper}>
+        {t('send.available', { amount: network.snapshot ? satoshisToNito(network.snapshot.spendableSats) : '0' })}
+      </Text>
+      {preparedTx ? (
+        <View style={styles.txBox}>
+          <Text style={styles.label}>{t('send.transactionReady')}</Text>
+          <Text style={styles.previewAddress}>{t('send.fee', { amount: satoshisToNito(preparedTx.feeSats) })}</Text>
+          <Text style={styles.helper}>{t('send.inputsOutputs', { inputs: preparedTx.inputCount, outputs: preparedTx.outputCount })}</Text>
+          <Text selectable style={styles.address}>{preparedTx.txid}</Text>
+          <ActionButton
+            label={broadcasting ? t('send.sending') : t('actions.sendNow')}
+            loading={pendingAction === 'broadcast' || broadcasting}
+            disabled={actionLocked || broadcasting}
+            onPress={onBroadcastTx}
+          />
+        </View>
+      ) : null}
+      {preparedConsolidation ? (
+        <View style={styles.txBox}>
+          <Text style={styles.label}>{consolidationT('review')}</Text>
+          <Text style={styles.previewAddress}>
+            {`${consolidationT('transactions')}: ${preparedConsolidation.transactions.length}`}
+          </Text>
+          <Text style={styles.helper}>
+            {`${consolidationT('inputs')}: ${preparedConsolidation.inputCount}`}
+          </Text>
+          <Text style={styles.helper}>
+            {`${consolidationT('outputs')}: ${preparedConsolidation.outputCount}`}
+          </Text>
+          <Text style={styles.helper}>
+            {`${consolidationT('fees')}: ${satoshisToNito(preparedConsolidation.totalFeeSats)} NITO`}
+          </Text>
+          <ActionButton
+            label={consolidationT('send')}
+            loading={pendingAction === 'broadcastConsolidation' || broadcasting}
+            disabled={actionLocked || broadcasting}
+            onPress={onBroadcastConsolidation}
+          />
+        </View>
+      ) : null}
+    </View>
+  );
+}
+
+export function HistoryTab({
+  t,
+  network,
+  actionLocked,
+  pendingAction,
+  historyPage,
+  onChangeHistoryPage,
+  onConfirmFullHistorySync,
+  onExportHistory,
+  onOpenTx,
+}: {
+  t: Translator;
+  network: NetworkState;
+  actionLocked: boolean;
+  pendingAction: PendingAction | null;
+  historyPage: number;
+  onChangeHistoryPage: (next: number) => void;
+  onConfirmFullHistorySync: () => void;
+  onExportHistory: () => void;
+  onOpenTx: (txid: string) => void;
+}) {
+  const historyEntries = network.snapshot?.history ?? [];
+  const historyPageCount = Math.max(1, Math.ceil(historyEntries.length / HISTORY_PAGE_SIZE));
+  const activeHistoryPage = Math.min(historyPage, historyPageCount - 1);
+  const visibleHistory = historyEntries.slice(
+    activeHistoryPage * HISTORY_PAGE_SIZE,
+    (activeHistoryPage + 1) * HISTORY_PAGE_SIZE,
+  );
+  return (
+    <View style={styles.card}>
+      <Text style={styles.sectionTitle}>{t('history.title')}</Text>
+      {!network.fullHistoryEnabled ? (
+        <TouchableOpacity
+          disabled={actionLocked || !network.snapshot || network.status === 'syncing'}
+          onPress={onConfirmFullHistorySync}
+          style={[
+            styles.historySyncButton,
+            (actionLocked || !network.snapshot || network.status === 'syncing') && styles.historySyncButtonDisabled,
+          ]}
+        >
+          <View style={styles.historySyncButtonContent}>
+            {pendingAction === 'history' || (network.status === 'syncing' && network.fullHistoryEnabled) ? (
+              <ActivityIndicator color="#dbeaff" size="small" />
+            ) : null}
+            <Text style={styles.historySyncButtonText}>
+              {network.status === 'syncing' && network.fullHistoryEnabled ? t('history.syncing') : t('actions.syncFullHistory')}
+            </Text>
+          </View>
+        </TouchableOpacity>
+      ) : null}
+      {network.fullHistoryEnabled ? (
+        <ActionButton
+          label={t('actions.exportHistory')}
+          variant="secondary"
+          loading={pendingAction === 'history'}
+          disabled={actionLocked || !network.snapshot}
+          onPress={onExportHistory}
+        />
+      ) : null}
+      {visibleHistory.length > 0 ? (
+        <View style={styles.historyList}>
+          {visibleHistory.map((entry) => (
+            <TouchableOpacity
+              key={entry.txid}
+              style={styles.historyRow}
+              onPress={() => { onOpenTx(entry.txid); }}
+            >
+              <View style={styles.historyRowTop}>
+                <View style={styles.historyRowText}>
+                  <Text style={styles.historyTxid}>
+                    {entry.direction !== undefined
+                      ? `${entry.direction === 'received' ? '+' : entry.direction === 'sent' ? '−' : ''}${satoshisToNito(entry.amountSats ?? 0)} NITO`
+                      : shortAddress(entry.txid)}
+                  </Text>
+                  <Text style={styles.helper}>
+                    {[
+                      entry.direction === 'received'
+                        ? t('history.received')
+                        : entry.direction === 'sent'
+                          ? t('history.sent')
+                          : entry.direction === 'self'
+                            ? t('history.self')
+                            : '',
+                      entry.height > 0 ? t('history.block', { height: entry.height }) : t('history.mempool'),
+                    ].filter(Boolean).join(' · ')}
+                  </Text>
+                </View>
+                <View style={styles.viewTxBadge}>
+                  <Text style={styles.viewTxText}>{t('actions.viewTx')}</Text>
+                </View>
+              </View>
+            </TouchableOpacity>
+          ))}
+          {historyPageCount > 1 ? (
+            <View style={styles.historyPagination}>
+              <TouchableOpacity
+                disabled={activeHistoryPage === 0 || actionLocked}
+                onPress={() => onChangeHistoryPage(Math.max(0, activeHistoryPage - 1))}
+                style={[styles.historyPageButton, activeHistoryPage === 0 && styles.historyPageButtonDisabled]}
+              >
+                <Text style={styles.historyPageButtonText}>{t('actions.previousPage')}</Text>
+              </TouchableOpacity>
+              <Text style={styles.historyPageLabel}>
+                {t('history.page', { current: activeHistoryPage + 1, total: historyPageCount })}
+              </Text>
+              <TouchableOpacity
+                disabled={activeHistoryPage >= historyPageCount - 1 || actionLocked}
+                onPress={() => onChangeHistoryPage(Math.min(historyPageCount - 1, activeHistoryPage + 1))}
+                style={[
+                  styles.historyPageButton,
+                  activeHistoryPage >= historyPageCount - 1 && styles.historyPageButtonDisabled,
+                ]}
+              >
+                <Text style={styles.historyPageButtonText}>{t('actions.nextPage')}</Text>
+              </TouchableOpacity>
+            </View>
+          ) : null}
+        </View>
+      ) : (
+        <View style={styles.empty}>
+          <Text style={styles.emptyTitle}>{t('history.emptyTitle')}</Text>
+          <Text style={styles.body}>{t('history.emptyBody')}</Text>
+        </View>
+      )}
+    </View>
+  );
+}
+
+export function SecurityTab({
+  t,
+  wallet,
+  seedSaved,
+  actionLocked,
+  pendingAction,
+  vaultBiometricsEnabled,
+  biometricMethod,
+  showMnemonic,
+  vaultUnlockMode,
+  sensitiveAction,
+  sensitivePassword,
+  onChangeSensitivePassword,
+  showSensitivePassword,
+  onToggleSensitivePassword,
+  sensitiveBusy,
+  onLockWallet,
+  onToggleMnemonic,
+  onAskDelete,
+  onConfirmSensitive,
+  onCancelSensitive,
+  languageSettings,
+}: {
+  t: Translator;
+  wallet: Wallet;
+  seedSaved: boolean;
+  actionLocked: boolean;
+  pendingAction: PendingAction | null;
+  vaultBiometricsEnabled: boolean;
+  biometricMethod: BiometricMethod;
+  showMnemonic: boolean;
+  vaultUnlockMode: 'password' | 'biometric';
+  sensitiveAction: 'reveal' | 'delete' | null;
+  sensitivePassword: string;
+  onChangeSensitivePassword: (value: string) => void;
+  showSensitivePassword: boolean;
+  onToggleSensitivePassword: () => void;
+  sensitiveBusy: boolean;
+  onLockWallet: () => void;
+  onToggleMnemonic: () => void;
+  onAskDelete: () => void;
+  onConfirmSensitive: () => void;
+  onCancelSensitive: () => void;
+  languageSettings: ReactNode;
+}) {
+  return (
+    <View style={styles.card}>
+      <Text style={styles.sectionTitle}>{t('security.title')}</Text>
+      <View style={styles.tiles}>
+        <View style={styles.tile}>
+          <Text style={styles.label}>{t('security.vault')}</Text>
+          <Text style={styles.tileValue}>{seedSaved ? t('wallet.protected') : t('wallet.needsProtection')}</Text>
+        </View>
+        <View style={styles.tile}>
+          <Text style={styles.label}>{t('security.unlockMethod')}</Text>
+          <Text style={styles.tileValue}>{vaultBiometricsEnabled ? biometricMethod : t('security.password')}</Text>
+        </View>
+      </View>
+      <ActionButton label={t('actions.lockWallet')} variant="success" disabled={actionLocked} onPress={onLockWallet} />
+      <ActionButton label={showMnemonic ? t('actions.hideSeed') : t('actions.showSeed')} variant="secondary" disabled={actionLocked} onPress={onToggleMnemonic} />
+      {showMnemonic ? <Text selectable style={styles.mnemonic}>{wallet.mnemonic}</Text> : null}
+      {seedSaved ? <ActionButton label={t('actions.deleteWallet')} variant="danger" disabled={actionLocked} onPress={onAskDelete} /> : null}
+      {sensitiveAction ? (
+        <View style={styles.notice}>
+          <Text style={styles.noticeTitle}>
+            {sensitiveAction === 'reveal' ? t('security.confirmReveal') : t('security.confirmDelete')}
+          </Text>
+          {vaultUnlockMode === 'password' ? (
+            <PasswordField
+              value={sensitivePassword}
+              onChangeText={onChangeSensitivePassword}
+              placeholder={t('unlock.password')}
+              visible={showSensitivePassword}
+              onToggleVisible={onToggleSensitivePassword}
+              showLabel={t('actions.show')}
+              hideLabel={t('actions.hide')}
+            />
+          ) : (
+            <Text style={styles.noticeText}>{t('security.biometricRequested', { method: biometricMethod })}</Text>
+          )}
+          <ActionButton
+            label={sensitiveBusy ? t('security.checking') : t('actions.confirm')}
+            loading={pendingAction === 'reveal' || pendingAction === 'delete' || sensitiveBusy}
+            disabled={actionLocked || sensitiveBusy}
+            onPress={onConfirmSensitive}
+          />
+          <ActionButton
+            label={t('actions.cancel')}
+            variant="ghost"
+            disabled={actionLocked || sensitiveBusy}
+            onPress={onCancelSensitive}
+          />
+        </View>
+      ) : null}
+      {languageSettings}
+    </View>
+  );
+}
+
+export function HomeTab({
+  t,
+  language,
+  wallet,
+  network,
+  actionLocked,
+  pendingAction,
+  balanceRefreshing,
+  preparedConsolidation,
+  onRefreshBalance,
+  onConfirmConsolidation,
+}: {
+  t: Translator;
+  language: LanguageCode;
+  wallet: Wallet;
+  network: NetworkState;
+  actionLocked: boolean;
+  pendingAction: PendingAction | null;
+  balanceRefreshing: boolean;
+  preparedConsolidation: PreparedTransparentConsolidation | null;
+  onRefreshBalance: () => void;
+  onConfirmConsolidation: () => void;
+}) {
+  const spendableAddressSet = new Set(
+    (network.snapshot?.spendableAddresses ?? []).map((address) => address.address),
+  );
+  const eligibleUtxos = (network.snapshot?.utxos ?? []).filter(
+    (utxo) => isTransparentUtxoSpendable(utxo) && spendableAddressSet.has(utxo.address),
+  );
+  const refreshDisabled = actionLocked || balanceRefreshing || network.status === 'syncing';
+
+  return (
+    <View style={styles.card}>
+      <View style={styles.sectionTitleRow}>
+        <Text style={styles.sectionTitle}>{t('home.title')}</Text>
+        <TouchableOpacity
+          accessibilityLabel={t('actions.refreshBalance')}
+          disabled={refreshDisabled}
+          onPress={onRefreshBalance}
+          style={[styles.refreshButton, refreshDisabled && styles.refreshButtonDisabled]}
+        >
+          <Text style={styles.refreshButtonText}>{'↻'}</Text>
+        </TouchableOpacity>
+      </View>
+      <View style={styles.balanceCard}>
+        <Text style={styles.balance}>
+          {network.snapshot ? satoshisToNito(network.snapshot.spendableSats) + ' NITO' : '-- NITO'}
+        </Text>
+        {network.snapshot && network.snapshot.unconfirmedSats > 0 ? (
+          <Text style={styles.pendingBalance}>
+            {t('home.pendingBalance', { amount: satoshisToNito(network.snapshot.unconfirmedSats) })}
+          </Text>
+        ) : null}
+        {network.snapshot && (network.snapshot.immatureCoinbaseSats ?? 0) > 0 ? (
+          <Text style={styles.immatureCoinbaseBalance}>
+            {t('home.immatureMiningRewards', {
+              amount: satoshisToNito(network.snapshot.immatureCoinbaseSats ?? 0),
+            })}
+            {'\n'}
+            {t('home.coinbaseBlocksRemaining', {
+              blocks: network.snapshot.immatureCoinbaseBlocksRemaining ?? 0,
+            })}
+          </Text>
+        ) : null}
+        {balanceRefreshing ? (
+          <View style={styles.balanceUpdating}>
+            <Text style={styles.balanceHourglass}>{'⌛'}</Text>
+            <Text style={styles.balanceUpdatingText}>{t('home.updatingBalance')}</Text>
+          </View>
+        ) : null}
+      </View>
+      <View style={styles.preview}>
+        <Text style={styles.label}>{t('home.mainAddress')}</Text>
+        <Text style={styles.previewAddress}>{shortAddress(wallet.address)}</Text>
+      </View>
+      {!preparedConsolidation && network.snapshot && eligibleUtxos.length >= CONSOLIDATION_MIN_UTXOS ? (
+        <ActionButton
+          label={makeConsolidationTranslator(language)('action')}
+          onPress={onConfirmConsolidation}
+          variant="secondary"
+          disabled={actionLocked || network.status === 'syncing'}
+          loading={pendingAction === 'consolidate'}
+        />
+      ) : null}
+    </View>
+  );
+}

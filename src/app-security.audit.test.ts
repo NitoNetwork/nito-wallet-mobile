@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest';
 
 import appSource from '../App.tsx?raw';
 import stylesSource from './ui/styles.ts?raw';
+import tabsSource from './ui/tabs.tsx?raw';
 import expoConfig from '../app.config.js?raw';
 
 describe('mobile wallet UX and security invariants', () => {
@@ -24,7 +25,7 @@ describe('mobile wallet UX and security invariants', () => {
   });
 
   it('clips the QR background and preserves splash artwork proportions', () => {
-    expect(appSource).toContain('quietZone={12}');
+    expect(tabsSource).toContain('quietZone={12}');
     expect(stylesSource).toMatch(/qrPlaceholder:[\s\S]*?overflow: 'hidden'/);
     expect(expoConfig).toContain('"expo-splash-screen"');
     expect(expoConfig).toContain('resizeMode: "contain"');

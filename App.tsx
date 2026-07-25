@@ -1,10 +1,9 @@
-import { CONSOLIDATION_MIN_UTXOS, PBKDF2_ROUNDS } from './src/constants/nito';
+import { PBKDF2_ROUNDS } from './src/constants/nito';
 import 'react-native-get-random-values';
 
 import { entropyToMnemonic, validateMnemonic } from '@scure/bip39';
 import { wordlist } from '@scure/bip39/wordlists/english.js';
 import { CameraView, useCameraPermissions } from 'expo-camera';
-import QRCode from 'react-native-qrcode-svg';
 import * as Clipboard from 'expo-clipboard';
 import * as LocalAuthentication from 'expo-local-authentication';
 import * as SecureStore from 'expo-secure-store';
@@ -12,7 +11,6 @@ import * as FileSystem from 'expo-file-system/legacy';
 import * as Sharing from 'expo-sharing';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  ActivityIndicator,
   Alert,
   Animated,
   AppState,
@@ -31,8 +29,18 @@ import {
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import nacl from 'tweetnacl';
 
+import { ActionButton, PasswordField } from './src/ui/components';
 import { escapeCsvCell, isValidTransactionId, shortAddress, transactionExplorerUrl } from './src/ui/format';
 import { styles } from './src/ui/styles';
+import { HistoryTab, HomeTab, ReceiveTab, SecurityTab, SendTab } from './src/ui/tabs';
+import type {
+  AppScreen,
+  BiometricMethod,
+  NetworkState,
+  PendingAction,
+  Wallet,
+  WalletTab,
+} from './src/ui/types';
 
 import { NitoElectrumClient, scriptPubKeyForNitoAddress } from './src/network/electrum';
 import { buildHistoryExportRecords, historyExportCsvRows } from './src/services/historyExport';
@@ -69,7 +77,6 @@ import {
 } from './src/wallet/transparentSend';
 import { makeConsolidationTranslator } from './src/i18n.consolidation';
 import { AutoLock } from './src/services/session';
-import { isTransparentUtxoSpendable } from './src/wallet/coinbaseMaturity';
 import { applyOptimisticWalletBroadcast } from './src/wallet/optimisticConsolidation';
 import { decodeUtf8 } from './src/security/utf8';
 
@@ -82,37 +89,10 @@ const BIOMETRIC_SECRET_KEY = 'nito.wallet.biometric.secret.v1';
 const LANGUAGE_PREFERENCE_KEY = 'nito.wallet.language.v1';
 const BALANCE_REFRESH_COOLDOWN_KEY = 'nito.wallet.balance-refresh-until.v1';
 const BALANCE_REFRESH_COOLDOWN_MS = 120_000;
-const HISTORY_PAGE_SIZE = 12;
 const HISTORY_AUTO_IMPORT = true;
 const MNEMONIC_REVEAL_MS = 60_000;
 const ADDRESS_CLIPBOARD_MS = 60_000;
 const BIP39_WORDS = new Set<string>(wordlist);
-
-type AppScreen = 'loading' | 'landing' | 'unlock' | 'import' | 'wallet' | 'persist';
-type WalletTab = 'home' | 'receive' | 'send' | 'history' | 'security';
-type BiometricMethod = 'Face ID' | 'Touch ID' | 'biometrics';
-type ButtonVariant = 'primary' | 'secondary' | 'ghost' | 'success' | 'danger' | 'disabled';
-type PendingAction =
-  | 'create'
-  | 'import'
-  | 'unlock'
-  | 'protect'
-  | 'copy'
-  | 'max'
-  | 'consolidate'
-  | 'prepare'
-  | 'broadcast'
-  | 'broadcastConsolidation'
-  | 'history'
-  | 'reveal'
-  | 'delete'
-  | 'lock';
-
-type Wallet = {
-  mnemonic: string;
-  address: string;
-  derivationPath: string;
-};
 
 type VaultPayload = {
   version: 1;
@@ -134,15 +114,6 @@ type EncryptedVault = {
   createdAt: string;
   biometricsEnabled: boolean;
   unlockMode?: 'password' | 'biometric';
-};
-
-type NetworkState = {
-  status: 'idle' | 'syncing' | 'connected' | 'error';
-  snapshot: TransparentWalletSnapshot | null;
-  error: string;
-  serverUrl: string;
-  height: number;
-  fullHistoryEnabled: boolean;
 };
 
 const BASE_WALLET_TABS: { key: WalletTab; labelKey: Parameters<Translator>[0] }[] = [
@@ -419,85 +390,6 @@ const requestBiometricGate = async (promptMessage: string) => {
     throw new Error('Biometric authentication was cancelled or rejected.');
   }
 };
-
-function ActionButton({
-  label,
-  onPress,
-  variant = 'primary',
-  disabled = false,
-  loading = false,
-}: {
-  label: string;
-  onPress?: () => void;
-  variant?: ButtonVariant;
-  disabled?: boolean;
-  loading?: boolean;
-}) {
-  const inactive = disabled || loading || variant === 'disabled';
-  return (
-    <TouchableOpacity
-      disabled={inactive}
-      onPress={onPress}
-      style={[
-        styles.button,
-        variant === 'secondary' && styles.buttonSecondary,
-        variant === 'ghost' && styles.buttonGhost,
-        variant === 'success' && styles.buttonSuccess,
-        variant === 'danger' && styles.buttonDanger,
-        inactive && styles.buttonDisabled,
-      ]}
-    >
-      <View style={styles.buttonContent}>
-        <Text
-          style={[
-            styles.buttonText,
-            variant === 'secondary' && styles.buttonTextSecondary,
-            variant === 'ghost' && styles.buttonTextGhost,
-            variant === 'success' && styles.buttonTextSuccess,
-            variant === 'danger' && styles.buttonTextDanger,
-            inactive && styles.buttonTextDisabled,
-          ]}
-        >
-          {label}
-        </Text>
-      </View>
-    </TouchableOpacity>
-  );
-}
-
-function PasswordField({
-  value,
-  onChangeText,
-  placeholder,
-  visible,
-  onToggleVisible,
-  showLabel,
-  hideLabel,
-}: {
-  value: string;
-  onChangeText: (value: string) => void;
-  placeholder: string;
-  visible: boolean;
-  onToggleVisible: () => void;
-  showLabel: string;
-  hideLabel: string;
-}) {
-  return (
-    <View style={styles.passwordField}>
-      <TextInput
-        value={value}
-        onChangeText={onChangeText}
-        placeholder={placeholder}
-        placeholderTextColor="#6d7892"
-        secureTextEntry={!visible}
-        style={styles.passwordInput}
-      />
-      <TouchableOpacity onPress={onToggleVisible} style={styles.passwordToggle}>
-        <Text style={styles.passwordToggleText}>{visible ? hideLabel : showLabel}</Text>
-      </TouchableOpacity>
-    </View>
-  );
-}
 
 export default function App() {
   const [screen, setScreen] = useState<AppScreen>('loading');
@@ -2172,341 +2064,97 @@ export default function App() {
 
     if (walletTab === 'receive') {
       return (
-        <View style={styles.card}>
-          <Text style={styles.sectionTitle}>{t('receive.title')}</Text>
-          <View style={styles.qrPlaceholder}>
-            <QRCode value={wallet.address} size={204} quietZone={12} color="#071326" backgroundColor="#f8fbff" />
-          </View>
-          <Text style={styles.label}>{t('receive.bech32Address')}</Text>
-          <Text selectable style={styles.address}>{wallet.address}</Text>
-          <ActionButton label={t('actions.copyAddress')} loading={pendingAction === 'copy'} disabled={actionLocked} onPress={() => { void copyAddressToClipboard(); }} />
-        </View>
+        <ReceiveTab
+          wallet={wallet}
+          t={t}
+          pendingAction={pendingAction}
+          actionLocked={actionLocked}
+          onCopyAddress={() => { void copyAddressToClipboard(); }}
+        />
       );
     }
 
     if (walletTab === 'send') {
       return (
-        <View style={styles.card}>
-          <Text style={styles.sectionTitle}>{t('send.title')}</Text>
-          <Text style={styles.body}>{t('send.body')}</Text>
-          <View style={styles.destinationRow}>
-            <TextInput
-              value={sendAddress}
-              onChangeText={(value) => {
-                setSendAddress(value);
-                setPreparedTx(null);
-                setPreparedConsolidation(null);
-              }}
-              placeholder={t('send.destination')}
-              placeholderTextColor="#6d7892"
-              autoCapitalize="none"
-              autoCorrect={false}
-              style={[styles.input, styles.destinationInput]}
-            />
-            <TouchableOpacity disabled={actionLocked} onPress={() => { void openQrScanner(); }} style={[styles.scanButton, actionLocked && styles.scanButtonDisabled]}>
-              <Text style={styles.scanButtonText}>{t('actions.scanQr')}</Text>
-            </TouchableOpacity>
-          </View>
-          <View style={styles.amountRow}>
-            <TextInput
-              value={sendAmount}
-              onChangeText={(value) => {
-                setSendAmount(value);
-                setPreparedTx(null);
-                setPreparedConsolidation(null);
-              }}
-              placeholder={t('send.amount')}
-              placeholderTextColor="#6d7892"
-              keyboardType="decimal-pad"
-              style={[styles.input, styles.amountInput]}
-            />
-            <TouchableOpacity
-              disabled={actionLocked || !network.snapshot || network.status === 'syncing' || !sendAddress.trim()}
-              onPress={() => { void fillMaxSendAmount(); }}
-              style={[
-                styles.maxButton,
-                (actionLocked || !network.snapshot || network.status === 'syncing' || !sendAddress.trim()) && styles.maxButtonDisabled,
-              ]}
-            >
-              <Text style={styles.maxButtonText}>{t('actions.max')}</Text>
-            </TouchableOpacity>
-          </View>
-          <ActionButton
-            label={network.status === 'syncing' ? t('send.updating') : t('actions.prepareSend')}
-            loading={pendingAction === 'prepare'}
-            disabled={actionLocked || !network.snapshot || network.status === 'syncing' || !sendAddress.trim() || !sendAmount.trim()}
-            onPress={prepareTransparentSend}
-          />
-          <Text style={styles.helper}>
-            {t('send.available', { amount: network.snapshot ? satoshisToNito(network.snapshot.spendableSats) : '0' })}
-          </Text>
-          {preparedTx ? (
-            <View style={styles.txBox}>
-              <Text style={styles.label}>{t('send.transactionReady')}</Text>
-              <Text style={styles.previewAddress}>{t('send.fee', { amount: satoshisToNito(preparedTx.feeSats) })}</Text>
-              <Text style={styles.helper}>{t('send.inputsOutputs', { inputs: preparedTx.inputCount, outputs: preparedTx.outputCount })}</Text>
-              <Text selectable style={styles.address}>{preparedTx.txid}</Text>
-              <ActionButton
-                label={broadcasting ? t('send.sending') : t('actions.sendNow')}
-                loading={pendingAction === 'broadcast' || broadcasting}
-                disabled={actionLocked || broadcasting}
-                onPress={() => { void broadcastPreparedTx(); }}
-              />
-            </View>
-          ) : null}
-          {preparedConsolidation ? (
-            <View style={styles.txBox}>
-              <Text style={styles.label}>{makeConsolidationTranslator(language)('review')}</Text>
-              <Text style={styles.previewAddress}>
-                {`${makeConsolidationTranslator(language)('transactions')}: ${preparedConsolidation.transactions.length}`}
-              </Text>
-              <Text style={styles.helper}>
-                {`${makeConsolidationTranslator(language)('inputs')}: ${preparedConsolidation.inputCount}`}
-              </Text>
-              <Text style={styles.helper}>
-                {`${makeConsolidationTranslator(language)('outputs')}: ${preparedConsolidation.outputCount}`}
-              </Text>
-              <Text style={styles.helper}>
-                {`${makeConsolidationTranslator(language)('fees')}: ${satoshisToNito(preparedConsolidation.totalFeeSats)} NITO`}
-              </Text>
-              <ActionButton
-                label={makeConsolidationTranslator(language)('send')}
-                loading={pendingAction === 'broadcastConsolidation' || broadcasting}
-                disabled={actionLocked || broadcasting}
-                onPress={() => { void broadcastPreparedConsolidation(); }}
-              />
-            </View>
-          ) : null}
-        </View>
+        <SendTab
+          t={t}
+          language={language}
+          network={network}
+          actionLocked={actionLocked}
+          pendingAction={pendingAction}
+          broadcasting={broadcasting}
+          sendAddress={sendAddress}
+          sendAmount={sendAmount}
+          preparedTx={preparedTx}
+          preparedConsolidation={preparedConsolidation}
+          onChangeSendAddress={(value) => { setSendAddress(value); setPreparedTx(null); setPreparedConsolidation(null); }}
+          onChangeSendAmount={(value) => { setSendAmount(value); setPreparedTx(null); setPreparedConsolidation(null); }}
+          onOpenQrScanner={() => { void openQrScanner(); }}
+          onFillMax={() => { void fillMaxSendAmount(); }}
+          onPrepareSend={prepareTransparentSend}
+          onBroadcastTx={() => { void broadcastPreparedTx(); }}
+          onBroadcastConsolidation={() => { void broadcastPreparedConsolidation(); }}
+        />
       );
     }
 
     if (walletTab === 'history') {
-      const historyEntries = network.snapshot?.history ?? [];
-      const historyPageCount = Math.max(1, Math.ceil(historyEntries.length / HISTORY_PAGE_SIZE));
-      const activeHistoryPage = Math.min(historyPage, historyPageCount - 1);
-      const visibleHistory = historyEntries.slice(
-        activeHistoryPage * HISTORY_PAGE_SIZE,
-        (activeHistoryPage + 1) * HISTORY_PAGE_SIZE,
-      );
       return (
-        <View style={styles.card}>
-          <Text style={styles.sectionTitle}>{t('history.title')}</Text>
-          {!network.fullHistoryEnabled ? (
-            <TouchableOpacity
-              disabled={actionLocked || !network.snapshot || network.status === 'syncing'}
-              onPress={confirmFullHistorySync}
-              style={[
-                styles.historySyncButton,
-                (actionLocked || !network.snapshot || network.status === 'syncing') && styles.historySyncButtonDisabled,
-              ]}
-            >
-              <View style={styles.historySyncButtonContent}>
-                {pendingAction === 'history' || (network.status === 'syncing' && network.fullHistoryEnabled) ? (
-                  <ActivityIndicator color="#dbeaff" size="small" />
-                ) : null}
-                <Text style={styles.historySyncButtonText}>
-                  {network.status === 'syncing' && network.fullHistoryEnabled ? t('history.syncing') : t('actions.syncFullHistory')}
-                </Text>
-              </View>
-            </TouchableOpacity>
-          ) : null}
-          {network.fullHistoryEnabled ? (
-            <ActionButton
-              label={t('actions.exportHistory')}
-              variant="secondary"
-              loading={pendingAction === 'history'}
-              disabled={actionLocked || !network.snapshot}
-              onPress={() => { void exportFullHistory(); }}
-            />
-          ) : null}
-          {visibleHistory.length > 0 ? (
-            <View style={styles.historyList}>
-              {visibleHistory.map((entry) => (
-                <TouchableOpacity
-                  key={entry.txid}
-                  style={styles.historyRow}
-                  onPress={() => {
-                    void openTransactionExplorer(entry.txid);
-                  }}
-                >
-                  <View style={styles.historyRowTop}>
-                    <View style={styles.historyRowText}>
-                      <Text style={styles.historyTxid}>
-                        {entry.direction !== undefined
-                          ? `${entry.direction === 'received' ? '+' : entry.direction === 'sent' ? '−' : ''}${satoshisToNito(entry.amountSats ?? 0)} NITO`
-                          : shortAddress(entry.txid)}
-                      </Text>
-                      <Text style={styles.helper}>
-                        {[
-                          entry.direction === 'received'
-                            ? t('history.received')
-                            : entry.direction === 'sent'
-                              ? t('history.sent')
-                              : entry.direction === 'self'
-                                ? t('history.self')
-                                : '',
-                          entry.height > 0 ? t('history.block', { height: entry.height }) : t('history.mempool'),
-                        ].filter(Boolean).join(' · ')}
-                      </Text>
-                    </View>
-                    <View style={styles.viewTxBadge}>
-                      <Text style={styles.viewTxText}>{t('actions.viewTx')}</Text>
-                    </View>
-                  </View>
-                </TouchableOpacity>
-              ))}
-              {historyPageCount > 1 ? (
-                <View style={styles.historyPagination}>
-                  <TouchableOpacity
-                    disabled={activeHistoryPage === 0 || actionLocked}
-                    onPress={() => setHistoryPage((current) => Math.max(0, current - 1))}
-                    style={[styles.historyPageButton, activeHistoryPage === 0 && styles.historyPageButtonDisabled]}
-                  >
-                    <Text style={styles.historyPageButtonText}>{t('actions.previousPage')}</Text>
-                  </TouchableOpacity>
-                  <Text style={styles.historyPageLabel}>
-                    {t('history.page', { current: activeHistoryPage + 1, total: historyPageCount })}
-                  </Text>
-                  <TouchableOpacity
-                    disabled={activeHistoryPage >= historyPageCount - 1 || actionLocked}
-                    onPress={() => setHistoryPage((current) => Math.min(historyPageCount - 1, current + 1))}
-                    style={[
-                      styles.historyPageButton,
-                      activeHistoryPage >= historyPageCount - 1 && styles.historyPageButtonDisabled,
-                    ]}
-                  >
-                    <Text style={styles.historyPageButtonText}>{t('actions.nextPage')}</Text>
-                  </TouchableOpacity>
-                </View>
-              ) : null}
-            </View>
-          ) : (
-            <View style={styles.empty}>
-              <Text style={styles.emptyTitle}>{t('history.emptyTitle')}</Text>
-              <Text style={styles.body}>{t('history.emptyBody')}</Text>
-            </View>
-          )}
-        </View>
+        <HistoryTab
+          t={t}
+          network={network}
+          actionLocked={actionLocked}
+          pendingAction={pendingAction}
+          historyPage={historyPage}
+          onChangeHistoryPage={setHistoryPage}
+          onConfirmFullHistorySync={confirmFullHistorySync}
+          onExportHistory={() => { void exportFullHistory(); }}
+          onOpenTx={(txid) => { void openTransactionExplorer(txid); }}
+        />
       );
     }
 
     if (walletTab === 'security') {
       return (
-        <View style={styles.card}>
-          <Text style={styles.sectionTitle}>{t('security.title')}</Text>
-          <View style={styles.tiles}>
-            <View style={styles.tile}>
-              <Text style={styles.label}>{t('security.vault')}</Text>
-              <Text style={styles.tileValue}>{seedSaved ? t('wallet.protected') : t('wallet.needsProtection')}</Text>
-            </View>
-            <View style={styles.tile}>
-              <Text style={styles.label}>{t('security.unlockMethod')}</Text>
-              <Text style={styles.tileValue}>{vaultBiometricsEnabled ? biometricMethod : t('security.password')}</Text>
-            </View>
-          </View>
-          <ActionButton label={t('actions.lockWallet')} variant="success" disabled={actionLocked} onPress={lockWallet} />
-          <ActionButton label={showMnemonic ? t('actions.hideSeed') : t('actions.showSeed')} variant="secondary" disabled={actionLocked} onPress={toggleMnemonic} />
-          {showMnemonic ? <Text selectable style={styles.mnemonic}>{wallet.mnemonic}</Text> : null}
-          {seedSaved ? <ActionButton label={t('actions.deleteWallet')} variant="danger" disabled={actionLocked} onPress={askDeleteWallet} /> : null}
-          {sensitiveAction ? (
-            <View style={styles.notice}>
-              <Text style={styles.noticeTitle}>
-                {sensitiveAction === 'reveal' ? t('security.confirmReveal') : t('security.confirmDelete')}
-              </Text>
-              {vaultUnlockMode === 'password' ? (
-                <PasswordField
-                  value={sensitivePassword}
-                  onChangeText={setSensitivePassword}
-                  placeholder={t('unlock.password')}
-                  visible={showSensitivePassword}
-                  onToggleVisible={() => setShowSensitivePassword((current) => !current)}
-                  showLabel={t('actions.show')}
-                  hideLabel={t('actions.hide')}
-                />
-              ) : (
-                <Text style={styles.noticeText}>{t('security.biometricRequested', { method: biometricMethod })}</Text>
-              )}
-              <ActionButton
-                label={sensitiveBusy ? t('security.checking') : t('actions.confirm')}
-                loading={pendingAction === 'reveal' || pendingAction === 'delete' || sensitiveBusy}
-                disabled={actionLocked || sensitiveBusy}
-                onPress={() => { void confirmSensitiveAction(); }}
-              />
-              <ActionButton
-                label={t('actions.cancel')}
-                variant="ghost"
-                disabled={actionLocked || sensitiveBusy}
-                onPress={() => { setSensitiveAction(null); setSensitivePassword(''); }}
-              />
-            </View>
-          ) : null}
-          {languageSettings}
-        </View>
+        <SecurityTab
+          t={t}
+          wallet={wallet}
+          seedSaved={seedSaved}
+          actionLocked={actionLocked}
+          pendingAction={pendingAction}
+          vaultBiometricsEnabled={vaultBiometricsEnabled}
+          biometricMethod={biometricMethod}
+          showMnemonic={showMnemonic}
+          vaultUnlockMode={vaultUnlockMode}
+          sensitiveAction={sensitiveAction}
+          sensitivePassword={sensitivePassword}
+          onChangeSensitivePassword={setSensitivePassword}
+          showSensitivePassword={showSensitivePassword}
+          onToggleSensitivePassword={() => setShowSensitivePassword((current) => !current)}
+          sensitiveBusy={sensitiveBusy}
+          onLockWallet={lockWallet}
+          onToggleMnemonic={toggleMnemonic}
+          onAskDelete={askDeleteWallet}
+          onConfirmSensitive={() => { void confirmSensitiveAction(); }}
+          onCancelSensitive={() => { setSensitiveAction(null); setSensitivePassword(''); }}
+          languageSettings={languageSettings}
+        />
       );
     }
 
-    const spendableAddressSet = new Set(
-      (network.snapshot?.spendableAddresses ?? []).map((address) => address.address),
-    );
-
     return (
-      <View style={styles.card}>
-        <View style={styles.sectionTitleRow}>
-          <Text style={styles.sectionTitle}>{t('home.title')}</Text>
-          <TouchableOpacity
-            accessibilityLabel={t('actions.refreshBalance')}
-            disabled={actionLocked || balanceRefreshing || network.status === 'syncing'}
-            onPress={() => { void refreshBalance(); }}
-            style={[styles.refreshButton, (actionLocked || balanceRefreshing || network.status === 'syncing') && styles.refreshButtonDisabled]}
-          >
-            <Text style={styles.refreshButtonText}>{'\u21bb'}</Text>
-          </TouchableOpacity>
-        </View>
-        <View style={styles.balanceCard}>
-          <Text style={styles.balance}>
-            {network.snapshot ? satoshisToNito(network.snapshot.spendableSats) + ' NITO' : '-- NITO'}
-          </Text>
-          {network.snapshot && network.snapshot.unconfirmedSats > 0 ? (
-            <Text style={styles.pendingBalance}>
-              {t('home.pendingBalance', { amount: satoshisToNito(network.snapshot.unconfirmedSats) })}
-            </Text>
-          ) : null}
-          {network.snapshot && (network.snapshot.immatureCoinbaseSats ?? 0) > 0 ? (
-            <Text style={styles.immatureCoinbaseBalance}>
-              {t('home.immatureMiningRewards', {
-                amount: satoshisToNito(network.snapshot.immatureCoinbaseSats ?? 0),
-              })}
-              {'\n'}
-              {t('home.coinbaseBlocksRemaining', {
-                blocks: network.snapshot.immatureCoinbaseBlocksRemaining ?? 0,
-              })}
-            </Text>
-          ) : null}
-          {balanceRefreshing ? (
-            <View style={styles.balanceUpdating}>
-              <Text style={styles.balanceHourglass}>{'\u231b'}</Text>
-              <Text style={styles.balanceUpdatingText}>{t('home.updatingBalance')}</Text>
-            </View>
-          ) : null}
-        </View>
-        <View style={styles.preview}>
-          <Text style={styles.label}>{t('home.mainAddress')}</Text>
-          <Text style={styles.previewAddress}>{shortAddress(wallet.address)}</Text>
-        </View>
-        {!preparedConsolidation && network.snapshot && network.snapshot.utxos.filter((utxo) => (
-          isTransparentUtxoSpendable(utxo)
-          && (spendableAddressSet.has(utxo.address))
-        )).length >= CONSOLIDATION_MIN_UTXOS ? (
-          <ActionButton
-            label={makeConsolidationTranslator(language)('action')}
-            onPress={confirmTransparentConsolidation}
-            variant="secondary"
-            disabled={actionLocked || network.status === 'syncing'}
-            loading={pendingAction === 'consolidate'}
-          />
-        ) : null}
-      </View>
+      <HomeTab
+        t={t}
+        language={language}
+        wallet={wallet}
+        network={network}
+        actionLocked={actionLocked}
+        pendingAction={pendingAction}
+        balanceRefreshing={balanceRefreshing}
+        preparedConsolidation={preparedConsolidation}
+        onRefreshBalance={() => { void refreshBalance(); }}
+        onConfirmConsolidation={confirmTransparentConsolidation}
+      />
     );
   };
 
