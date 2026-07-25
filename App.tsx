@@ -15,23 +15,32 @@ import {
   Animated,
   AppState,
   Easing,
-  Image,
   Linking,
   KeyboardAvoidingView,
   Modal,
   Platform,
   ScrollView,
   Text,
-  TextInput,
   TouchableOpacity,
   View,
 } from 'react-native';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import nacl from 'tweetnacl';
 
-import { ActionButton, PasswordField } from './src/ui/components';
 import { escapeCsvCell, isValidTransactionId, shortAddress, transactionExplorerUrl } from './src/ui/format';
 import { styles } from './src/ui/styles';
+import {
+  Feedback,
+  Hero,
+  ImportScreen,
+  LandingScreen,
+  LanguageSettings,
+  LoadingOverlay,
+  LoadingScreen,
+  PersistScreen,
+  UnlockScreen,
+  WalletShell,
+} from './src/ui/screens';
 import { HistoryTab, HomeTab, ReceiveTab, SecurityTab, SendTab } from './src/ui/tabs';
 import type {
   AppScreen,
@@ -93,9 +102,6 @@ import {
 } from './src/services/vault';
 import { applyOptimisticWalletBroadcast } from './src/wallet/optimisticConsolidation';
 
-declare const require: (path: string) => number;
-
-const NITO_LOGO = require('./assets/nito-logo.png');
 const PRIMARY_DERIVATION_PATH = "m/84'/0'/0'/0/0";
 const LANGUAGE_PREFERENCE_KEY = 'nito.wallet.language.v1';
 const BALANCE_REFRESH_COOLDOWN_KEY = 'nito.wallet.balance-refresh-until.v1';
@@ -1965,174 +1971,14 @@ export default function App() {
   const loadingRotation = loadingSpin.interpolate({ inputRange: [0, 1], outputRange: ['0deg', '360deg'] });
 
   const languageSettings = (
-    <View style={styles.languageSettings}>
-      <TouchableOpacity
-        accessibilityRole="button"
-        accessibilityState={{ expanded: languagePickerOpen }}
-        style={styles.languageSettingsButton}
-        onPress={() => setLanguagePickerOpen((current) => !current)}
-      >
-        <View style={styles.languageSettingsText}>
-          <Text style={styles.label}>{t('language.title')}</Text>
-          <Text style={styles.languageCurrent}>{selectedLanguage.name}</Text>
-        </View>
-        <Text style={styles.languageChevron}>{languagePickerOpen ? '\u2303' : '\u2304'}</Text>
-      </TouchableOpacity>
-      {languagePickerOpen ? (
-        <View style={styles.languageMenu}>
-          <View style={styles.languageGrid}>
-            {LANGUAGES.map((entry) => (
-              <TouchableOpacity
-                key={entry.code}
-                style={[styles.languageOption, language === entry.code && styles.languageOptionActive]}
-                onPress={() => selectLanguage(entry.code)}
-              >
-                <Text style={[styles.languageOptionCode, language === entry.code && styles.languageOptionCodeActive]}>
-                  {entry.short}
-                </Text>
-                <Text style={styles.languageOptionName}>{entry.name}</Text>
-              </TouchableOpacity>
-            ))}
-          </View>
-        </View>
-      ) : null}
-    </View>
-  );
-
-  const hero = (
-    <View style={styles.hero}>
-      <View style={styles.brandRow}>
-        <Image source={NITO_LOGO} style={styles.logo} resizeMode="contain" />
-        <View style={styles.brandText}>
-          <Text style={styles.eyebrow}>{t('brand.network')}</Text>
-          <Text style={styles.title}>{t('brand.wallet')}</Text>
-        </View>
-      </View>
-
-    </View>
-  );
-
-  const feedback = (
-    <>
-      {error ? <Text style={styles.error}>{error}</Text> : null}
-      {status ? <Text style={styles.status}>{status}</Text> : null}
-    </>
-  );
-
-  const landing = (
-    <View style={styles.card}>
-      <Text style={styles.sectionTitle}>{t('start.title')}</Text>
-      <Text style={styles.body}>{t('start.body')}</Text>
-      <ActionButton label={t('actions.createWallet')} loading={pendingAction === 'create'} disabled={actionLocked} onPress={createWallet} />
-      <ActionButton label={t('actions.importSeed')} variant="secondary" disabled={actionLocked} onPress={() => { resetFeedback(); setShowImportSeed(false); setScreen('import'); }} />
-    </View>
-  );
-
-  const importScreen = (
-    <View style={styles.card}>
-      <Text style={styles.sectionTitle}>{t('import.title')}</Text>
-      <Text style={styles.body}>{t('import.body')}</Text>
-      <View style={styles.seedInputShell}>
-        <TextInput
-          value={importText}
-          onChangeText={setImportText}
-          placeholder={t('import.placeholder')}
-          placeholderTextColor="#6d7892"
-          autoCapitalize="none"
-          autoCorrect={false}
-          spellCheck={false}
-          autoComplete="off"
-          importantForAutofill="noExcludeDescendants"
-          secureTextEntry={!showImportSeed}
-          multiline={showImportSeed}
-          textAlignVertical={showImportSeed ? 'top' : 'center'}
-          style={[styles.seedInput, !showImportSeed && styles.seedInputHidden]}
-        />
-        <TouchableOpacity
-          style={styles.seedVisibilityButton}
-          onPress={() => setShowImportSeed((current) => !current)}
-          accessibilityRole="button"
-          accessibilityLabel={showImportSeed ? t('actions.hide') : t('actions.show')}
-        >
-          <Text style={styles.seedVisibilityButtonText}>
-            {showImportSeed ? t('actions.hide') : t('actions.show')}
-          </Text>
-        </TouchableOpacity>
-      </View>
-      {invalidImportWords.length > 0 ? (
-        <View style={styles.seedWordErrors} accessibilityLiveRegion="polite">
-          {invalidImportWords.map((entry) => (
-            <Text key={`${entry.index}:${entry.word}`} style={styles.seedWordError}>
-              {`X #${entry.index + 1}${showImportSeed ? `: ${entry.word}` : ''}`}
-            </Text>
-          ))}
-        </View>
-      ) : null}
-      {importMnemonicStatus ? <Text style={styles.helper}>{importMnemonicStatus}</Text> : null}
-      <ActionButton label={t('actions.continue')} loading={pendingAction === 'import'} disabled={actionLocked || !importMnemonicValid} onPress={importWallet} />
-      <ActionButton label={t('actions.back')} variant="ghost" disabled={actionLocked} onPress={() => { resetFeedback(); setImportText(''); setShowImportSeed(false); setScreen(seedSaved ? 'unlock' : 'landing'); }} />
-    </View>
-  );
-
-  const unlockScreen = (
-    <View style={styles.card}>
-      <Text style={styles.sectionTitle}>{t('unlock.title')}</Text>
-      {vaultBiometricsEnabled ? (
-        <ActionButton
-          label={t('unlock.withBiometric', { method: biometricMethod })}
-          loading={pendingAction === 'unlock'}
-          disabled={actionLocked}
-          onPress={() => { void unlockSavedWallet(true); }}
-        />
-      ) : null}
-      <PasswordField
-        value={unlockPassword}
-        onChangeText={setUnlockPassword}
-        placeholder={t('unlock.password')}
-        visible={showUnlockPassword}
-        onToggleVisible={() => setShowUnlockPassword((current) => !current)}
-        showLabel={t('actions.show')}
-        hideLabel={t('actions.hide')}
-      />
-      <ActionButton
-        label={t('unlock.title')}
-        variant={vaultBiometricsEnabled ? 'secondary' : 'primary'}
-        loading={pendingAction === 'unlock'}
-        disabled={actionLocked}
-        onPress={() => { void unlockSavedWallet(false); }}
-      />
-    </View>
-  );
-
-  const persistScreen = (
-    <View style={styles.card}>
-      <Text style={styles.sectionTitle}>{t('persist.title')}</Text>
-      {showMnemonic && pendingWallet ? <Text selectable style={styles.mnemonic}>{pendingWallet.mnemonic}</Text> : null}
-      <PasswordField
-        value={persistPassword}
-        onChangeText={setPersistPassword}
-        placeholder={t('persist.password')}
-        visible={showPersistPassword}
-        onToggleVisible={() => setShowPersistPassword((current) => !current)}
-        showLabel={t('actions.show')}
-        hideLabel={t('actions.hide')}
-      />
-      <PasswordField
-        value={persistConfirmPassword}
-        onChangeText={setPersistConfirmPassword}
-        placeholder={t('persist.confirmPassword')}
-        visible={showPersistConfirmPassword}
-        onToggleVisible={() => setShowPersistConfirmPassword((current) => !current)}
-        showLabel={t('actions.show')}
-        hideLabel={t('actions.hide')}
-      />
-      <ActionButton
-        label={persistBusy ? t('persist.protecting') : t('persist.protectOpen')}
-        loading={pendingAction === 'protect' || persistBusy}
-        disabled={actionLocked || persistBusy}
-        onPress={() => { void persistWallet(); }}
-      />
-    </View>
+    <LanguageSettings
+      t={t}
+      language={language}
+      selectedLanguageName={selectedLanguage.name}
+      open={languagePickerOpen}
+      onToggle={() => setLanguagePickerOpen((current) => !current)}
+      onSelect={selectLanguage}
+    />
   );
 
   const renderWalletTab = () => {
@@ -2240,56 +2086,91 @@ export default function App() {
     );
   };
 
-  const walletScreen = (
-    <View style={styles.walletShell}>
-      <View style={styles.tabs}>
-        {walletTabs.map((tab, index) => (
-          <TouchableOpacity
-            accessibilityRole="tab"
-            accessibilityState={{ selected: walletTab === tab.key }}
-            key={tab.key}
-            style={[styles.tab, index >= 3 && styles.tabWide, walletTab === tab.key && styles.tabActive]}
-            onPress={() => setWalletTab(tab.key)}
-          >
-            <Text style={[styles.tabText, walletTab === tab.key && styles.tabTextActive]}>{tab.label}</Text>
-          </TouchableOpacity>
-        ))}
-      </View>
-      {renderWalletTab()}
-    </View>
-  );
-
   const activeScreen = () => {
     if (screen === 'loading') {
-      return (
-        <View style={styles.loadingPanel}>
-          <Animated.Image
-            source={NITO_LOGO}
-            style={[styles.bootstrapLogo, { transform: [{ rotate: loadingRotation }] }]}
-            resizeMode="contain"
-          />
-          <Text style={styles.sectionTitle}>{t('loading.title')}</Text>
-        </View>
-      );
+      return <LoadingScreen t={t} rotation={loadingRotation} />;
     }
 
     if (screen === 'import') {
-      return importScreen;
+      return (
+        <ImportScreen
+          t={t}
+          pendingAction={pendingAction}
+          actionLocked={actionLocked}
+          importText={importText}
+          onChangeImportText={setImportText}
+          showSeed={showImportSeed}
+          onToggleSeed={() => setShowImportSeed((current) => !current)}
+          invalidWords={invalidImportWords}
+          mnemonicStatus={importMnemonicStatus}
+          mnemonicValid={importMnemonicValid}
+          onSubmit={importWallet}
+          onBack={() => { resetFeedback(); setImportText(''); setShowImportSeed(false); setScreen(seedSaved ? 'unlock' : 'landing'); }}
+        />
+      );
     }
 
     if (screen === 'unlock') {
-      return unlockScreen;
+      return (
+        <UnlockScreen
+          t={t}
+          pendingAction={pendingAction}
+          actionLocked={actionLocked}
+          biometricsEnabled={vaultBiometricsEnabled}
+          biometricMethod={biometricMethod}
+          password={unlockPassword}
+          onChangePassword={setUnlockPassword}
+          showPassword={showUnlockPassword}
+          onToggleShowPassword={() => setShowUnlockPassword((current) => !current)}
+          onUnlockWithBiometrics={() => { void unlockSavedWallet(true); }}
+          onUnlockWithPassword={() => { void unlockSavedWallet(false); }}
+        />
+      );
     }
 
     if (screen === 'persist') {
-      return persistScreen;
+      return (
+        <PersistScreen
+          t={t}
+          pendingAction={pendingAction}
+          actionLocked={actionLocked}
+          busy={persistBusy}
+          pendingWallet={pendingWallet}
+          showMnemonic={showMnemonic}
+          password={persistPassword}
+          onChangePassword={setPersistPassword}
+          showPassword={showPersistPassword}
+          onToggleShowPassword={() => setShowPersistPassword((current) => !current)}
+          confirmPassword={persistConfirmPassword}
+          onChangeConfirmPassword={setPersistConfirmPassword}
+          showConfirmPassword={showPersistConfirmPassword}
+          onToggleShowConfirmPassword={() => setShowPersistConfirmPassword((current) => !current)}
+          onSubmit={() => { void persistWallet(); }}
+        />
+      );
     }
 
     if (screen === 'wallet') {
-      return walletScreen;
+      return (
+        <WalletShell
+          tabs={walletTabs}
+          activeTab={walletTab}
+          onSelectTab={(key) => setWalletTab(key as WalletTab)}
+        >
+          {renderWalletTab()}
+        </WalletShell>
+      );
     }
 
-    return landing;
+    return (
+      <LandingScreen
+        t={t}
+        pendingAction={pendingAction}
+        actionLocked={actionLocked}
+        onCreate={createWallet}
+        onImport={() => { resetFeedback(); setShowImportSeed(false); setScreen('import'); }}
+      />
+    );
   };
 
   return (
@@ -2300,22 +2181,16 @@ export default function App() {
       >
         <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={styles.keyboard}>
           <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={styles.screen}>
-            {screen !== 'loading' ? hero : null}
-            {feedback}
+            {screen !== 'loading' ? <Hero t={t} /> : null}
+            <Feedback error={error} status={status} />
             {activeScreen()}
           </ScrollView>
           {pendingAction ? (
-            <View style={styles.loadingOverlay} pointerEvents="auto">
-              <View style={styles.loadingLogoShell}>
-                <Animated.Image
-                  source={NITO_LOGO}
-                  style={[styles.loadingLogo, { transform: [{ rotate: loadingRotation }] }]}
-                  resizeMode="contain"
-                />
-              </View>
-              <Text style={styles.loadingOverlayTitle}>{t('brand.wallet')}</Text>
-              <Text style={styles.loadingOverlayText}>{loadingMessage}</Text>
-            </View>
+            <LoadingOverlay
+              title={t('brand.wallet')}
+              message={loadingMessage}
+              rotation={loadingRotation}
+            />
           ) : null}
         </KeyboardAvoidingView>
       </SafeAreaView>

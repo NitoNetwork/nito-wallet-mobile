@@ -7,6 +7,7 @@ import stylesSource from './ui/styles.ts?raw';
 import tabsSource from './ui/tabs.tsx?raw';
 import vaultSource from './services/vault.ts?raw';
 import vaultCryptoSource from './services/vaultCrypto.ts?raw';
+import screensSource from './ui/screens.tsx?raw';
 import expoConfig from '../app.config.js?raw';
 
 describe('mobile wallet UX and security invariants', () => {
@@ -69,8 +70,9 @@ describe('mobile wallet UX and security invariants', () => {
     const loadingOverlay = appSource.indexOf('{pendingAction ? (', scrollViewEnd);
     expect(scrollViewEnd).toBeGreaterThan(0);
     expect(loadingOverlay).toBeGreaterThan(scrollViewEnd);
+    expect(appSource).toContain('rotation={loadingRotation}');
     expect(stylesSource).toContain('...StyleSheet.absoluteFill');
-    expect(appSource).toContain('transform: [{ rotate: loadingRotation }]');
+    expect(screensSource).toMatch(/LoadingOverlay[\s\S]*?transform: \[\{ rotate: rotation \}\]/);
   });
 
   it('clips the QR background and preserves splash artwork proportions', () => {
