@@ -33,6 +33,11 @@ export type ElectrumHistoryEntry = {
   txid: string;
   height: number;
   address: string;
+  direction?: 'sent' | 'received' | 'self' | 'unknown';
+  counterparty?: string;
+  walletAddresses?: string[];
+  amountSats?: number;
+  feeSats?: number;
 };
 
 export type ElectrumVerboseTransaction = {

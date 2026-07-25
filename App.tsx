@@ -1,3 +1,4 @@
+import { CONSOLIDATION_MIN_UTXOS, PBKDF2_ROUNDS } from './src/constants/nito';
 import 'react-native-get-random-values';
 
 import { entropyToMnemonic, validateMnemonic } from '@scure/bip39';
@@ -77,8 +78,6 @@ const LANGUAGE_PREFERENCE_KEY = 'nito.wallet.language.v1';
 const BALANCE_REFRESH_COOLDOWN_KEY = 'nito.wallet.balance-refresh-until.v1';
 const BALANCE_REFRESH_COOLDOWN_MS = 120_000;
 const HISTORY_PAGE_SIZE = 12;
-const CONSOLIDATION_MIN_UTXOS = 9;
-const PBKDF2_ROUNDS = 120_000;
 const MNEMONIC_REVEAL_MS = 60_000;
 const ADDRESS_CLIPBOARD_MS = 60_000;
 const BIP39_WORDS = new Set<string>(wordlist);
@@ -228,7 +227,15 @@ const getImportMnemonicStatus = (value: string, t: Translator) => {
   return '';
 };
 const shortAddress = (address: string) => `${address.slice(0, 13)}...${address.slice(-8)}`;
-const transactionExplorerUrl = (txid: string) => `https://mempool-explorer.nito.network/fr/tx/${txid}`;
+const isValidTransactionId = (txid: string): boolean => /^[0-9a-f]{64}$/i.test(txid);
+
+const transactionExplorerUrl = (txid: string) =>
+  `https://mempool-explorer.nito.network/tx/${txid.toLowerCase()}`;
+
+const openTransactionExplorer = async (txid: string): Promise<void> => {
+  if (!isValidTransactionId(txid)) return;
+  await Linking.openURL(transactionExplorerUrl(txid));
+};
 const createEmptyNetworkState = (): NetworkState => ({
   status: 'idle',
   snapshot: null,
@@ -1521,7 +1528,7 @@ export default function App() {
           {
             text: t('actions.viewTx'),
             onPress: () => {
-              void Linking.openURL(transactionExplorerUrl(txid));
+              void openTransactionExplorer(txid);
             },
           },
           { text: t('actions.ok'), style: 'cancel' },
@@ -2199,7 +2206,7 @@ export default function App() {
                   key={entry.txid}
                   style={styles.historyRow}
                   onPress={() => {
-                    void Linking.openURL(transactionExplorerUrl(entry.txid));
+                    void openTransactionExplorer(entry.txid);
                   }}
                 >
                   <View style={styles.historyRowTop}>

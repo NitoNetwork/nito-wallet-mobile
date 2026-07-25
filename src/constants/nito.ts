@@ -10,3 +10,7 @@ export const VAULT_VERSION = 1;
 export const SALT_BYTE_LENGTH = 16;
 export const NONCE_BYTE_LENGTH = 24;
 export const PASSWORD_MIN_LENGTH = 10;
+
+export const CONSOLIDATION_MIN_UTXOS = 21;
+export const CONSOLIDATION_TARGET_OUTPUTS = 9;
+export const PBKDF2_ROUNDS = 600_000;
