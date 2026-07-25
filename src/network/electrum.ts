@@ -33,15 +33,17 @@ export type ElectrumHistoryEntry = {
   txid: string;
   height: number;
   address: string;
-  direction?: 'sent' | 'received' | 'self' | 'unknown';
+  direction?: 'sent' | 'received' | 'self';
   counterparty?: string;
-  walletAddresses?: string[];
   amountSats?: number;
   feeSats?: number;
+  blockTime?: number;
 };
 
 export type ElectrumVerboseTransaction = {
   txid?: string;
+  time?: number;
+  blocktime?: number;
   vin: {
     txid?: string;
     vout?: number;

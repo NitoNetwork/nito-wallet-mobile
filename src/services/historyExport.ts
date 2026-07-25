@@ -9,9 +9,9 @@ export type HistoryExportRecord = {
   txid: string;
   status: 'confirmed' | 'pending';
   blockHeight: number;
+  blockTime: number | null;
   direction: HistoryExportDirection;
-  counterpartyAddresses: string[];
-  walletAddresses: string[];
+  counterparty: string;
   amountSats: number;
   feeSats: number;
 };
@@ -80,7 +80,6 @@ const buildHistoryExportRecord = async (
   let totalInputSats = 0;
   let walletInputSats = 0;
   const externalInputAddresses = new Set<string>();
-  const walletInputAddresses = new Set<string>();
 
   await Promise.all(transaction.vin.map(async (input) => {
     if (!input.txid || typeof input.vout !== 'number') return;
@@ -92,7 +91,6 @@ const buildHistoryExportRecord = async (
     totalInputSats += valueSats;
     if (addresses.some((address) => owned.has(address))) {
       walletInputSats += valueSats;
-      addresses.filter((address) => owned.has(address)).forEach((address) => walletInputAddresses.add(address));
     } else {
       addresses.forEach((address) => externalInputAddresses.add(address));
     }
@@ -100,22 +98,21 @@ const buildHistoryExportRecord = async (
 
   const totalOutputSats = currentOutputs.reduce((total, output) => total + output.valueSats, 0);
   const externalOutputSats = externalOutputs.reduce((total, output) => total + output.valueSats, 0);
-  const walletOutputAddresses = currentOutputs
-    .flatMap((output) => output.addresses)
-    .filter((address) => owned.has(address));
   const isSent = walletInputSats > 0 && externalOutputSats > 0;
   const direction: HistoryExportDirection = isSent ? 'sent' : walletInputSats > 0 ? 'self' : 'received';
+  const counterparty = isSent
+    ? [...new Set(externalOutputs.flatMap((output) => output.addresses))][0] ?? ''
+    : [...externalInputAddresses][0] ?? '';
+  const blockTime = transaction.blocktime ?? transaction.time ?? null;
 
   return {
     txid: entry.txid,
     status: entry.height > 0 ? 'confirmed' : 'pending',
     blockHeight: entry.height,
+    blockTime: typeof blockTime === 'number' && blockTime > 0 ? blockTime : null,
     direction,
-    counterpartyAddresses: isSent
-      ? [...new Set(externalOutputs.flatMap((output) => output.addresses))]
-      : [...externalInputAddresses],
-    walletAddresses: [...new Set([...walletInputAddresses, ...walletOutputAddresses])],
-    amountSats: isSent ? externalOutputSats : direction === 'received' ? walletOutputSats : 0,
+    counterparty,
+    amountSats: isSent ? externalOutputSats : walletOutputSats,
     feeSats: walletInputSats > 0 ? Math.max(0, totalInputSats - totalOutputSats) : 0,
   };
 };
@@ -152,16 +149,36 @@ export const buildHistoryExportRecords = async ({
   });
 };
 
+const formatUtcDate = (blockTime: number | null) => {
+  if (blockTime === null) return '';
+  return new Date(blockTime * 1000).toISOString().replace('.000Z', 'Z');
+};
+
+export const historyRecordsFromEntries = (entries: ElectrumHistoryEntry[]): HistoryExportRecord[] =>
+  entries.flatMap((entry) => {
+    if (entry.direction === undefined) return [];
+    return [{
+      txid: entry.txid,
+      status: entry.height > 0 ? 'confirmed' : 'pending',
+      blockHeight: entry.height,
+      blockTime: entry.blockTime ?? null,
+      direction: entry.direction,
+      counterparty: entry.counterparty ?? '',
+      amountSats: entry.amountSats ?? 0,
+      feeSats: entry.feeSats ?? 0,
+    } satisfies HistoryExportRecord];
+  });
+
 export const historyExportCsvRows = (records: HistoryExportRecord[]) => [
-  ['txid', 'status', 'block_height', 'direction', 'counterparty_addresses', 'wallet_addresses', 'amount_nito', 'fee_nito'],
+  ['date', 'direction', 'amount_nito', 'fee_nito', 'status', 'block_height', 'counterparty_address', 'txid'],
   ...records.map((record) => [
-    record.txid,
-    record.status,
-    record.blockHeight,
+    formatUtcDate(record.blockTime),
     record.direction,
-    record.counterpartyAddresses.join(' | '),
-    record.walletAddresses.join(' | '),
     formatSats(record.amountSats),
     formatSats(record.feeSats),
+    record.status,
+    record.blockHeight,
+    record.counterparty,
+    record.txid,
   ]),
 ];

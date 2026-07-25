@@ -17,6 +17,8 @@ type HistoryRow = {
   amount_sats: number | null;
   direction: string | null;
   fee_sats: number | null;
+  counterparty: string | null;
+  block_time: number | null;
 };
 
 
@@ -73,6 +75,8 @@ const openHistoryDb = async () => {
       'direction TEXT',
       'fee_sats INTEGER',
       'enriched_at TEXT',
+      'counterparty TEXT',
+      'block_time INTEGER',
     ]) {
       await db.execAsync(`ALTER TABLE wallet_transactions ADD COLUMN ${column};`).catch(() => undefined);
     }
@@ -87,7 +91,7 @@ export const loadWalletHistoryCache = async (walletId: string): Promise<WalletHi
   const db = await openHistoryDb();
   const [rows, state] = await Promise.all([
     db.getAllAsync<HistoryRow>(
-      'SELECT txid, height, address, amount_sats, direction, fee_sats FROM wallet_transactions WHERE wallet_id = ? ORDER BY height DESC, txid ASC',
+      'SELECT txid, height, address, amount_sats, direction, fee_sats, counterparty, block_time FROM wallet_transactions WHERE wallet_id = ? ORDER BY height DESC, txid ASC',
       walletId,
     ),
     db.getFirstAsync<SyncStateRow>(
@@ -102,6 +106,8 @@ export const loadWalletHistoryCache = async (walletId: string): Promise<WalletHi
       entry.direction = row.direction;
       entry.amountSats = row.amount_sats ?? 0;
       entry.feeSats = row.fee_sats ?? 0;
+      entry.counterparty = row.counterparty ?? '';
+      if (row.block_time !== null) entry.blockTime = row.block_time;
     }
     return entry;
   });
@@ -206,11 +212,13 @@ export const saveEnrichedHistoryRecords = async (
     for (const record of records) {
       await db.runAsync(
         `UPDATE wallet_transactions
-         SET amount_sats = ?, direction = ?, fee_sats = ?, enriched_at = ?
+         SET amount_sats = ?, direction = ?, fee_sats = ?, counterparty = ?, block_time = ?, enriched_at = ?
          WHERE wallet_id = ? AND txid = ? AND height = ?`,
         Math.max(0, Math.trunc(record.amountSats)),
         record.direction,
         Math.max(0, Math.trunc(record.feeSats)),
+        record.counterparty,
+        record.blockTime,
         now,
         walletId,
         record.txid,

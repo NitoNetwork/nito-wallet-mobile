@@ -6,6 +6,8 @@ export type EnrichedHistoryRecord = {
   amountSats: number;
   direction: 'received' | 'sent' | 'self';
   feeSats: number;
+  counterparty: string;
+  blockTime: number | null;
 };
 
 const mergeEnrichment = (
@@ -20,7 +22,7 @@ const mergeEnrichment = (
     amountSats: other.amountSats,
     feeSats: other.feeSats,
     counterparty: other.counterparty,
-    walletAddresses: other.walletAddresses,
+    blockTime: other.blockTime,
   };
 };
 

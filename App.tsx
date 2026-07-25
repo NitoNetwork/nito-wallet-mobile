@@ -43,7 +43,11 @@ import type {
 } from './src/ui/types';
 
 import { NitoElectrumClient, scriptPubKeyForNitoAddress } from './src/network/electrum';
-import { buildHistoryExportRecords, historyExportCsvRows } from './src/services/historyExport';
+import {
+  buildHistoryExportRecords,
+  historyExportCsvRows,
+  historyRecordsFromEntries,
+} from './src/services/historyExport';
 import {
   DEFAULT_LANGUAGE,
   LANGUAGES,
@@ -433,7 +437,6 @@ export default function App() {
   const [persistConfirmPassword, setPersistConfirmPassword] = useState('');
   const [showPersistPassword, setShowPersistPassword] = useState(false);
   const [showPersistConfirmPassword, setShowPersistConfirmPassword] = useState(false);
-  const [persistWithBiometrics, setPersistWithBiometrics] = useState(false);
   const [biometricMethod, setBiometricMethod] = useState<BiometricMethod>('biometrics');
   const [biometricUnavailableReason, setBiometricUnavailableReason] = useState('');
   const [error, setError] = useState('');
@@ -441,10 +444,11 @@ export default function App() {
   const [showMnemonic, setShowMnemonic] = useState(false);
   const [sensitivePassword, setSensitivePassword] = useState('');
   const [showSensitivePassword, setShowSensitivePassword] = useState(false);
-  const [sensitiveAction, setSensitiveAction] = useState<'reveal' | 'delete' | null>(null);
+  const [sensitiveAction, setSensitiveAction] = useState<'reveal' | 'delete' | 'enableBiometrics' | null>(null);
   const [sensitiveBusy, setSensitiveBusy] = useState(false);
   const [pendingAction, setPendingAction] = useState<PendingAction | null>(null);
   const [historyPage, setHistoryPage] = useState(0);
+  const [historyProgress, setHistoryProgress] = useState<{ done: number; total: number } | null>(null);
   const [language, setLanguage] = useState<LanguageCode>(detectSystemLanguage);
   const [languagePickerOpen, setLanguagePickerOpen] = useState(false);
   const [balanceRefreshing, setBalanceRefreshing] = useState(false);
@@ -691,6 +695,7 @@ export default function App() {
 
     enrichInFlightRef.current = true;
     pending.forEach((entry) => enrichAttemptedRef.current.add(entry.txid));
+    setHistoryProgress({ done: 0, total: pending.length });
     try {
       const client = electrumClientRef.current || new NitoElectrumClient();
       electrumClientRef.current = client;
@@ -699,6 +704,7 @@ export default function App() {
         history: pending,
         walletAddresses: snapshot.addresses.map((address) => address.address),
         reader: client,
+        onProgress: (done, total) => setHistoryProgress({ done, total }),
       });
       await saveEnrichedHistoryRecords(
         activeWallet.address,
@@ -708,6 +714,8 @@ export default function App() {
           amountSats: record.amountSats,
           direction: record.direction,
           feeSats: record.feeSats,
+          counterparty: record.counterparty,
+          blockTime: record.blockTime,
         })),
       ).catch(() => undefined);
 
@@ -724,8 +732,8 @@ export default function App() {
           direction: record.direction,
           amountSats: record.amountSats,
           feeSats: record.feeSats,
-          counterparty: record.counterpartyAddresses[0],
-          walletAddresses: record.walletAddresses,
+          counterparty: record.counterparty,
+          blockTime: record.blockTime ?? undefined,
         };
       });
       const nextNetwork: NetworkState = {
@@ -738,6 +746,7 @@ export default function App() {
       // Enrichment is best-effort; the plain history list stays available.
     } finally {
       enrichInFlightRef.current = false;
+      setHistoryProgress(null);
     }
   }, []);
 
@@ -1112,7 +1121,6 @@ export default function App() {
       setWallet(null);
       setPersistPassword('');
       setPersistConfirmPassword('');
-      setPersistWithBiometrics(false);
       setShowMnemonic(false);
       setScreen('persist');
       setStatus(t('status.seedCreated'));
@@ -1135,7 +1143,6 @@ export default function App() {
       setWallet(null);
       setPersistPassword('');
       setPersistConfirmPassword('');
-      setPersistWithBiometrics(false);
       setShowMnemonic(false);
       setImportText('');
       setShowImportSeed(false);
@@ -1253,27 +1260,7 @@ export default function App() {
       return;
     }
 
-    if (persistWithBiometrics) {
-      if (biometricUnavailableReason) {
-        setError(biometricUnavailableReason);
-        return;
-      }
-
-      try {
-        systemPromptActiveRef.current = true;
-        try {
-          await requestBiometricGate(`Protect Nito Wallet with ${biometricMethod}`);
-          await saveBiometricSecret(persistPassword);
-        } finally {
-          systemPromptActiveRef.current = false;
-        }
-      } catch (caught) {
-        setError(caught instanceof Error ? caught.message : t('errors.biometricUnavailable'));
-        return;
-      }
-    } else {
-      await SecureStore.deleteItemAsync(BIOMETRIC_SECRET_KEY).catch(() => undefined);
-    }
+    await SecureStore.deleteItemAsync(BIOMETRIC_SECRET_KEY).catch(() => undefined);
     setPersistBusy(true);
     setStatus(t('loading.protect'));
     await yieldToUi();
@@ -1288,18 +1275,19 @@ export default function App() {
           createdAt: new Date().toISOString(),
         },
         persistPassword,
-        persistWithBiometrics,
+        false,
         'password',
       );
 
       await saveVault(encrypted);
+      const chosenPassword = persistPassword;
       setSeedSaved(true);
       setVaultUnlockMode('password');
-      setVaultBiometricsEnabled(persistWithBiometrics);
+      setVaultBiometricsEnabled(false);
       setPersistPassword('');
       setPersistConfirmPassword('');
-      setPersistWithBiometrics(false);
       enterWallet(walletToPersist, true, t('status.walletOpened'));
+      promptBiometricOptIn(chosenPassword);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : t('errors.saveFailed'));
     } finally {
@@ -1664,6 +1652,80 @@ export default function App() {
     if (wallet && payload.mnemonic !== wallet.mnemonic) {
       throw new Error(t('errors.passwordDoesNotMatchWallet'));
     }
+
+    return vaultSecret;
+  };
+
+  const enableBiometricUnlock = async (password: string) => {
+    if (biometricUnavailableReason) {
+      throw new Error(biometricUnavailableReason);
+    }
+
+    systemPromptActiveRef.current = true;
+    try {
+      await requestBiometricGate(`Protect Nito Wallet with ${biometricMethod}`);
+      await saveBiometricSecret(password);
+    } finally {
+      systemPromptActiveRef.current = false;
+    }
+
+    const vault = await loadVault();
+    if (vault) {
+      await saveVault({ ...vault, biometricsEnabled: true });
+    }
+    setVaultBiometricsEnabled(true);
+  };
+
+  const disableBiometricUnlock = async () => {
+    await runExclusiveAction('protect', async () => {
+      resetFeedback();
+      try {
+        await SecureStore.deleteItemAsync(BIOMETRIC_SECRET_KEY).catch(() => undefined);
+        const vault = await loadVault();
+        if (vault) {
+          await saveVault({ ...vault, biometricsEnabled: false, unlockMode: 'password' });
+        }
+        setVaultBiometricsEnabled(false);
+        setVaultUnlockMode('password');
+        setStatus(t('status.biometricDisabled'));
+      } catch (caught) {
+        setError(caught instanceof Error ? caught.message : t('errors.saveFailed'));
+      }
+    });
+  };
+
+  const askEnableBiometrics = () => {
+    resetFeedback();
+    if (biometricUnavailableReason) {
+      setError(biometricUnavailableReason);
+      return;
+    }
+    setSensitiveAction('enableBiometrics');
+    setSensitivePassword('');
+  };
+
+  const promptBiometricOptIn = (password: string) => {
+    if (biometricUnavailableReason) return;
+    Alert.alert(
+      t('dialog.biometricTitle', { method: biometricMethod }),
+      t('dialog.biometricBody', { method: biometricMethod }),
+      [
+        { text: t('dialog.biometricLater'), style: 'cancel' },
+        {
+          text: t('dialog.biometricEnable'),
+          onPress: () => {
+            void (async () => {
+              try {
+                await enableBiometricUnlock(password);
+                setStatus(t('status.biometricEnabled', { method: biometricMethod }));
+              } catch (caught) {
+                setError(caught instanceof Error ? caught.message : t('errors.biometricUnavailable'));
+              }
+            })();
+          },
+        },
+      ],
+    );
   };
 
   const confirmSensitiveAction = async () => {
@@ -1677,11 +1739,14 @@ export default function App() {
     setSensitiveBusy(true);
 
     try {
-      await verifySensitiveAction();
+      const vaultSecret = await verifySensitiveAction();
 
       if (sensitiveAction === 'reveal') {
         setShowMnemonic(true);
         setStatus(t('status.seedVisibleTemporary'));
+      } else if (sensitiveAction === 'enableBiometrics') {
+        await enableBiometricUnlock(vaultSecret);
+        setStatus(t('status.biometricEnabled', { method: biometricMethod }));
       } else {
         removeSavedWallet();
       }
@@ -1721,29 +1786,6 @@ export default function App() {
     setSensitivePassword('');
   };
 
-  const loadFullHistory = async () => {
-    await runExclusiveAction('history', async () => {
-      resetFeedback();
-      await syncTransparentNetwork(true, { force: true });
-      setHistoryPage(0);
-      setStatus(t('status.historySynced'));
-    });
-  };
-
-  const confirmFullHistorySync = () => {
-    Alert.alert(
-      t('dialog.fullHistoryTitle'),
-      t('dialog.fullHistoryBody'),
-      [
-        { text: t('actions.cancel'), style: 'cancel' },
-        {
-          text: t('dialog.fullHistoryConfirm'),
-          onPress: () => { void loadFullHistory(); },
-        },
-      ],
-    );
-  };
-
   const exportFullHistory = async () => {
     await runExclusiveAction('history', async () => {
       resetFeedback();
@@ -1760,17 +1802,50 @@ export default function App() {
           throw new Error(t('errors.historyExportUnavailable'));
         }
 
-        const client = electrumClientRef.current || new NitoElectrumClient();
-        electrumClientRef.current = client;
-        await client.connect().catch(() => undefined);
-        const records = await buildHistoryExportRecords({
-          history: networkRef.current.snapshot.history,
-          walletAddresses: networkRef.current.snapshot.addresses.map((address) => address.address),
-          reader: client,
-          onProgress: (done, total) => {
-            setStatus(t('status.historyExporting', { done, total }));
-          },
-        });
+        const history = networkRef.current.snapshot.history;
+        const missing = history.filter((entry) => entry.direction === undefined);
+
+        if (missing.length > 0) {
+          const client = electrumClientRef.current || new NitoElectrumClient();
+          electrumClientRef.current = client;
+          await client.connect().catch(() => undefined);
+          const fresh = await buildHistoryExportRecords({
+            history: missing,
+            walletAddresses: networkRef.current.snapshot.addresses.map((address) => address.address),
+            reader: client,
+            onProgress: (done, total) => {
+              setStatus(t('status.historyExporting', { done, total }));
+            },
+          });
+          await saveEnrichedHistoryRecords(
+            walletRef.current?.address ?? '',
+            fresh.map((record) => ({
+              txid: record.txid,
+              height: record.blockHeight,
+              amountSats: record.amountSats,
+              direction: record.direction,
+              feeSats: record.feeSats,
+              counterparty: record.counterparty,
+              blockTime: record.blockTime,
+            })),
+          ).catch(() => undefined);
+          const byTxid = new Map(fresh.map((record) => [record.txid, record]));
+          for (const [index, entry] of history.entries()) {
+            const record = byTxid.get(entry.txid);
+            if (record) {
+              history[index] = {
+                ...entry,
+                direction: record.direction,
+                amountSats: record.amountSats,
+                feeSats: record.feeSats,
+                counterparty: record.counterparty,
+                blockTime: record.blockTime ?? undefined,
+              };
+            }
+          }
+        }
+
+        const records = historyRecordsFromEntries(history);
         const rows = historyExportCsvRows(records);
         const csv = `\uFEFF${rows.map((row) => row.map(escapeCsvCell).join(',')).join('\r\n')}`;
         const date = new Date().toISOString().slice(0, 10);
@@ -2038,16 +2113,6 @@ export default function App() {
         showLabel={t('actions.show')}
         hideLabel={t('actions.hide')}
       />
-      {!biometricUnavailableReason ? (
-        <TouchableOpacity
-          style={[styles.biometricChoice, persistWithBiometrics && styles.biometricChoiceActive]}
-          onPress={() => setPersistWithBiometrics((current) => !current)}
-        >
-          <Text style={styles.biometricTitle}>
-            {persistWithBiometrics ? t('persist.biometricEnabled', { method: biometricMethod }) : t('persist.useBiometric', { method: biometricMethod })}
-          </Text>
-        </TouchableOpacity>
-      ) : null}
       <ActionButton
         label={persistBusy ? t('persist.protecting') : t('persist.protectOpen')}
         loading={pendingAction === 'protect' || persistBusy}
@@ -2106,8 +2171,8 @@ export default function App() {
           actionLocked={actionLocked}
           pendingAction={pendingAction}
           historyPage={historyPage}
+          historyProgress={historyProgress}
           onChangeHistoryPage={setHistoryPage}
-          onConfirmFullHistorySync={confirmFullHistorySync}
           onExportHistory={() => { void exportFullHistory(); }}
           onOpenTx={(txid) => { void openTransactionExplorer(txid); }}
         />
@@ -2138,6 +2203,9 @@ export default function App() {
           onConfirmSensitive={() => { void confirmSensitiveAction(); }}
           onCancelSensitive={() => { setSensitiveAction(null); setSensitivePassword(''); }}
           languageSettings={languageSettings}
+          biometricAvailable={!biometricUnavailableReason}
+          onEnableBiometrics={askEnableBiometrics}
+          onDisableBiometrics={() => { void disableBiometricUnlock(); }}
         />
       );
     }

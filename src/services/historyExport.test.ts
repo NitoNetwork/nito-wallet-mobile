@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import type { ElectrumHistoryEntry, ElectrumVerboseTransaction } from '../network/electrum';
-import { buildHistoryExportRecords, historyExportCsvRows } from './historyExport';
+import { buildHistoryExportRecords, historyExportCsvRows, historyRecordsFromEntries } from './historyExport';
 
 const output = (value: number, address: string, n = 0) => ({
   n,
@@ -42,18 +42,66 @@ describe('wallet history export', () => {
 
     expect(records[0]).toMatchObject({
       direction: 'sent',
-      counterpartyAddresses: ['recipient-address'],
+      counterparty: 'recipient-address',
       amountSats: 700_000_000,
       feeSats: 10_000_000,
     });
     expect(records[1]).toMatchObject({
       direction: 'received',
-      counterpartyAddresses: ['external-source'],
+      counterparty: 'external-source',
       amountSats: 990_000_000,
     });
     const rows = historyExportCsvRows(records);
-    expect(rows[0]).not.toContain('explorer_url');
+    expect(rows[0]).toEqual([
+      'date', 'direction', 'amount_nito', 'fee_nito', 'status', 'block_height', 'counterparty_address', 'txid',
+    ]);
     expect(rows[1]).toContain('recipient-address');
+  });
+
+  it('reports the real amount moved by an internal transaction', async () => {
+    const transactions: Record<string, ElectrumVerboseTransaction> = {
+      walletParent: { vin: [{ coinbase: '01' }], vout: [output(10, 'wallet-address')] },
+      consolidation: {
+        blocktime: 1_753_000_000,
+        vin: [{ txid: 'walletParent', vout: 0 }],
+        vout: [output(9.5, 'wallet-address')],
+      },
+    };
+    const reader = {
+      async getVerboseTransaction(txid: string) {
+        const transaction = transactions[txid];
+        if (!transaction) throw new Error(`Missing transaction ${txid}`);
+        return transaction;
+      },
+    };
+
+    const [record] = await buildHistoryExportRecords({
+      history: [{ txid: 'consolidation', height: 42, address: 'wallet-address' }],
+      walletAddresses: ['wallet-address'],
+      reader,
+    });
+
+    expect(record).toMatchObject({ direction: 'self', amountSats: 950_000_000, feeSats: 50_000_000 });
+    expect(historyExportCsvRows([record!])[1]?.[0]).toBe('2025-07-20T08:26:40Z');
+  });
+
+  it('rebuilds records from cached entries without any network call', () => {
+    const records = historyRecordsFromEntries([
+      { txid: 'a', height: 10, address: 'wallet-address' },
+      {
+        txid: 'b',
+        height: 20,
+        address: 'wallet-address',
+        direction: 'received',
+        amountSats: 500,
+        feeSats: 0,
+        counterparty: 'sender',
+        blockTime: 1_753_000_000,
+      },
+    ]);
+
+    expect(records).toHaveLength(1);
+    expect(records[0]).toMatchObject({ txid: 'b', direction: 'received', counterparty: 'sender' });
   });
 
   it('fetches transactions concurrently, preserves order and reports progress', async () => {

@@ -165,8 +165,8 @@ export function HistoryTab({
   actionLocked,
   pendingAction,
   historyPage,
+  historyProgress,
   onChangeHistoryPage,
-  onConfirmFullHistorySync,
   onExportHistory,
   onOpenTx,
 }: {
@@ -175,41 +175,52 @@ export function HistoryTab({
   actionLocked: boolean;
   pendingAction: PendingAction | null;
   historyPage: number;
+  historyProgress: { done: number; total: number } | null;
   onChangeHistoryPage: (next: number) => void;
-  onConfirmFullHistorySync: () => void;
   onExportHistory: () => void;
   onOpenTx: (txid: string) => void;
 }) {
-  const historyEntries = network.snapshot?.history ?? [];
+  const historyEntries = (network.snapshot?.history ?? []).filter((entry) => entry.direction !== undefined);
+  const pendingEnrichment = (network.snapshot?.history ?? []).some((entry) => entry.direction === undefined);
+  const loading = network.status === 'syncing' || historyProgress !== null || pendingEnrichment;
   const historyPageCount = Math.max(1, Math.ceil(historyEntries.length / HISTORY_PAGE_SIZE));
   const activeHistoryPage = Math.min(historyPage, historyPageCount - 1);
   const visibleHistory = historyEntries.slice(
     activeHistoryPage * HISTORY_PAGE_SIZE,
     (activeHistoryPage + 1) * HISTORY_PAGE_SIZE,
   );
+
+  if (loading && historyEntries.length === 0) {
+    return (
+      <View style={styles.card}>
+        <Text style={styles.sectionTitle}>{t('history.title')}</Text>
+        <View style={styles.empty}>
+          <ActivityIndicator color="#dbeaff" size="large" />
+          <Text style={styles.emptyTitle}>{t('history.loading')}</Text>
+          <Text style={styles.body}>
+            {historyProgress
+              ? t('history.loadingProgress', { done: historyProgress.done, total: historyProgress.total })
+              : t('history.loadingHint')}
+          </Text>
+        </View>
+      </View>
+    );
+  }
+
   return (
     <View style={styles.card}>
       <Text style={styles.sectionTitle}>{t('history.title')}</Text>
-      {!network.fullHistoryEnabled ? (
-        <TouchableOpacity
-          disabled={actionLocked || !network.snapshot || network.status === 'syncing'}
-          onPress={onConfirmFullHistorySync}
-          style={[
-            styles.historySyncButton,
-            (actionLocked || !network.snapshot || network.status === 'syncing') && styles.historySyncButtonDisabled,
-          ]}
-        >
-          <View style={styles.historySyncButtonContent}>
-            {pendingAction === 'history' || (network.status === 'syncing' && network.fullHistoryEnabled) ? (
-              <ActivityIndicator color="#dbeaff" size="small" />
-            ) : null}
-            <Text style={styles.historySyncButtonText}>
-              {network.status === 'syncing' && network.fullHistoryEnabled ? t('history.syncing') : t('actions.syncFullHistory')}
-            </Text>
-          </View>
-        </TouchableOpacity>
+      {loading ? (
+        <View style={styles.historySyncButtonContent}>
+          <ActivityIndicator color="#dbeaff" size="small" />
+          <Text style={styles.historySyncButtonText}>
+            {historyProgress
+              ? t('history.loadingProgress', { done: historyProgress.done, total: historyProgress.total })
+              : t('history.syncing')}
+          </Text>
+        </View>
       ) : null}
-      {network.fullHistoryEnabled ? (
+      {historyEntries.length > 0 ? (
         <ActionButton
           label={t('actions.exportHistory')}
           variant="secondary"
@@ -229,9 +240,7 @@ export function HistoryTab({
               <View style={styles.historyRowTop}>
                 <View style={styles.historyRowText}>
                   <Text style={styles.historyTxid}>
-                    {entry.direction !== undefined
-                      ? `${entry.direction === 'received' ? '+' : entry.direction === 'sent' ? '−' : ''}${satoshisToNito(entry.amountSats ?? 0)} NITO`
-                      : shortAddress(entry.txid)}
+                    {`${entry.direction === 'received' ? '+' : entry.direction === 'sent' ? '−' : ''}${satoshisToNito(entry.amountSats ?? 0)} NITO`}
                   </Text>
                   <Text style={styles.helper}>
                     {[
@@ -239,9 +248,7 @@ export function HistoryTab({
                         ? t('history.received')
                         : entry.direction === 'sent'
                           ? t('history.sent')
-                          : entry.direction === 'self'
-                            ? t('history.self')
-                            : '',
+                          : t('history.self'),
                       entry.height > 0 ? t('history.block', { height: entry.height }) : t('history.mempool'),
                     ].filter(Boolean).join(' · ')}
                   </Text>
@@ -309,6 +316,9 @@ export function SecurityTab({
   onConfirmSensitive,
   onCancelSensitive,
   languageSettings,
+  biometricAvailable,
+  onEnableBiometrics,
+  onDisableBiometrics,
 }: {
   t: Translator;
   wallet: Wallet;
@@ -319,7 +329,7 @@ export function SecurityTab({
   biometricMethod: BiometricMethod;
   showMnemonic: boolean;
   vaultUnlockMode: 'password' | 'biometric';
-  sensitiveAction: 'reveal' | 'delete' | null;
+  sensitiveAction: 'reveal' | 'delete' | 'enableBiometrics' | null;
   sensitivePassword: string;
   onChangeSensitivePassword: (value: string) => void;
   showSensitivePassword: boolean;
@@ -331,6 +341,9 @@ export function SecurityTab({
   onConfirmSensitive: () => void;
   onCancelSensitive: () => void;
   languageSettings: ReactNode;
+  biometricAvailable: boolean;
+  onEnableBiometrics: () => void;
+  onDisableBiometrics: () => void;
 }) {
   return (
     <View style={styles.card}>
@@ -346,13 +359,27 @@ export function SecurityTab({
         </View>
       </View>
       <ActionButton label={t('actions.lockWallet')} variant="success" disabled={actionLocked} onPress={onLockWallet} />
+      {biometricAvailable ? (
+        <ActionButton
+          label={vaultBiometricsEnabled
+            ? t('actions.disableBiometric', { method: biometricMethod })
+            : t('actions.enableBiometric', { method: biometricMethod })}
+          variant="secondary"
+          disabled={actionLocked}
+          onPress={vaultBiometricsEnabled ? onDisableBiometrics : onEnableBiometrics}
+        />
+      ) : null}
       <ActionButton label={showMnemonic ? t('actions.hideSeed') : t('actions.showSeed')} variant="secondary" disabled={actionLocked} onPress={onToggleMnemonic} />
       {showMnemonic ? <Text selectable style={styles.mnemonic}>{wallet.mnemonic}</Text> : null}
       {seedSaved ? <ActionButton label={t('actions.deleteWallet')} variant="danger" disabled={actionLocked} onPress={onAskDelete} /> : null}
       {sensitiveAction ? (
         <View style={styles.notice}>
           <Text style={styles.noticeTitle}>
-            {sensitiveAction === 'reveal' ? t('security.confirmReveal') : t('security.confirmDelete')}
+            {sensitiveAction === 'reveal'
+              ? t('security.confirmReveal')
+              : sensitiveAction === 'enableBiometrics'
+                ? t('security.confirmEnableBiometric', { method: biometricMethod })
+                : t('security.confirmDelete')}
           </Text>
           {vaultUnlockMode === 'password' ? (
             <PasswordField

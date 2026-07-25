@@ -9,10 +9,22 @@ import expoConfig from '../app.config.js?raw';
 
 describe('mobile wallet UX and security invariants', () => {
   it('keeps password encryption when biometric quick unlock is enabled', () => {
-    expect(appSource).toContain('await saveBiometricSecret(persistPassword);');
-    expect(appSource).toContain("persistWithBiometrics,\n        'password',");
+    expect(appSource).toContain('await saveBiometricSecret(password);');
     expect(appSource).toContain('void unlockSavedWallet(false);');
     expect(appSource).toContain('void unlockSavedWallet(true);');
+  });
+
+  it('never enables biometrics without an explicit opt-in backed by the password', () => {
+    expect(appSource).not.toContain('const [persistWithBiometrics');
+    expect(appSource).toContain("setSensitiveAction('enableBiometrics');");
+    expect(appSource).toContain('await enableBiometricUnlock(vaultSecret);');
+    expect(appSource).toMatch(/encryptVault\(\s*\{[\s\S]*?\},\s*persistPassword,\s*false,\s*'password',/);
+  });
+
+  it('lets the user turn biometric unlock off again without losing the vault', () => {
+    expect(appSource).toContain('const disableBiometricUnlock = async ()');
+    expect(appSource).toContain('SecureStore.deleteItemAsync(BIOMETRIC_SECRET_KEY)');
+    expect(appSource).toContain("saveVault({ ...vault, biometricsEnabled: false, unlockMode: 'password' })");
   });
 
   it('renders blocking work above the scroll view with a rotating Nito logo', () => {
