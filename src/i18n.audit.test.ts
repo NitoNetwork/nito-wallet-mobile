@@ -97,6 +97,23 @@ describe('i18n coverage', () => {
         t('actions.useOfficialElectrum'),
       ]).toEqual(expected[code]);
       expect(t('settings.customElectrumCertificateWarning')).toContain('wss://');
+      expect(t('settings.customElectrumRisk')).toContain('BIP143');
+      expect(t('settings.customElectrumRisk')).toContain('IP');
+      expect(t('settings.customElectrumRisk')).not.toBe('settings.customElectrumRisk');
     }
+
+    const englishWarning = makeTranslator('en')('settings.customElectrumRisk');
+    [
+      'false balance',
+      'hide incoming transactions',
+      'prevent spending',
+      'confirmation that does not exist',
+      'all wallet addresses',
+      'cannot steal funds',
+      'signing stays local',
+      'input amounts in the signature',
+    ].forEach((requiredMeaning) => {
+      expect(englishWarning).toContain(requiredMeaning);
+    });
   });
 });

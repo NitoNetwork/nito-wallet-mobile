@@ -800,6 +800,7 @@ function NetworkSettingsSection({
       <View style={styles.settingsOptionPanel}>
         <Text style={styles.label}>{t('settings.customElectrumTitle')}</Text>
         <Text style={styles.helper}>{t('settings.customElectrumHint')}</Text>
+        <Text style={styles.settingsWarning}>{t('settings.customElectrumRisk')}</Text>
         <TextInput
           value={customServerInput}
           onChangeText={setCustomServerInput}

@@ -6,6 +6,7 @@ export const COMPLETE_TRANSLATIONS: Record<Exclude<LanguageCode, 'en'>, Localize
   zh: {
     'settings.customElectrumTitle': '自定义 ElectrumX 服务器',
     'settings.customElectrumHint': '手动输入 WSS 服务器。自定义服务器将完全取代官方服务器，且不会自动回退。',
+    'settings.customElectrumRisk': '恶意服务器可以显示虚假余额、隐藏收款交易、阻止花费、声称并不存在的确认，并查看与你的 IP 地址关联的钱包全部地址。它无法盗取资金：签名始终在本地完成，BIP143 会在签名中承诺输入金额。',
     'settings.customElectrumCertificateWarning': 'iOS 和 Android 会拒绝自签名证书。请使用操作系统信任的 wss:// 证书；钱包绝不提供绕过证书验证的选项。',
     'settings.customElectrumCacheHint': '更换服务器会保留本地缓存。如需完全重新验证，请使用下方的“重新同步历史记录”。',
     'settings.customElectrumRecovery': '已保存的服务器配置无法使用。你可以在此恢复官方服务器，无需重新安装钱包。',
@@ -141,6 +142,7 @@ export const COMPLETE_TRANSLATIONS: Record<Exclude<LanguageCode, 'en'>, Localize
   hi: {
     'settings.customElectrumTitle': 'कस्टम ElectrumX सर्वर',
     'settings.customElectrumHint': 'WSS सर्वर को मैन्युअल रूप से दर्ज करें। कस्टम सर्वर आधिकारिक सर्वरों को पूरी तरह बदल देता है और कोई स्वचालित वापसी नहीं होती।',
+    'settings.customElectrumRisk': 'दुर्भावनापूर्ण सर्वर झूठा बैलेंस दिखा सकता है, आने वाले लेनदेन छिपा सकता है, खर्च रोक सकता है, अस्तित्वहीन पुष्टि बता सकता है और आपके IP पते से जुड़े वॉलेट के सभी पते देख सकता है। वह धन नहीं चुरा सकता: हस्ताक्षर स्थानीय रहते हैं और BIP143 हस्ताक्षर में इनपुट राशियों को प्रतिबद्ध करता है।',
     'settings.customElectrumCertificateWarning': 'iOS और Android स्व-हस्ताक्षरित प्रमाणपत्र अस्वीकार करते हैं। ऑपरेटिंग सिस्टम द्वारा विश्वसनीय wss:// प्रमाणपत्र का उपयोग करें; प्रमाणपत्र जाँच को कभी बायपास नहीं किया जा सकता।',
     'settings.customElectrumCacheHint': 'सर्वर बदलने पर स्थानीय कैश बना रहता है। पूरी तरह दोबारा सत्यापन के लिए नीचे “इतिहास फिर से सिंक करें” का उपयोग करें।',
     'settings.customElectrumRecovery': 'सहेजा गया सर्वर कॉन्फ़िगरेशन उपयोग नहीं किया जा सकता। वॉलेट दोबारा इंस्टॉल किए बिना यहाँ आधिकारिक सर्वर बहाल किए जा सकते हैं।',
@@ -276,6 +278,7 @@ export const COMPLETE_TRANSLATIONS: Record<Exclude<LanguageCode, 'en'>, Localize
   es: {
     'settings.customElectrumTitle': 'Servidor ElectrumX personalizado',
     'settings.customElectrumHint': 'Introduce manualmente el servidor WSS. Un servidor personalizado sustituye por completo a los oficiales, sin retorno automático.',
+    'settings.customElectrumRisk': 'Un servidor malicioso puede mostrar un saldo falso, ocultar transacciones entrantes, impedir gastos, anunciar una confirmación inexistente y ver todas las direcciones del wallet vinculadas a tu IP. No puede robar fondos: la firma permanece local y BIP143 compromete los importes de las entradas en la firma.',
     'settings.customElectrumCertificateWarning': 'iOS y Android rechazan los certificados autofirmados. Usa un certificado wss:// de confianza para el sistema operativo; nunca se ofrece una opción para omitir la verificación.',
     'settings.customElectrumCacheHint': 'Cambiar de servidor conserva la caché local. Usa «Resincronizar historial» abajo para volver a validarla por completo.',
     'settings.customElectrumRecovery': 'No se puede usar la configuración de servidor guardada. Puedes restaurar aquí los servidores oficiales sin reinstalar el wallet.',
@@ -407,6 +410,7 @@ export const COMPLETE_TRANSLATIONS: Record<Exclude<LanguageCode, 'en'>, Localize
   fr: {
     'settings.customElectrumTitle': 'Serveur ElectrumX personnalisé',
     'settings.customElectrumHint': 'Saisis manuellement le serveur WSS. Un serveur personnalisé remplace entièrement les serveurs officiels, sans aucun repli automatique.',
+    'settings.customElectrumRisk': 'Un serveur malveillant peut afficher un faux solde, masquer des transactions entrantes, empêcher de dépenser, annoncer une confirmation inexistante et voir toutes les adresses du wallet liées à ton adresse IP. Il ne peut pas voler les fonds : la signature reste locale et BIP143 engage le montant des entrées dans la signature.',
     'settings.customElectrumCertificateWarning': 'iOS et Android refusent les certificats auto-signés. Utilise un certificat wss:// approuvé par le système d’exploitation ; aucune option de contournement du certificat n’est proposée.',
     'settings.customElectrumCacheHint': 'Changer de serveur conserve le cache local. Utilise « Resynchroniser l’historique » ci-dessous pour le revalider entièrement.',
     'settings.customElectrumRecovery': 'La configuration de serveur enregistrée est inutilisable. Tu peux rétablir ici les serveurs officiels sans réinstaller le wallet.',
@@ -538,6 +542,7 @@ export const COMPLETE_TRANSLATIONS: Record<Exclude<LanguageCode, 'en'>, Localize
   ar: {
     'settings.customElectrumTitle': 'خادم ElectrumX مخصص',
     'settings.customElectrumHint': 'أدخل خادم WSS يدويًا. يحل الخادم المخصص محل الخوادم الرسمية بالكامل من دون رجوع تلقائي.',
+    'settings.customElectrumRisk': 'يمكن للخادم الضار عرض رصيد زائف وإخفاء المعاملات الواردة ومنع الإنفاق والإبلاغ عن تأكيد غير موجود ورؤية جميع عناوين المحفظة المرتبطة بعنوان IP الخاص بك. ولا يمكنه سرقة الأموال: يبقى التوقيع محليًا ويلتزم BIP143 بمبالغ المدخلات داخل التوقيع.',
     'settings.customElectrumCertificateWarning': 'يرفض iOS وAndroid الشهادات الموقعة ذاتيًا. استخدم شهادة wss:// موثوقة لدى نظام التشغيل؛ ولا يتوفر أي خيار لتجاوز التحقق من الشهادة.',
     'settings.customElectrumCacheHint': 'يُبقي تغيير الخادم ذاكرة التخزين المحلية. استخدم «إعادة مزامنة السجل» أدناه لإعادة التحقق منها بالكامل.',
     'settings.customElectrumRecovery': 'لا يمكن استخدام إعداد الخادم المحفوظ. يمكنك استعادة الخوادم الرسمية هنا دون إعادة تثبيت المحفظة.',
@@ -673,6 +678,7 @@ export const COMPLETE_TRANSLATIONS: Record<Exclude<LanguageCode, 'en'>, Localize
   bn: {
     'settings.customElectrumTitle': 'কাস্টম ElectrumX সার্ভার',
     'settings.customElectrumHint': 'WSS সার্ভারটি হাতে লিখুন। কাস্টম সার্ভার অফিসিয়াল সার্ভারগুলোকে সম্পূর্ণভাবে প্রতিস্থাপন করে, কোনো স্বয়ংক্রিয় প্রত্যাবর্তন নেই।',
+    'settings.customElectrumRisk': 'ক্ষতিকর সার্ভার ভুয়া ব্যালেন্স দেখাতে, আগত লেনদেন লুকাতে, খরচ বন্ধ করতে, অস্তিত্বহীন কনফার্মেশন জানাতে এবং আপনার IP ঠিকানার সঙ্গে যুক্ত ওয়ালেটের সব ঠিকানা দেখতে পারে। এটি অর্থ চুরি করতে পারে না: স্বাক্ষর স্থানীয় থাকে এবং BIP143 স্বাক্ষরে ইনপুটের অঙ্ক অঙ্গীকার করে।',
     'settings.customElectrumCertificateWarning': 'iOS ও Android স্ব-স্বাক্ষরিত সার্টিফিকেট প্রত্যাখ্যান করে। অপারেটিং সিস্টেমের বিশ্বস্ত wss:// সার্টিফিকেট ব্যবহার করুন; সার্টিফিকেট যাচাই এড়ানোর কোনো বিকল্প দেওয়া হয় না।',
     'settings.customElectrumCacheHint': 'সার্ভার বদলালে স্থানীয় ক্যাশ থাকে। সম্পূর্ণ পুনরায় যাচাই করতে নিচের “ইতিহাস আবার সিঙ্ক করুন” ব্যবহার করুন।',
     'settings.customElectrumRecovery': 'সংরক্ষিত সার্ভার কনফিগারেশন ব্যবহার করা যাচ্ছে না। ওয়ালেট পুনরায় ইনস্টল না করেই এখানে অফিসিয়াল সার্ভার ফিরিয়ে আনতে পারেন।',
@@ -808,6 +814,7 @@ export const COMPLETE_TRANSLATIONS: Record<Exclude<LanguageCode, 'en'>, Localize
   pt: {
     'settings.customElectrumTitle': 'Servidor ElectrumX personalizado',
     'settings.customElectrumHint': 'Introduza manualmente o servidor WSS. Um servidor personalizado substitui totalmente os oficiais, sem retorno automático.',
+    'settings.customElectrumRisk': 'Um servidor malicioso pode mostrar um saldo falso, ocultar transações recebidas, impedir gastos, anunciar uma confirmação inexistente e ver todos os endereços da wallet associados ao seu IP. Não pode roubar fundos: a assinatura permanece local e o BIP143 compromete os montantes das entradas na assinatura.',
     'settings.customElectrumCertificateWarning': 'O iOS e o Android rejeitam certificados autoassinados. Use um certificado wss:// considerado fiável pelo sistema operativo; nunca é oferecida uma opção para ignorar a verificação.',
     'settings.customElectrumCacheHint': 'Mudar de servidor mantém a cache local. Use «Ressincronizar histórico» abaixo para a validar novamente por completo.',
     'settings.customElectrumRecovery': 'A configuração de servidor guardada não pode ser utilizada. Pode restaurar aqui os servidores oficiais sem reinstalar a wallet.',
@@ -942,6 +949,7 @@ export const COMPLETE_TRANSLATIONS: Record<Exclude<LanguageCode, 'en'>, Localize
   ru: {
     'settings.customElectrumTitle': 'Пользовательский сервер ElectrumX',
     'settings.customElectrumHint': 'Введите сервер WSS вручную. Пользовательский сервер полностью заменяет официальные серверы без автоматического возврата.',
+    'settings.customElectrumRisk': 'Вредоносный сервер может показать ложный баланс, скрыть входящие транзакции, помешать расходованию, сообщить о несуществующем подтверждении и видеть все адреса кошелька, связанные с вашим IP-адресом. Он не может украсть средства: подпись выполняется локально, а BIP143 фиксирует суммы входов в подписи.',
     'settings.customElectrumCertificateWarning': 'iOS и Android отклоняют самоподписанные сертификаты. Используйте сертификат wss://, которому доверяет операционная система; обход проверки сертификата никогда не предлагается.',
     'settings.customElectrumCacheHint': 'При смене сервера локальный кеш сохраняется. Для полной повторной проверки используйте ниже «Повторно синхронизировать историю».',
     'settings.customElectrumRecovery': 'Сохранённую конфигурацию сервера использовать нельзя. Здесь можно восстановить официальные серверы без переустановки кошелька.',
