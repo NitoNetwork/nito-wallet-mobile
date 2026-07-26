@@ -114,3 +114,31 @@ export const processHistoryEnrichmentQueue = async <Result>({
     onProgress?.(completed, total);
   }
 };
+
+export const processHistoryEnrichmentPasses = async <Pass>({
+  createPass,
+  processPass,
+}: {
+  createPass: () => Pass | null;
+  processPass: (pass: Pass) => Promise<void>;
+}): Promise<void> => {
+  while (true) {
+    const pass = createPass();
+    if (!pass) return;
+    await processPass(pass);
+  }
+};
+
+export type HistoryEnrichmentBatchOutcome = 'published' | 'failed' | 'interrupted';
+
+export const recordHistoryEnrichmentBatchOutcome = (
+  attempted: Set<string>,
+  keys: readonly string[],
+  outcome: HistoryEnrichmentBatchOutcome,
+): void => {
+  if (outcome === 'interrupted') {
+    keys.forEach((key) => attempted.delete(key));
+    return;
+  }
+  keys.forEach((key) => attempted.add(key));
+};

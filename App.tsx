@@ -86,6 +86,8 @@ import {
   HistoryEnrichmentQueue,
   historyEnrichmentKey as enrichKey,
   processHistoryEnrichmentQueue,
+  processHistoryEnrichmentPasses,
+  recordHistoryEnrichmentBatchOutcome,
 } from './src/services/historyEnrichmentQueue';
 import { type Translator } from './src/i18n';
 import { nitoWalletCrypto } from './src/native/nitoWalletCrypto';
@@ -717,8 +719,7 @@ export default function App() {
   const enrichWalletHistory = useCallback(async () => {
     if (!walletNetworkController.startEnrichment()) return;
     const activeWallet = walletRef.current;
-    const snapshot = networkRef.current.snapshot;
-    if (!activeWallet || !snapshot) {
+    if (!activeWallet || !networkRef.current.snapshot) {
       walletNetworkController.finishEnrichment();
       return;
     }
@@ -727,16 +728,7 @@ export default function App() {
       walletNetworkController.finishEnrichment();
       return;
     }
-    const queue = new HistoryEnrichmentQueue(snapshot.history, {
-      attempted: enrichAttemptedRef.current,
-      initialPage: historyPageRef.current,
-    });
-    if (queue.remainingCount === 0) {
-      walletNetworkController.finishEnrichment();
-      return;
-    }
-
-    historyEnrichmentQueueRef.current = queue;
+    let ownedQueue: HistoryEnrichmentQueue | null = null;
     let activeBatchKeys: string[] = [];
     try {
       const client = electrumClientRef.current || createElectrumClient();
@@ -747,77 +739,106 @@ export default function App() {
         }
       };
 
-      await processHistoryEnrichmentQueue({
-        queue,
-        onBatchStart: (batch) => {
-          activeBatchKeys = batch.map(enrichKey);
-          activeBatchKeys.forEach((key) => enrichAttemptedRef.current.add(key));
-        },
-        enrichBatch: async (batch, onBatchProgress) => {
+      await processHistoryEnrichmentPasses({
+        createPass: () => {
           requireCurrentSession();
-          const { records, outputs } = await enrichHistorySnapshot({
-            snapshot,
-            pending: batch,
-            client,
-            loadCachedOutputs: (txids) => loadTransactionOutputCache(
-              activeWallet.address,
-              txids,
-            ),
-            onCacheReadError: (caught) => {
-              reportNonFinancialFailure('transaction output cache read', caught);
-            },
-            onProgress: (done) => onBatchProgress(done),
-          });
-          requireCurrentSession();
-          return { records, outputs };
-        },
-        publishBatch: async ({ records, outputs }) => {
-          requireCurrentSession();
-          await saveHistoryEnrichmentBatch(
-            activeWallet.address,
-            records
-              .filter((record) => record.blockHeight > 0)
-              .map((record) => ({
-                txid: record.txid,
-                height: record.blockHeight,
-                amountSats: record.amountSats,
-                direction: record.direction,
-                feeSats: record.feeSats,
-                counterparty: record.counterparty,
-                blockTime: record.blockTime,
-              })),
-            outputs,
-          );
-          requireCurrentSession();
-          if (!client.connected) {
-            throw new ElectrumSessionUnhealthyError(
-              new Error('ElectrumX connection closed before history enrichment commit.'),
-            );
-          }
-          const current = networkRef.current;
-          if (!current.snapshot) {
+          const snapshot = networkRef.current.snapshot;
+          if (!snapshot) {
             throw new Error('Wallet snapshot disappeared during history enrichment.');
           }
-          const nextNetwork: NetworkState = {
-            ...current,
-            snapshot: mergeHistoryEnrichment(current.snapshot, records),
-          };
-          requireCurrentSession();
-          networkRef.current = nextNetwork;
-          setNetwork(nextNetwork);
+          const queue = new HistoryEnrichmentQueue(snapshot.history, {
+            attempted: enrichAttemptedRef.current,
+            initialPage: historyPageRef.current,
+          });
+          if (queue.remainingCount === 0) return null;
+          ownedQueue = queue;
+          historyEnrichmentQueueRef.current = queue;
+          return { queue, snapshot };
         },
-        onBatchPublished: () => {
-          activeBatchKeys = [];
-        },
-        onProgress: (done, total) => {
-          if (walletNetworkController.isCurrent(session)) {
-            setHistoryProgress({ done, total });
-          }
+        processPass: async ({ queue, snapshot }) => {
+          await processHistoryEnrichmentQueue({
+            queue,
+            onBatchStart: (batch) => {
+              activeBatchKeys = batch.map(enrichKey);
+            },
+            enrichBatch: async (batch, onBatchProgress) => {
+              requireCurrentSession();
+              const { records, outputs } = await enrichHistorySnapshot({
+                snapshot,
+                pending: batch,
+                client,
+                loadCachedOutputs: (txids) => loadTransactionOutputCache(
+                  activeWallet.address,
+                  txids,
+                ),
+                onCacheReadError: (caught) => {
+                  reportNonFinancialFailure('transaction output cache read', caught);
+                },
+                onProgress: (done) => onBatchProgress(done),
+              });
+              requireCurrentSession();
+              return { records, outputs };
+            },
+            publishBatch: async ({ records, outputs }) => {
+              requireCurrentSession();
+              await saveHistoryEnrichmentBatch(
+                activeWallet.address,
+                records
+                  .filter((record) => record.blockHeight > 0)
+                  .map((record) => ({
+                    txid: record.txid,
+                    height: record.blockHeight,
+                    amountSats: record.amountSats,
+                    direction: record.direction,
+                    feeSats: record.feeSats,
+                    counterparty: record.counterparty,
+                    blockTime: record.blockTime,
+                  })),
+                outputs,
+              );
+              requireCurrentSession();
+              if (!client.connected) {
+                throw new ElectrumSessionUnhealthyError(
+                  new Error('ElectrumX connection closed before history enrichment commit.'),
+                );
+              }
+              const current = networkRef.current;
+              if (!current.snapshot) {
+                throw new Error('Wallet snapshot disappeared during history enrichment.');
+              }
+              const nextNetwork: NetworkState = {
+                ...current,
+                snapshot: mergeHistoryEnrichment(current.snapshot, records),
+              };
+              requireCurrentSession();
+              networkRef.current = nextNetwork;
+              setNetwork(nextNetwork);
+            },
+            onBatchPublished: () => {
+              recordHistoryEnrichmentBatchOutcome(
+                enrichAttemptedRef.current,
+                activeBatchKeys,
+                'published',
+              );
+              activeBatchKeys = [];
+            },
+            onProgress: (done, total) => {
+              if (walletNetworkController.isCurrent(session)) {
+                setHistoryProgress({ done, total });
+              }
+            },
+          });
         },
       });
     } catch (caught) {
-      if (walletNetworkController.isCurrent(session)) {
-        activeBatchKeys.forEach((key) => enrichAttemptedRef.current.delete(key));
+      const sessionCurrent = walletNetworkController.isCurrent(session);
+      recordHistoryEnrichmentBatchOutcome(
+        enrichAttemptedRef.current,
+        activeBatchKeys,
+        sessionCurrent ? 'failed' : 'interrupted',
+      );
+      activeBatchKeys = [];
+      if (sessionCurrent) {
         const message = caught instanceof Error ? caught.message : t('errors.networkUnavailable');
         const current = networkRef.current;
         const nextNetwork: NetworkState = {
@@ -830,7 +851,7 @@ export default function App() {
         setError(message);
       }
     } finally {
-      if (historyEnrichmentQueueRef.current === queue) {
+      if (historyEnrichmentQueueRef.current === ownedQueue) {
         historyEnrichmentQueueRef.current = null;
       }
       if (walletNetworkController.isCurrent(session)) {

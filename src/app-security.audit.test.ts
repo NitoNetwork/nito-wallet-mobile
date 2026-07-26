@@ -94,6 +94,8 @@ describe('mobile wallet UX and security invariants', () => {
     expect(appSource).toMatch(
       /reconcileBroadcasts\(txids, session\)\.catch\(reportNetworkFailure\)/,
     );
+    expect(appSource).toContain('processHistoryEnrichmentPasses({');
+    expect(appSource).toContain("sessionCurrent ? 'failed' : 'interrupted'");
   });
 
   it('bounds broadcast reconciliation and exposes transparent scan progress', () => {

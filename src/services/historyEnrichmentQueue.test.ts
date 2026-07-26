@@ -5,6 +5,8 @@ import {
   HISTORY_PAGE_SIZE,
   HistoryEnrichmentQueue,
   processHistoryEnrichmentQueue,
+  processHistoryEnrichmentPasses,
+  recordHistoryEnrichmentBatchOutcome,
 } from './historyEnrichmentQueue';
 
 const history = Array.from({ length: 48 }, (_, index): ElectrumHistoryEntry => ({
@@ -107,5 +109,57 @@ describe('HistoryEnrichmentQueue', () => {
     expect(publishedBatches).toEqual([
       history.slice(0, 12).map((entry) => entry.txid),
     ]);
+  });
+
+  it('automatically enriches an entry added while an earlier pass is in flight', async () => {
+    const evolvingHistory = [history[0]!];
+    const attempted = new Set<string>();
+    const enriched: string[] = [];
+    let passCount = 0;
+
+    await processHistoryEnrichmentPasses({
+      createPass: () => {
+        const queue = new HistoryEnrichmentQueue(evolvingHistory, {
+          attempted,
+          pageSize: 1,
+        });
+        return queue.remainingCount > 0 ? { queue } : null;
+      },
+      processPass: async ({ queue }) => {
+        passCount += 1;
+        await processHistoryEnrichmentQueue({
+          queue,
+          enrichBatch: async (batch) => batch,
+          publishBatch: async (batch) => {
+            enriched.push(...batch.map((entry) => entry.txid));
+            recordHistoryEnrichmentBatchOutcome(
+              attempted,
+              batch.map((entry) => `${entry.txid}:${entry.height}`),
+              'published',
+            );
+          },
+        });
+        if (passCount === 1) {
+          evolvingHistory.push(history[1]!);
+        }
+      },
+    });
+
+    expect(enriched).toEqual(['tx-0', 'tx-1']);
+    expect(passCount).toBe(2);
+  });
+
+  it('releases interrupted session keys while retaining genuine failed attempts', () => {
+    const interrupted = new Set(['tx-0:10000']);
+    recordHistoryEnrichmentBatchOutcome(
+      interrupted,
+      ['tx-0:10000'],
+      'interrupted',
+    );
+    expect(interrupted).not.toContain('tx-0:10000');
+
+    const failed = new Set<string>();
+    recordHistoryEnrichmentBatchOutcome(failed, ['tx-1:9999'], 'failed');
+    expect(failed).toContain('tx-1:9999');
   });
 });
