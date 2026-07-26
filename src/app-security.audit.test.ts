@@ -114,6 +114,22 @@ describe('mobile wallet UX and security invariants', () => {
     expect(subscriptionsSource).toMatch(/catch \(error\) \{[\s\S]*?onConnectionError\(error\);/);
   });
 
+  it('queues Electrum events received during synchronization and serializes subscription refreshes', () => {
+    expect(subscriptionsSource).toContain('dirtySyncQueueRef');
+    expect(subscriptionsSource).toContain('flushPendingSync');
+    expect(subscriptionsSource).toMatch(/const activeRefresh = refreshPromiseRef\.current;[\s\S]*?await activeRefresh;/);
+    expect(appSource).toContain('subscriptionSyncFlushRef.current();');
+  });
+
+  it('honors forced gap rescans, implements pending-only refresh and clears the QR retry timer', () => {
+    expect(appSource).toMatch(
+      /!options\.force[\s\S]{0,100}!options\.rescanGap[\s\S]{0,200}cacheAlreadyFresh/,
+    );
+    expect(appSource).toContain('pendingRefreshAddresses');
+    expect(appSource).toContain('qrRetryTimerRef');
+    expect(appSource).toContain('clearTimeout(qrRetryTimerRef.current)');
+  });
+
   it('never recreates or replaces a vault after a stale PBKDF2 upgrade', () => {
     expect(appSource).toContain(
       'const upgradeCommit = prepareVaultUpgradeCommit(upgraded, latest, payload.address);',

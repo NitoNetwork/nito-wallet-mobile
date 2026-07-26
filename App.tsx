@@ -82,6 +82,7 @@ import {
   TransparentScanIncompleteError,
   type TransparentWalletSnapshot,
 } from './src/wallet/transparentScan';
+import { pendingRefreshAddresses } from './src/wallet/pendingRefresh';
 import {
   buildTransparentConsolidation,
   buildTransparentSend,
@@ -313,6 +314,7 @@ export default function App() {
   const networkRef = useRef<NetworkState>(createEmptyNetworkState());
   const silentNextAutoSyncRef = useRef(false);
   const syncInFlightRef = useRef(false);
+  const subscriptionSyncFlushRef = useRef<() => void>(() => undefined);
   const enrichInFlightRef = useRef(false);
   const autoBiometricAttemptedRef = useRef(false);
   const unlockSavedWalletRef = useRef<(useBiometrics?: boolean, auto?: boolean) => Promise<void>>(async () => undefined);
@@ -363,6 +365,7 @@ export default function App() {
   const [qrScannerOpen, setQrScannerOpen] = useState(false);
   const [qrScanHandled, setQrScanHandled] = useState(false);
   const [qrScannerError, setQrScannerError] = useState('');
+  const qrRetryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [cameraPermission, requestCameraPermission] = useCameraPermissions();
   const tRef = useRef(t);
 
@@ -374,6 +377,15 @@ export default function App() {
     setError('');
     setStatus('');
   }, []);
+
+  const clearQrRetryTimer = useCallback(() => {
+    if (qrRetryTimerRef.current) {
+      clearTimeout(qrRetryTimerRef.current);
+      qrRetryTimerRef.current = null;
+    }
+  }, []);
+
+  useEffect(() => clearQrRetryTimer, [clearQrRetryTimer]);
 
   useEffect(() => {
     if (!status) {
@@ -775,7 +787,13 @@ export default function App() {
         currentNetwork.height >= knownHeight &&
         Boolean(currentNetwork.snapshot);
 
-      if (!cacheReadFailed && !options.force && !wantsFullHistory && heightUnchanged) {
+      if (
+        !cacheReadFailed
+        && !options.force
+        && !options.rescanGap
+        && !wantsFullHistory
+        && heightUnchanged
+      ) {
         requireConnectedSession();
         if (!walletSessionRef.current.isCurrent(session)) return;
         const nextNetwork: NetworkState = {
@@ -793,7 +811,15 @@ export default function App() {
         return;
       }
 
-      if (!cacheReadFailed && wantsFullHistory && cacheAlreadyFresh && currentNetwork.snapshot && heightUnchanged) {
+      if (
+        !cacheReadFailed
+        && !options.force
+        && !options.rescanGap
+        && wantsFullHistory
+        && cacheAlreadyFresh
+        && currentNetwork.snapshot
+        && heightUnchanged
+      ) {
         requireConnectedSession();
         if (!walletSessionRef.current.isCurrent(session)) return;
         const snapshot = {
@@ -839,19 +865,27 @@ export default function App() {
           setHistoryProgress({ done, total });
         }
       };
+      const onlyAddresses = options.pendingOnly && currentNetwork.snapshot
+        ? [...new Set([
+            ...(options.onlyAddresses ?? []),
+            ...pendingRefreshAddresses(currentNetwork.snapshot),
+          ])]
+        : options.onlyAddresses;
       const scanNetwork = () => currentNetwork.snapshot && !options.rescanGap && !cacheReadFailed
         ? refreshKnownUsedAddresses({
             snapshot: currentNetwork.snapshot,
             electrum: client,
             includeHistory: wantsFullHistory,
-            onlyAddresses: options.onlyAddresses,
+            onlyAddresses,
             onProgress: onScanProgress,
           })
         : scanTransparentWallet({
             mnemonic: activeWallet.mnemonic,
             electrum: client,
             gapLimit: 20,
-            includeHistory: wantsFullHistory && !cacheAlreadyFresh,
+            includeHistory: wantsFullHistory && (
+              !cacheAlreadyFresh || Boolean(options.force) || Boolean(options.rescanGap)
+            ),
             previousSnapshot: currentNetwork.snapshot,
             onProgress: onScanProgress,
           });
@@ -873,7 +907,7 @@ export default function App() {
       if (wantsFullHistory) {
         snapshot = { ...snapshot, history: mergedHistory };
 
-        if (!cacheAlreadyFresh) {
+        if (!cacheAlreadyFresh || options.force || options.rescanGap) {
           if (!walletSessionRef.current.isCurrent(session)) return;
           requireConnectedSession();
           await saveWalletHistoryCache(activeWallet.address, mergedHistory, knownHeight);
@@ -921,6 +955,7 @@ export default function App() {
     } finally {
       if (walletSessionRef.current.isCurrent(session)) {
         syncInFlightRef.current = false;
+        subscriptionSyncFlushRef.current();
         setHistorySyncing(false);
         setHistoryProgress(null);
         if (!includeHistory) {
@@ -998,7 +1033,10 @@ export default function App() {
     void reconcileBroadcasts(txids, session).catch(reportNetworkFailure);
   }, [reconcileBroadcasts, reportNetworkFailure]);
 
-  const { clearSubscriptions: clearAddressSubscriptions } = useWalletSubscriptions({
+  const {
+    clearSubscriptions: clearAddressSubscriptions,
+    flushPendingSync,
+  } = useWalletSubscriptions({
     enabled: screen === 'wallet' && Boolean(wallet),
     walletAddress: wallet?.address,
     snapshot: network.snapshot,
@@ -1009,6 +1047,15 @@ export default function App() {
     requestSync,
     onConnectionError: reportNetworkFailure,
   });
+
+  useEffect(() => {
+    subscriptionSyncFlushRef.current = flushPendingSync;
+    return () => {
+      if (subscriptionSyncFlushRef.current === flushPendingSync) {
+        subscriptionSyncFlushRef.current = () => undefined;
+      }
+    };
+  }, [flushPendingSync]);
 
   useEffect(() => {
     if (screen === 'wallet' && wallet) {
@@ -2011,6 +2058,7 @@ export default function App() {
 
   const openQrScanner = async () => {
     if (pendingActionRef.current) return;
+    clearQrRetryTimer();
     resetFeedback();
     let granted = cameraPermission?.granted ?? false;
     if (!granted) {
@@ -2031,6 +2079,13 @@ export default function App() {
     setQrScannerOpen(true);
   };
 
+  const closeQrScanner = () => {
+    clearQrRetryTimer();
+    setQrScannerOpen(false);
+    setQrScannerError('');
+    setQrScanHandled(false);
+  };
+
   const handleQrScan = (value: string) => {
     if (qrScanHandled) return;
     setQrScanHandled(true);
@@ -2038,12 +2093,15 @@ export default function App() {
       const address = parseNitoQrAddress(value);
       setSendAddress(address);
       setPreparedTx(null);
-      setQrScannerOpen(false);
-      setQrScannerError('');
+      closeQrScanner();
       setStatus(t('status.addressScanned'));
     } catch {
       setQrScannerError(t('errors.invalidQr'));
-      setTimeout(() => setQrScanHandled(false), 900);
+      clearQrRetryTimer();
+      qrRetryTimerRef.current = setTimeout(() => {
+        qrRetryTimerRef.current = null;
+        setQrScanHandled(false);
+      }, 900);
     }
   };
 
@@ -2296,7 +2354,7 @@ export default function App() {
           ) : null}
         </KeyboardAvoidingView>
       </SafeAreaView>
-      <Modal animationType="fade" onRequestClose={() => setQrScannerOpen(false)} presentationStyle="fullScreen" visible={qrScannerOpen}>
+      <Modal animationType="fade" onRequestClose={closeQrScanner} presentationStyle="fullScreen" visible={qrScannerOpen}>
         <SafeAreaView style={styles.scannerSafeArea}>
           <View style={styles.scannerHeader}>
             <Text style={styles.scannerTitle}>{t('send.scanQrTitle')}</Text>
@@ -2307,7 +2365,7 @@ export default function App() {
             <View pointerEvents="none" style={styles.cameraGuide} />
           </View>
           {qrScannerError ? <Text style={styles.scannerError}>{qrScannerError}</Text> : null}
-          <TouchableOpacity style={styles.scannerCloseButton} onPress={() => setQrScannerOpen(false)}>
+          <TouchableOpacity style={styles.scannerCloseButton} onPress={closeQrScanner}>
             <Text style={styles.scannerCloseButtonText}>{t('actions.cancel')}</Text>
           </TouchableOpacity>
         </SafeAreaView>

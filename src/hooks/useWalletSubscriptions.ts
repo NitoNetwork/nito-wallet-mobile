@@ -1,32 +1,10 @@
 import { useCallback, useEffect, useRef, type MutableRefObject } from 'react';
 
 import type { NitoElectrumClient } from '../network/electrum';
+import { DirtySyncQueue, type DirtySyncOptions } from '../services/syncDirtyQueue';
 import type { TransparentWalletSnapshot } from '../wallet/transparentScan';
+import { hasPendingWork, pendingRefreshAddresses } from '../wallet/pendingRefresh';
 import type { NetworkState } from '../ui/types';
-
-const COINBASE_MATURITY = 101;
-
-type SyncOptions = {
-  force?: boolean;
-  silent?: boolean;
-  pendingOnly?: boolean;
-  onlyAddresses?: readonly string[];
-  rescanGap?: boolean;
-};
-
-const hasPendingWork = (snapshot: TransparentWalletSnapshot) =>
-  snapshot.unconfirmedSats !== 0
-  || (snapshot.immatureCoinbaseSats ?? 0) > 0
-  || snapshot.history.some((entry) => entry.height <= 0)
-  || snapshot.utxos.some((utxo) => (
-    utxo.confirmations > 0
-    && utxo.confirmations < COINBASE_MATURITY
-    && utxo.isCoinbase !== false
-  ));
-
-const isUnsettled = (utxo: { confirmations: number; isCoinbase?: boolean }) =>
-  utxo.confirmations <= 0
-  || (utxo.confirmations > 0 && utxo.confirmations < COINBASE_MATURITY && utxo.isCoinbase !== false);
 
 /**
  * Keeps the ElectrumX subscriptions in sync with the scanned addresses: one
@@ -51,19 +29,28 @@ export const useWalletSubscriptions = ({
   networkRef: MutableRefObject<NetworkState>;
   syncInFlightRef: MutableRefObject<boolean>;
   onHeightAdvance: (height: number) => void;
-  requestSync: (options: SyncOptions) => void;
+  requestSync: (options: DirtySyncOptions) => void;
   onConnectionError: (error: unknown) => void;
 }) => {
   const statusRef = useRef<Map<string, string | null>>(new Map());
   const unsubscribeRef = useRef<Map<string, () => void>>(new Map());
   const blockHeightUnsubscribeRef = useRef<(() => void) | null>(null);
-  const refreshInFlightRef = useRef(false);
+  const dirtySyncQueueRef = useRef(new DirtySyncQueue());
+  const refreshPromiseRef = useRef<Promise<void> | null>(null);
+
+  const requestOrQueueSync = useCallback((options: DirtySyncOptions) => {
+    dirtySyncQueueRef.current.request(options, syncInFlightRef.current, requestSync);
+  }, [requestSync, syncInFlightRef]);
+
+  const flushPendingSync = useCallback(() => {
+    dirtySyncQueueRef.current.flush(syncInFlightRef.current, requestSync);
+  }, [requestSync, syncInFlightRef]);
 
   const clearSubscriptions = useCallback(() => {
     unsubscribeRef.current.forEach((unsubscribe) => unsubscribe());
     unsubscribeRef.current.clear();
     statusRef.current.clear();
-    refreshInFlightRef.current = false;
+    dirtySyncQueueRef.current.clear();
   }, []);
 
   useEffect(() => {
@@ -85,23 +72,19 @@ export const useWalletSubscriptions = ({
         return;
       }
 
-      if (!syncInFlightRef.current) {
-        requestSync({
-          force: true,
-          silent: true,
-          pendingOnly: true,
-          onlyAddresses: currentSnapshot.addresses
-            .filter((address) => address.utxos.some(isUnsettled))
-            .map((address) => address.address),
-        });
-      }
+      requestOrQueueSync({
+        force: true,
+        silent: true,
+        pendingOnly: true,
+        onlyAddresses: pendingRefreshAddresses(currentSnapshot),
+      });
     });
 
     return () => {
       blockHeightUnsubscribeRef.current?.();
       blockHeightUnsubscribeRef.current = null;
     };
-  }, [clientRef, enabled, networkRef, onHeightAdvance, requestSync, snapshot, syncInFlightRef]);
+  }, [clientRef, enabled, networkRef, onHeightAdvance, requestOrQueueSync, snapshot]);
 
   useEffect(() => () => {
     clearSubscriptions();
@@ -125,13 +108,17 @@ export const useWalletSubscriptions = ({
     const subscribeKnownAddresses = async () => {
       const client = clientRef.current;
 
-      if (!client || refreshInFlightRef.current) {
+      if (!client) {
         return;
       }
 
-      refreshInFlightRef.current = true;
+      while (refreshPromiseRef.current) {
+        const activeRefresh = refreshPromiseRef.current;
+        await activeRefresh;
+        if (cancelled) return;
+      }
 
-      try {
+      const refresh = (async () => {
         for (const scannedAddress of snapshot.addresses) {
           const address = scannedAddress.address;
 
@@ -144,11 +131,11 @@ export const useWalletSubscriptions = ({
               const previousStatus = statusRef.current.get(changedAddress);
               statusRef.current.set(changedAddress, nextStatus);
 
-              if (previousStatus !== undefined && previousStatus !== nextStatus && !syncInFlightRef.current) {
+              if (previousStatus !== undefined && previousStatus !== nextStatus) {
                 const knownAddress = networkRef.current.snapshot?.addresses.find(
                   ({ address: candidate }) => candidate === changedAddress,
                 );
-                requestSync({
+                requestOrQueueSync({
                   force: true,
                   silent: true,
                   onlyAddresses: knownAddress?.used ? [changedAddress] : undefined,
@@ -164,8 +151,8 @@ export const useWalletSubscriptions = ({
 
             statusRef.current.set(address, subscription.status);
             unsubscribeRef.current.set(address, subscription.unsubscribe);
-            if (!scannedAddress.used && subscription.status !== null && !syncInFlightRef.current) {
-              requestSync({ force: true, silent: true, rescanGap: true });
+            if (!scannedAddress.used && subscription.status !== null) {
+              requestOrQueueSync({ force: true, silent: true, rescanGap: true });
             }
           } catch (error) {
             statusRef.current.delete(address);
@@ -173,17 +160,23 @@ export const useWalletSubscriptions = ({
             return;
           }
         }
+      })();
+      refreshPromiseRef.current = refresh;
+      try {
+        await refresh;
       } finally {
-        refreshInFlightRef.current = false;
+        if (refreshPromiseRef.current === refresh) {
+          refreshPromiseRef.current = null;
+        }
       }
     };
 
-    void subscribeKnownAddresses();
+    void subscribeKnownAddresses().catch(onConnectionError);
 
     return () => {
       cancelled = true;
     };
-  }, [clientRef, enabled, networkRef, onConnectionError, requestSync, snapshot, syncInFlightRef]);
+  }, [clientRef, enabled, networkRef, onConnectionError, requestOrQueueSync, snapshot]);
 
-  return { clearSubscriptions };
+  return { clearSubscriptions, flushPendingSync };
 };
