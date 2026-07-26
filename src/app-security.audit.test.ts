@@ -65,6 +65,23 @@ describe('mobile wallet UX and security invariants', () => {
     expect(vaultSource).toMatch(/getItemAsync\(BIOMETRIC_SECRET_KEY,[\s\S]*?requireAuthentication: true/);
   });
 
+  it('binds deferred wallet writes to the active wallet session', () => {
+    expect(appSource).toContain('const walletSessionRef = useRef(new WalletSessionGuard());');
+    expect(appSource).toContain('walletSessionRef.current.begin(nextWallet.address);');
+    expect(appSource).toMatch(/const lockWallet = useCallback\(\(\) => \{[\s\S]*?walletSessionRef\.current\.invalidate\(\);/);
+    expect(appSource).toContain('const session = walletSessionRef.current.capture(activeWallet.address);');
+    expect(appSource.match(/walletSessionRef\.current\.isCurrent\(session\)/g)?.length ?? 0).toBeGreaterThanOrEqual(12);
+    expect(appSource).toContain('reconcileBroadcasts([txid], session)');
+    expect(appSource).toContain('reconcileBroadcasts(txids, session)');
+  });
+
+  it('never recreates or replaces a vault after a stale PBKDF2 upgrade', () => {
+    expect(appSource).toContain(
+      'const upgradeCommit = prepareVaultUpgradeCommit(upgraded, latest, payload.address);',
+    );
+    expect(appSource).toMatch(/if \(!upgradeCommit\) \{\s*return;\s*\}\s*await saveVault\(upgradeCommit\);/);
+  });
+
   it('renders blocking work above the scroll view with a rotating Nito logo', () => {
     const scrollViewEnd = appSource.indexOf('</ScrollView>');
     const loadingOverlay = appSource.indexOf('{pendingAction ? (', scrollViewEnd);
