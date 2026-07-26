@@ -171,6 +171,7 @@ export class NitoElectrumClient {
   private currentServerIndex = 0;
   private requestId = 1;
   private socket: WebSocket | null = null;
+  private connectPromise: Promise<void> | null = null;
   private pending = new Map<number, PendingRequest>();
   private scripthashListeners = new Map<string, Set<ScripthashStatusListener>>();
   private blockHeightListeners = new Set<BlockHeightListener>();
@@ -193,10 +194,28 @@ export class NitoElectrumClient {
   }
 
   async connect() {
+    if (this.connectPromise) {
+      await this.connectPromise;
+      return;
+    }
+
     if (this.connected) {
       return;
     }
 
+    const pendingConnect = this.connectToAvailableServer();
+    this.connectPromise = pendingConnect;
+
+    try {
+      await pendingConnect;
+    } finally {
+      if (this.connectPromise === pendingConnect) {
+        this.connectPromise = null;
+      }
+    }
+  }
+
+  private async connectToAvailableServer() {
     let lastError: Error | null = null;
 
     for (let attempt = 0; attempt < this.servers.length; attempt += 1) {
@@ -232,7 +251,7 @@ export class NitoElectrumClient {
   }
 
   async request<T>(method: string, params: unknown[] = []) {
-    if (!this.connected) {
+    if (!this.connected || this.connectPromise) {
       await this.connect();
     }
 
@@ -353,7 +372,10 @@ export class NitoElectrumClient {
       };
 
       socket.onclose = () => {
-        this.connected = false;
+        if (this.socket === socket) {
+          this.socket = null;
+          this.connected = false;
+        }
       };
 
       socket.onmessage = (event) => {

@@ -100,4 +100,94 @@ describe('transparent HD scan', () => {
     expect(refreshed.confirmedSats).toBe(50_000_000);
     expect(historyCalls).toBe(1);
   });
+
+  it('retries a failed history read before treating an address as unused', async () => {
+    const targetAddress = (await deriveP2wpkhAddress(mnemonic, 'external', 0, crypto)).address;
+    let targetAttempts = 0;
+    const fakeReader = {
+      async getAddressBalance(): Promise<ElectrumBalance> {
+        return { confirmedSats: 0, unconfirmedSats: 0, totalSats: 0 };
+      },
+      async getAddressUtxos(): Promise<ElectrumUtxo[]> {
+        return [];
+      },
+      async getAddressHistory(address: string): Promise<ElectrumHistoryEntry[]> {
+        if (address === targetAddress) {
+          targetAttempts += 1;
+          if (targetAttempts < 3) {
+            throw new Error('temporary Electrum failure');
+          }
+        }
+        return [];
+      },
+    };
+
+    const snapshot = await scanP2wpkhAccount({
+      mnemonic,
+      electrum: fakeReader,
+      gapLimit: 1,
+      crypto,
+    });
+
+    expect(targetAttempts).toBe(3);
+    expect(snapshot.addresses.find((address) => address.address === targetAddress)?.used).toBe(false);
+  });
+
+  it('rejects an incomplete scan after persistent history failures', async () => {
+    const targetAddress = (await deriveP2wpkhAddress(mnemonic, 'external', 0, crypto)).address;
+    let targetAttempts = 0;
+    const fakeReader = {
+      async getAddressBalance(): Promise<ElectrumBalance> {
+        return { confirmedSats: 0, unconfirmedSats: 0, totalSats: 0 };
+      },
+      async getAddressUtxos(): Promise<ElectrumUtxo[]> {
+        return [];
+      },
+      async getAddressHistory(address: string): Promise<ElectrumHistoryEntry[]> {
+        if (address === targetAddress) {
+          targetAttempts += 1;
+          throw new Error('persistent Electrum failure');
+        }
+        return [];
+      },
+    };
+
+    await expect(scanP2wpkhAccount({
+      mnemonic,
+      electrum: fakeReader,
+      gapLimit: 1,
+      crypto,
+    })).rejects.toThrow('Transparent wallet scan incomplete');
+    expect(targetAttempts).toBe(3);
+  });
+
+  it('rejects an incomplete scan instead of treating failed UTXO reads as a zero balance', async () => {
+    const targetAddress = (await deriveP2wpkhAddress(mnemonic, 'external', 0, crypto)).address;
+    let targetAttempts = 0;
+    const fakeReader = {
+      async getAddressBalance(): Promise<ElectrumBalance> {
+        return { confirmedSats: 0, unconfirmedSats: 0, totalSats: 0 };
+      },
+      async getAddressUtxos(address: string): Promise<ElectrumUtxo[]> {
+        if (address === targetAddress) {
+          targetAttempts += 1;
+          throw new Error('persistent listunspent failure');
+        }
+        return [];
+      },
+      async getAddressHistory(address: string): Promise<ElectrumHistoryEntry[]> {
+        return address === targetAddress
+          ? [{ txid: 'e'.repeat(64), height: 200, address }]
+          : [];
+      },
+    };
+
+    await expect(scanP2wpkhAccount({
+      mnemonic,
+      electrum: fakeReader,
+      gapLimit: 1,
+      crypto,
+    })).rejects.toThrow('Transparent wallet scan incomplete');
+    expect(targetAttempts).toBe(3);
+  });
 });

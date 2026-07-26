@@ -12,6 +12,8 @@ import {
 
 const DEFAULT_GAP_LIMIT = 20;
 const SCAN_BATCH_SIZE = 5;
+const ELECTRUM_READ_MAX_ATTEMPTS = 3;
+const ELECTRUM_READ_RETRY_DELAY_MS = 100;
 
 export type HdBranch = 'external' | 'internal';
 export type TransparentScriptType = NativeTransparentScriptType;
@@ -71,6 +73,69 @@ export type ElectrumReader = {
   getAddressUtxos(address: string): Promise<ElectrumUtxo[]>;
   getAddressHistory(address: string): Promise<ElectrumHistoryEntry[]>;
   getTransactionHex?(txid: string): Promise<string>;
+};
+
+type ElectrumScanOperation = 'history' | 'utxos';
+
+export class TransparentScanIncompleteError extends Error {
+  readonly address: string;
+  readonly operation: ElectrumScanOperation;
+  readonly attempts: number;
+  readonly originalError: Error;
+
+  constructor({
+    address,
+    operation,
+    attempts,
+    cause,
+  }: {
+    address: string;
+    operation: ElectrumScanOperation;
+    attempts: number;
+    cause: unknown;
+  }) {
+    super(`Transparent wallet scan incomplete: failed to read ${operation} for ${address}.`);
+    this.name = 'TransparentScanIncompleteError';
+    this.address = address;
+    this.operation = operation;
+    this.attempts = attempts;
+    this.originalError = cause instanceof Error ? cause : new Error(String(cause));
+  }
+}
+
+const waitBeforeElectrumRetry = (attempt: number) =>
+  new Promise<void>((resolve) => {
+    setTimeout(resolve, ELECTRUM_READ_RETRY_DELAY_MS * attempt);
+  });
+
+const readElectrumWithRetry = async <T>({
+  address,
+  operation,
+  read,
+}: {
+  address: string;
+  operation: ElectrumScanOperation;
+  read: () => Promise<T>;
+}) => {
+  let lastError: unknown;
+
+  for (let attempt = 1; attempt <= ELECTRUM_READ_MAX_ATTEMPTS; attempt += 1) {
+    try {
+      return await read();
+    } catch (caught) {
+      lastError = caught;
+      if (attempt < ELECTRUM_READ_MAX_ATTEMPTS) {
+        await waitBeforeElectrumRetry(attempt);
+      }
+    }
+  }
+
+  throw new TransparentScanIncompleteError({
+    address,
+    operation,
+    attempts: ELECTRUM_READ_MAX_ATTEMPTS,
+    cause: lastError,
+  });
 };
 
 const branchNumber = (branch: HdBranch) => (branch === 'external' ? 0 : 1);
@@ -191,7 +256,11 @@ const scanDerivedAddress = async (
   includeHistory: boolean,
   previousAddress?: ScannedAddress,
 ): Promise<ScannedAddress> => {
-  const addressHistory = await electrum.getAddressHistory(derived.address).catch(() => [] as ElectrumHistoryEntry[]);
+  const addressHistory = await readElectrumWithRetry({
+    address: derived.address,
+    operation: 'history',
+    read: () => electrum.getAddressHistory(derived.address),
+  });
   const used = addressHistory.length > 0;
 
   if (!used) {
@@ -204,7 +273,11 @@ const scanDerivedAddress = async (
     };
   }
 
-  const baseUtxos = await electrum.getAddressUtxos(derived.address).catch(() => [] as ElectrumUtxo[]);
+  const baseUtxos = await readElectrumWithRetry({
+    address: derived.address,
+    operation: 'utxos',
+    read: () => electrum.getAddressUtxos(derived.address),
+  });
   const hydratedUtxos = derived.scriptType === 'p2pkh' ? await hydrateLegacyUtxos(baseUtxos, electrum) : baseUtxos;
   const utxos = await annotateCoinbaseMaturity(
     hydratedUtxos,

@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
   addressToElectrumScripthash,
@@ -11,6 +11,10 @@ const toHex = (bytes: Uint8Array) => Array.from(bytes, (byte) => byte.toString(1
 
 describe('Nito Electrum helpers', () => {
   const address = 'nito1qcr8te4kr609gcawutmrza0j4xv80jy8z540c02';
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
 
   it('builds the P2WPKH scriptPubKey expected by ElectrumX', () => {
     const script = scriptPubKeyForNitoAddress(address);
@@ -37,5 +41,45 @@ describe('Nito Electrum helpers', () => {
     handleMessage(JSON.stringify({ method: 'blockchain.headers.subscribe', params: [{ height: 102 }] }));
 
     expect(updates).toEqual([[101, 100]]);
+  });
+
+  it('shares one socket handshake across concurrent connect calls', async () => {
+    class FakeWebSocket {
+      static instances = 0;
+
+      onopen: (() => void) | null = null;
+      onerror: (() => void) | null = null;
+      onclose: (() => void) | null = null;
+      onmessage: ((event: { data: string }) => void) | null = null;
+
+      constructor(_url: string) {
+        FakeWebSocket.instances += 1;
+        queueMicrotask(() => this.onopen?.());
+      }
+
+      send(raw: string) {
+        const request = JSON.parse(raw) as { id: number; method: string };
+        const result = request.method === 'blockchain.headers.subscribe'
+          ? { height: 123 }
+          : ['Nito-ElectrumX', '1.4'];
+        queueMicrotask(() => {
+          this.onmessage?.({ data: JSON.stringify({ id: request.id, result }) });
+        });
+      }
+
+      close() {
+        this.onclose?.();
+      }
+    }
+
+    vi.stubGlobal('WebSocket', FakeWebSocket);
+    const client = new NitoElectrumClient();
+
+    await Promise.all([client.connect(), client.connect(), client.connect(), client.connect()]);
+
+    expect(FakeWebSocket.instances).toBe(1);
+    expect(client.connected).toBe(true);
+    expect(client.blockHeight).toBe(123);
+    client.disconnect();
   });
 });

@@ -72,6 +72,7 @@ import {
   satoshisToNito,
   refreshKnownUsedAddresses,
   scanTransparentWallet,
+  TransparentScanIncompleteError,
   type TransparentWalletSnapshot,
 } from './src/wallet/transparentScan';
 import {
@@ -559,6 +560,7 @@ export default function App() {
     try {
       const client = electrumClientRef.current || new NitoElectrumClient();
       electrumClientRef.current = client;
+      await client.connect();
       const snapshot = await scanTransparentWallet({
         mnemonic: nextWallet.mnemonic,
         electrum: client,
@@ -671,7 +673,7 @@ export default function App() {
     try {
       const client = electrumClientRef.current || new NitoElectrumClient();
       electrumClientRef.current = client;
-      await client.connect().catch(() => undefined);
+      await client.connect();
       const knownHeight = client.blockHeight || currentNetwork.height;
       const cache = await loadWalletHistoryCache(activeWallet.address).catch(() => ({
         history: [],
@@ -779,7 +781,8 @@ export default function App() {
       }
     } catch (caught) {
       const fallbackNetwork = networkRef.current;
-      if (options.silent && fallbackNetwork.snapshot) {
+      const scanIncomplete = caught instanceof TransparentScanIncompleteError;
+      if (options.silent && fallbackNetwork.snapshot && !scanIncomplete) {
         const nextNetwork: NetworkState = {
           ...fallbackNetwork,
           status: 'connected',
@@ -796,7 +799,7 @@ export default function App() {
         error: caught instanceof Error ? caught.message : t('errors.networkUnavailable'),
         serverUrl: '',
         height: electrumClientRef.current?.blockHeight || fallbackNetwork.height || 0,
-        fullHistoryEnabled: includeHistory || fallbackNetwork.fullHistoryEnabled,
+        fullHistoryEnabled: !scanIncomplete && (includeHistory || fallbackNetwork.fullHistoryEnabled),
       };
       networkRef.current = nextNetwork;
       setNetwork(nextNetwork);
@@ -2058,4 +2061,3 @@ export default function App() {
     </SafeAreaProvider>
   );
 }
-
