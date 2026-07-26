@@ -1,0 +1,96 @@
+import { describe, expect, it } from 'vitest';
+
+import type { ElectrumHistoryEntry, ElectrumVerboseTransaction } from '../network/electrum';
+import {
+  HistoryEnrichmentQueue,
+  processHistoryEnrichmentQueue,
+} from './historyEnrichmentQueue';
+import { buildHistoryExportRecords } from './historyExport';
+
+const MEASUREMENT_SIZE = 1_450;
+
+const createMeasurementFixture = () => {
+  let requests = 0;
+  const history: ElectrumHistoryEntry[] = Array.from(
+    { length: MEASUREMENT_SIZE },
+    (_, index) => ({
+      txid: `tx-${index}`,
+      height: MEASUREMENT_SIZE - index,
+      address: 'wallet-address',
+    }),
+  );
+  const reader = {
+    async getVerboseTransaction(txid: string): Promise<ElectrumVerboseTransaction> {
+      requests += 1;
+      await new Promise((resolve) => setTimeout(resolve, 1));
+      if (txid.startsWith('tx-')) {
+        return {
+          vin: [{ txid: `parent-${txid.slice(3)}`, vout: 0 }],
+          vout: [{ n: 0, value: 0.99, scriptPubKey: { address: 'wallet-address' } }],
+        };
+      }
+      return {
+        vin: [{ coinbase: '00' }],
+        vout: [{ n: 0, value: 1, scriptPubKey: { address: 'external-address' } }],
+      };
+    },
+  };
+
+  return { history, reader, requestCount: () => requests };
+};
+
+describe.runIf(process.env.NITO_MEASURE_HISTORY === '1')('history enrichment measurement', () => {
+  it('records the one-shot reference cost before page-first enrichment', async () => {
+    const fixture = createMeasurementFixture();
+    const startedAt = performance.now();
+    const records = await buildHistoryExportRecords({
+      history: fixture.history,
+      walletAddresses: ['wallet-address'],
+      reader: fixture.reader,
+    });
+    const totalMs = Math.round(performance.now() - startedAt);
+
+    console.info(JSON.stringify({
+      mode: 'one-shot-reference',
+      transactions: records.length,
+      requests: fixture.requestCount(),
+      firstVisibleRowsMs: totalMs,
+      totalMs,
+    }));
+    expect(records).toHaveLength(MEASUREMENT_SIZE);
+  }, 30_000);
+
+  it('records the page-first enrichment cost', async () => {
+    const fixture = createMeasurementFixture();
+    const queue = new HistoryEnrichmentQueue(fixture.history);
+    const startedAt = performance.now();
+    let firstVisibleRowsMs = 0;
+    let recordCount = 0;
+
+    await processHistoryEnrichmentQueue({
+      queue,
+      enrichBatch: (batch) => buildHistoryExportRecords({
+        history: batch,
+        walletAddresses: ['wallet-address'],
+        reader: fixture.reader,
+      }),
+      publishBatch: async (records) => {
+        recordCount += records.length;
+        if (firstVisibleRowsMs === 0) {
+          firstVisibleRowsMs = Math.round(performance.now() - startedAt);
+        }
+      },
+    });
+    const totalMs = Math.round(performance.now() - startedAt);
+
+    console.info(JSON.stringify({
+      mode: 'page-first',
+      transactions: recordCount,
+      requests: fixture.requestCount(),
+      firstVisibleRowsMs,
+      totalMs,
+    }));
+    expect(recordCount).toBe(MEASUREMENT_SIZE);
+    expect(firstVisibleRowsMs).toBeLessThan(totalMs);
+  }, 30_000);
+});

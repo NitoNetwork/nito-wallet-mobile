@@ -5,6 +5,7 @@ import QRCode from 'react-native-qrcode-svg';
 import { CONSOLIDATION_MIN_UTXOS } from '../constants/nito';
 import type { LanguageCode, Translator } from '../i18n';
 import { makeConsolidationTranslator } from '../i18n.consolidation';
+import { HISTORY_PAGE_SIZE } from '../services/historyEnrichmentQueue';
 import { isTransparentUtxoSpendable } from '../wallet/coinbaseMaturity';
 import { satoshisToNito } from '../wallet/transparentScan';
 import type { PreparedTransparentConsolidation, PreparedTransparentTx } from '../wallet/transparentSend';
@@ -12,8 +13,6 @@ import { ActionButton, PasswordField } from './components';
 import { shortAddress } from './format';
 import { styles } from './styles';
 import type { BiometricMethod, NetworkState, PendingAction, Wallet } from './types';
-
-const HISTORY_PAGE_SIZE = 12;
 
 export function ReceiveTab({ wallet, t, pendingAction, actionLocked, onCopyAddress }: {
   wallet: Wallet;
