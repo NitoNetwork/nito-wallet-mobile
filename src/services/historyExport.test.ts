@@ -135,4 +135,39 @@ describe('wallet history export', () => {
     expect(maxInFlight).toBeGreaterThan(1);
     expect(progress[progress.length - 1]).toBe(12);
   });
+
+  it('bounds input transaction reads for a transaction with many inputs', async () => {
+    let inFlight = 0;
+    let maxInFlight = 0;
+    const inputCount = 21;
+    const reader = {
+      async getVerboseTransaction(txid: string): Promise<ElectrumVerboseTransaction> {
+        inFlight += 1;
+        maxInFlight = Math.max(maxInFlight, inFlight);
+        await new Promise((resolve) => setTimeout(resolve, 2));
+        inFlight -= 1;
+        if (txid === 'large-send') {
+          return {
+            vin: Array.from({ length: inputCount }, (_, index) => ({
+              txid: `parent-${index}`,
+              vout: 0,
+            })),
+            vout: [output(20, 'recipient')],
+          };
+        }
+        return { vin: [{ coinbase: '00' }], vout: [output(1, 'wallet-address')] };
+      },
+    };
+
+    const records = await buildHistoryExportRecords({
+      history: [{ txid: 'large-send', height: 50, address: 'wallet-address' }],
+      walletAddresses: ['wallet-address'],
+      reader,
+      concurrency: 6,
+      inputConcurrency: 4,
+    });
+
+    expect(records).toHaveLength(1);
+    expect(maxInFlight).toBeLessThanOrEqual(4);
+  });
 });

@@ -57,6 +57,7 @@ import {
   historyExportCsvRows,
   historyRecordsFromEntries,
 } from './src/services/historyExport';
+import { mapWithConcurrency } from './src/services/concurrency';
 import { type Translator } from './src/i18n';
 import { nitoWalletCrypto } from './src/native/nitoWalletCrypto';
 import {
@@ -107,6 +108,7 @@ const BALANCE_REFRESH_COOLDOWN_MS = 120_000;
 const HISTORY_AUTO_IMPORT = true;
 const MNEMONIC_REVEAL_MS = 60_000;
 const ADDRESS_CLIPBOARD_MS = 60_000;
+const BROADCAST_RECONCILIATION_CONCURRENCY = 6;
 const BIP39_WORDS = new Set<string>(wordlist);
 
 const BASE_WALLET_TABS: { key: WalletTab; labelKey: Parameters<Translator>[0] }[] = [
@@ -785,19 +787,26 @@ export default function App() {
         setNetwork(syncingNetwork);
       }
 
-        let snapshot = currentNetwork.snapshot && !options.rescanGap
-          ? await refreshKnownUsedAddresses({
-              snapshot: currentNetwork.snapshot,
-              electrum: client,
-              includeHistory: wantsFullHistory,
-              onlyAddresses: options.onlyAddresses,
-            })
+      const onScanProgress = (done: number, total: number) => {
+        if (walletSessionRef.current.isCurrent(session)) {
+          setHistoryProgress({ done, total });
+        }
+      };
+      let snapshot = currentNetwork.snapshot && !options.rescanGap
+        ? await refreshKnownUsedAddresses({
+            snapshot: currentNetwork.snapshot,
+            electrum: client,
+            includeHistory: wantsFullHistory,
+            onlyAddresses: options.onlyAddresses,
+            onProgress: onScanProgress,
+          })
         : await scanTransparentWallet({
             mnemonic: activeWallet.mnemonic,
             electrum: client,
             gapLimit: 20,
             includeHistory: wantsFullHistory && !cacheAlreadyFresh,
             previousSnapshot: currentNetwork.snapshot,
+            onProgress: onScanProgress,
           });
       if (!walletSessionRef.current.isCurrent(session)) return;
       const mergedHistory = normalizeWalletHistory([...cache.history, ...snapshot.history]);
@@ -858,6 +867,7 @@ export default function App() {
       if (walletSessionRef.current.isCurrent(session)) {
         syncInFlightRef.current = false;
         setHistorySyncing(false);
+        setHistoryProgress(null);
         if (!includeHistory) {
           setBalanceRefreshing(false);
         }
@@ -885,15 +895,17 @@ export default function App() {
     for (const delayMs of [250, 750, 1_500, 3_000]) {
       await new Promise<void>((resolve) => setTimeout(resolve, delayMs));
       if (!walletSessionRef.current.isCurrent(session)) return;
-      const visible = await Promise.all(
-        txids.map(async (txid) => {
+      const visible = await mapWithConcurrency(
+        txids,
+        BROADCAST_RECONCILIATION_CONCURRENCY,
+        async (txid) => {
           try {
             await client.getTransactionHex(txid);
             return true;
           } catch {
             return false;
           }
-        }),
+        },
       );
       if (!walletSessionRef.current.isCurrent(session)) return;
       if (visible.every(Boolean)) break;

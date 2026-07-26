@@ -4,6 +4,7 @@ import { bech32, bech32m } from 'bech32';
 
 const ELECTRUM_PROTOCOL_VERSION = '1.4';
 const DEFAULT_TIMEOUT_MS = 30_000;
+export const DEFAULT_ELECTRUM_MAX_CONCURRENT_REQUESTS = 6;
 
 export type ElectrumServer = {
   host: string;
@@ -63,6 +64,27 @@ type PendingRequest = {
   resolve: (value: unknown) => void;
   reject: (error: Error) => void;
   timer: ReturnType<typeof setTimeout>;
+};
+
+type QueuedRequest = {
+  queuedAt: number;
+  run: () => Promise<unknown>;
+  resolve: (value: unknown) => void;
+  reject: (error: Error) => void;
+};
+
+export type ElectrumRequestMetrics = Readonly<{
+  totalRequests: number;
+  successfulRequests: number;
+  failedRequests: number;
+  peakInFlight: number;
+  maxQueueDepth: number;
+  totalQueueWaitMs: number;
+}>;
+
+export type NitoElectrumClientOptions = {
+  timeoutMs?: number;
+  maxConcurrentRequests?: number;
 };
 
 type JsonRpcResponse = {
@@ -168,20 +190,58 @@ export const addressToElectrumScripthash = (address: string) =>
 export class NitoElectrumClient {
   private readonly servers: ElectrumServer[];
   private readonly timeoutMs: number;
+  private readonly maxConcurrentRequests: number;
   private currentServerIndex = 0;
   private requestId = 1;
   private socket: WebSocket | null = null;
   private connectPromise: Promise<void> | null = null;
   private pending = new Map<number, PendingRequest>();
+  private requestQueue: QueuedRequest[] = [];
+  private activeRequests = 0;
+  private requestMetrics: ElectrumRequestMetrics = {
+    totalRequests: 0,
+    successfulRequests: 0,
+    failedRequests: 0,
+    peakInFlight: 0,
+    maxQueueDepth: 0,
+    totalQueueWaitMs: 0,
+  };
   private scripthashListeners = new Map<string, Set<ScripthashStatusListener>>();
   private blockHeightListeners = new Set<BlockHeightListener>();
 
   connected = false;
   blockHeight = 0;
 
-  constructor(servers = NITO_ELECTRUM_SERVERS, timeoutMs = DEFAULT_TIMEOUT_MS) {
+  constructor(
+    servers = NITO_ELECTRUM_SERVERS,
+    timeoutOrOptions: number | NitoElectrumClientOptions = {},
+  ) {
+    const options = typeof timeoutOrOptions === 'number'
+      ? { timeoutMs: timeoutOrOptions }
+      : timeoutOrOptions;
+    const maxConcurrentRequests = options.maxConcurrentRequests
+      ?? DEFAULT_ELECTRUM_MAX_CONCURRENT_REQUESTS;
+    if (!Number.isInteger(maxConcurrentRequests) || maxConcurrentRequests < 1) {
+      throw new Error('Electrum concurrency must be a positive integer.');
+    }
     this.servers = [...servers].sort((a, b) => a.priority - b.priority);
-    this.timeoutMs = timeoutMs;
+    this.timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+    this.maxConcurrentRequests = maxConcurrentRequests;
+  }
+
+  getRequestMetrics(): ElectrumRequestMetrics {
+    return { ...this.requestMetrics };
+  }
+
+  resetRequestMetrics(): void {
+    this.requestMetrics = {
+      totalRequests: 0,
+      successfulRequests: 0,
+      failedRequests: 0,
+      peakInFlight: this.activeRequests,
+      maxQueueDepth: this.requestQueue.length,
+      totalQueueWaitMs: 0,
+    };
   }
 
   get currentServerUrl() {
@@ -246,6 +306,11 @@ export class NitoElectrumClient {
     }
 
     this.pending.clear();
+    const queuedError = new Error('ElectrumX connection closed.');
+    for (const request of this.requestQueue.splice(0)) {
+      this.recordFailedRequest();
+      request.reject(queuedError);
+    }
     this.socket = null;
     this.connected = false;
   }
@@ -385,6 +450,67 @@ export class NitoElectrumClient {
   }
 
   private requestRaw<T = unknown>(method: string, params: unknown[] = []) {
+    this.requestMetrics = {
+      ...this.requestMetrics,
+      totalRequests: this.requestMetrics.totalRequests + 1,
+    };
+
+    return new Promise<T>((resolve, reject) => {
+      const queued: QueuedRequest = {
+        queuedAt: Date.now(),
+        run: () => this.sendRequestRaw<T>(method, params),
+        resolve: (value) => resolve(value as T),
+        reject,
+      };
+      this.requestQueue.push(queued);
+      this.requestMetrics = {
+        ...this.requestMetrics,
+        maxQueueDepth: Math.max(
+          this.requestMetrics.maxQueueDepth,
+          Math.max(0, this.requestQueue.length - Math.max(0, this.maxConcurrentRequests - this.activeRequests)),
+        ),
+      };
+      this.drainRequestQueue();
+    });
+  }
+
+  private drainRequestQueue() {
+    while (this.activeRequests < this.maxConcurrentRequests && this.requestQueue.length > 0) {
+      const queued = this.requestQueue.shift();
+      if (!queued) return;
+      this.activeRequests += 1;
+      this.requestMetrics = {
+        ...this.requestMetrics,
+        peakInFlight: Math.max(this.requestMetrics.peakInFlight, this.activeRequests),
+        totalQueueWaitMs: this.requestMetrics.totalQueueWaitMs + Math.max(0, Date.now() - queued.queuedAt),
+      };
+      void queued.run()
+        .then((value) => {
+          this.requestMetrics = {
+            ...this.requestMetrics,
+            successfulRequests: this.requestMetrics.successfulRequests + 1,
+          };
+          queued.resolve(value);
+        })
+        .catch((error: unknown) => {
+          this.recordFailedRequest();
+          queued.reject(error instanceof Error ? error : new Error(String(error)));
+        })
+        .finally(() => {
+          this.activeRequests -= 1;
+          this.drainRequestQueue();
+        });
+    }
+  }
+
+  private recordFailedRequest() {
+    this.requestMetrics = {
+      ...this.requestMetrics,
+      failedRequests: this.requestMetrics.failedRequests + 1,
+    };
+  }
+
+  private sendRequestRaw<T = unknown>(method: string, params: unknown[] = []) {
     if (!this.socket || !this.connected) {
       return Promise.reject(new Error('ElectrumX not connected.'));
     }

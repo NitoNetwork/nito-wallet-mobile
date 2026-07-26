@@ -1,5 +1,6 @@
 import type { ElectrumBalance, ElectrumHistoryEntry, ElectrumUtxo } from '../network/electrum';
 import { nitoWalletCrypto } from '../native/nitoWalletCrypto';
+import { createConcurrencyLimiter, mapWithConcurrency } from '../services/concurrency';
 import type {
   NitoWalletCryptoApi,
   TransparentScriptType as NativeTransparentScriptType,
@@ -14,6 +15,8 @@ const DEFAULT_GAP_LIMIT = 20;
 const SCAN_BATCH_SIZE = 5;
 const ELECTRUM_READ_MAX_ATTEMPTS = 3;
 const ELECTRUM_READ_RETRY_DELAY_MS = 100;
+const SCAN_NETWORK_CONCURRENCY = 6;
+const SCAN_COLLECTION_CONCURRENCY = 6;
 
 export type HdBranch = 'external' | 'internal';
 export type TransparentScriptType = NativeTransparentScriptType;
@@ -75,7 +78,40 @@ export type ElectrumReader = {
   getTransactionHex?(txid: string): Promise<string>;
 };
 
+export type TransparentScanProgress = (done: number, total: number) => void;
+
 type ElectrumScanOperation = 'history' | 'utxos';
+type NetworkTaskRunner = <T>(task: () => Promise<T>) => Promise<T>;
+
+type ScanProgressTracker = {
+  reserve(count: number): void;
+  complete(): void;
+  finish(total: number): void;
+};
+
+const createScanProgressTracker = (
+  onProgress?: TransparentScanProgress,
+): ScanProgressTracker | undefined => {
+  if (!onProgress) return undefined;
+  let done = 0;
+  let total = 0;
+
+  return {
+    reserve(count) {
+      total += count;
+      onProgress(done, total);
+    },
+    complete() {
+      done += 1;
+      onProgress(done, total);
+    },
+    finish(finalTotal) {
+      done = finalTotal;
+      total = finalTotal;
+      onProgress(done, total);
+    },
+  };
+};
 
 export class TransparentScanIncompleteError extends Error {
   readonly address: string;
@@ -237,16 +273,22 @@ export const deriveP2wpkhAddress = async (
 };
 
 
-const hydrateLegacyUtxos = async (utxos: ElectrumUtxo[], electrum: ElectrumReader) => {
+const hydrateLegacyUtxos = async (
+  utxos: ElectrumUtxo[],
+  electrum: ElectrumReader,
+  runNetworkTask: NetworkTaskRunner,
+) => {
   if (!electrum.getTransactionHex || utxos.length === 0) {
     return utxos;
   }
 
-  return Promise.all(
-    utxos.map(async (utxo) => ({
+  return mapWithConcurrency(
+    utxos,
+    SCAN_COLLECTION_CONCURRENCY,
+    async (utxo) => ({
       ...utxo,
-      rawTx: await electrum.getTransactionHex?.(utxo.txid).catch(() => undefined),
-    })),
+      rawTx: await runNetworkTask(() => electrum.getTransactionHex!(utxo.txid)).catch(() => undefined),
+    }),
   );
 };
 
@@ -254,16 +296,19 @@ const scanDerivedAddress = async (
   derived: DerivedAddress,
   electrum: ElectrumReader,
   includeHistory: boolean,
+  runNetworkTask: NetworkTaskRunner,
+  progress?: ScanProgressTracker,
   previousAddress?: ScannedAddress,
 ): Promise<ScannedAddress> => {
   const addressHistory = await readElectrumWithRetry({
     address: derived.address,
     operation: 'history',
-    read: () => electrum.getAddressHistory(derived.address),
+    read: () => runNetworkTask(() => electrum.getAddressHistory(derived.address)),
   });
   const used = addressHistory.length > 0;
 
   if (!used) {
+    progress?.complete();
     return {
       ...derived,
       balance: { confirmedSats: 0, unconfirmedSats: 0, totalSats: 0 },
@@ -276,9 +321,11 @@ const scanDerivedAddress = async (
   const baseUtxos = await readElectrumWithRetry({
     address: derived.address,
     operation: 'utxos',
-    read: () => electrum.getAddressUtxos(derived.address),
+    read: () => runNetworkTask(() => electrum.getAddressUtxos(derived.address)),
   });
-  const hydratedUtxos = derived.scriptType === 'p2pkh' ? await hydrateLegacyUtxos(baseUtxos, electrum) : baseUtxos;
+  const hydratedUtxos = derived.scriptType === 'p2pkh'
+    ? await hydrateLegacyUtxos(baseUtxos, electrum, runNetworkTask)
+    : baseUtxos;
   const utxos = await annotateCoinbaseMaturity(
     hydratedUtxos,
     previousAddress?.utxos ?? [],
@@ -286,7 +333,7 @@ const scanDerivedAddress = async (
       const cached = hydratedUtxos.find((utxo) => utxo.txid === txid)?.rawTx;
       if (cached) return cached;
       if (!electrum.getTransactionHex) throw new Error('Transaction lookup unavailable.');
-      return electrum.getTransactionHex(txid);
+      return runNetworkTask(() => electrum.getTransactionHex!(txid));
     },
   );
   const confirmedSats = utxos
@@ -306,6 +353,7 @@ const scanDerivedAddress = async (
   const history = includeHistory
     ? addressHistory
     : addressHistory.filter((entry) => spendableUtxoTxids.has(entry.txid));
+  progress?.complete();
   return { ...derived, balance, utxos, history, used };
 };
 
@@ -317,6 +365,8 @@ const scanBranch = async (
   gapLimit: number,
   includeHistory: boolean,
   crypto: NitoWalletCryptoApi,
+  runNetworkTask: NetworkTaskRunner,
+  progress?: ScanProgressTracker,
   previousSnapshot?: TransparentWalletSnapshot,
 ) => {
   const addresses: ScannedAddress[] = [];
@@ -328,7 +378,19 @@ const scanBranch = async (
   let index = previousBranch.length > 0 ? Math.max(...previousBranch.map((address) => address.index)) + 1 : 0;
 
   if (previousBranch.length > 0) {
-    const refreshed = await Promise.all(previousBranch.map((address) => scanDerivedAddress(address, electrum, includeHistory, address)));
+    progress?.reserve(previousBranch.length);
+    const refreshed = await mapWithConcurrency(
+      previousBranch,
+      SCAN_COLLECTION_CONCURRENCY,
+      (address) => scanDerivedAddress(
+        address,
+        electrum,
+        includeHistory,
+        runNetworkTask,
+        progress,
+        address,
+      ),
+    );
     addresses.push(...refreshed);
 
     const sorted = [...refreshed].sort((a, b) => a.index - b.index);
@@ -380,7 +442,16 @@ const scanBranch = async (
       }
       return derived;
     });
-    const scannedBatch = await Promise.all(derivedBatch.map((derived) => scanDerivedAddress(derived, electrum, includeHistory)));
+    progress?.reserve(derivedBatch.length);
+    const scannedBatch = await Promise.all(
+      derivedBatch.map((derived) => scanDerivedAddress(
+        derived,
+        electrum,
+        includeHistory,
+        runNetworkTask,
+        progress,
+      )),
+    );
 
     addresses.push(...scannedBatch);
     const lastUsedOffset = scannedBatch.reduce((last, address, offset) => (address.used ? offset : last), -1);
@@ -398,6 +469,8 @@ export const scanTransparentWallet = async ({
   includeHistory = false,
   previousSnapshot,
   crypto = nitoWalletCrypto,
+  onProgress,
+  maxConcurrentNetworkRequests = SCAN_NETWORK_CONCURRENCY,
 }: {
   mnemonic: string;
   electrum: ElectrumReader;
@@ -405,14 +478,42 @@ export const scanTransparentWallet = async ({
   includeHistory?: boolean;
   previousSnapshot?: TransparentWalletSnapshot | null;
   crypto?: NitoWalletCryptoApi;
+  onProgress?: TransparentScanProgress;
+  maxConcurrentNetworkRequests?: number;
 }): Promise<TransparentWalletSnapshot> => {
+  const networkLimiter = createConcurrencyLimiter(maxConcurrentNetworkRequests);
+  const runNetworkTask: NetworkTaskRunner = (task) => networkLimiter.run(task);
+  const progress = createScanProgressTracker(onProgress);
   const scannedAccounts = await Promise.all(
     ACCOUNT_TEMPLATES.flatMap((template) => [
-      scanBranch(mnemonic, template, 'external', electrum, gapLimit, includeHistory, crypto, previousSnapshot ?? undefined),
-      scanBranch(mnemonic, template, 'internal', electrum, gapLimit, includeHistory, crypto, previousSnapshot ?? undefined),
+      scanBranch(
+        mnemonic,
+        template,
+        'external',
+        electrum,
+        gapLimit,
+        includeHistory,
+        crypto,
+        runNetworkTask,
+        progress,
+        previousSnapshot ?? undefined,
+      ),
+      scanBranch(
+        mnemonic,
+        template,
+        'internal',
+        electrum,
+        gapLimit,
+        includeHistory,
+        crypto,
+        runNetworkTask,
+        progress,
+        previousSnapshot ?? undefined,
+      ),
     ]),
   );
   const addresses = scannedAccounts.flat();
+  progress?.finish(addresses.length);
   return buildSnapshot(addresses, gapLimit);
 };
 
@@ -421,11 +522,13 @@ export const refreshKnownUsedAddresses = async ({
   electrum,
   includeHistory = false,
   onlyAddresses,
+  onProgress,
 }: {
   snapshot: TransparentWalletSnapshot;
   electrum: ElectrumReader;
   includeHistory?: boolean;
   onlyAddresses?: readonly string[];
+  onProgress?: TransparentScanProgress;
 }): Promise<TransparentWalletSnapshot> => {
   const requestedAddresses = onlyAddresses ? new Set(onlyAddresses) : null;
   const targets = snapshot.addresses.filter((address) =>
@@ -433,12 +536,26 @@ export const refreshKnownUsedAddresses = async ({
       ? requestedAddresses.has(address.address)
       : address.used || address.utxos.length > 0 || address.balance.unconfirmedSats !== 0,
   );
-  const refreshed = await Promise.all(
-    targets.map((address) => scanDerivedAddress(address, electrum, includeHistory, address)),
+  const networkLimiter = createConcurrencyLimiter(SCAN_NETWORK_CONCURRENCY);
+  const runNetworkTask: NetworkTaskRunner = (task) => networkLimiter.run(task);
+  const progress = createScanProgressTracker(onProgress);
+  progress?.reserve(targets.length);
+  const refreshed = await mapWithConcurrency(
+    targets,
+    SCAN_COLLECTION_CONCURRENCY,
+    (address) => scanDerivedAddress(
+      address,
+      electrum,
+      includeHistory,
+      runNetworkTask,
+      progress,
+      address,
+    ),
   );
   const refreshedByPath = new Map(refreshed.map((address) => [address.path, address]));
   const addresses = snapshot.addresses.map((address) => refreshedByPath.get(address.path) ?? address);
 
+  progress?.finish(targets.length);
   return buildSnapshot(addresses, snapshot.gapLimit);
 };
 

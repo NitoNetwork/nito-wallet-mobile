@@ -62,4 +62,24 @@ describe('coinbase maturity', () => {
     );
     expect(classified?.isCoinbase).toBe(true);
   });
+
+  it('bounds transaction reads while classifying many young UTXOs', async () => {
+    let inFlight = 0;
+    let peakInFlight = 0;
+    const youngUtxos = Array.from({ length: 18 }, (_, index) => ({
+      ...utxo(1),
+      txid: index.toString(16).padStart(64, '0'),
+    }));
+
+    const classified = await annotateCoinbaseMaturity(youngUtxos, [], async () => {
+      inFlight += 1;
+      peakInFlight = Math.max(peakInFlight, inFlight);
+      await new Promise((resolve) => setTimeout(resolve, 2));
+      inFlight -= 1;
+      return regularTransaction;
+    });
+
+    expect(classified).toHaveLength(18);
+    expect(peakInFlight).toBeLessThanOrEqual(6);
+  });
 });

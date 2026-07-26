@@ -1,6 +1,8 @@
 import type { ElectrumUtxo } from '../network/electrum';
+import { mapWithConcurrency } from '../services/concurrency';
 
 export const COINBASE_MATURITY_CONFIRMATIONS = 101;
+const COINBASE_CLASSIFICATION_CONCURRENCY = 6;
 
 const readCompactSize = (bytes: Uint8Array, offset: number): { value: number; nextOffset: number } | null => {
   if (offset >= bytes.length) return null;
@@ -74,7 +76,7 @@ export const annotateCoinbaseMaturity = async (
     previousUtxos.map((utxo) => [`${utxo.txid}:${utxo.vout}`, utxo.isCoinbase] as const),
   );
 
-  return Promise.all(utxos.map(async (utxo) => {
+  return mapWithConcurrency(utxos, COINBASE_CLASSIFICATION_CONCURRENCY, async (utxo) => {
     const known = previousByOutpoint.get(`${utxo.txid}:${utxo.vout}`);
     if (known !== undefined) return { ...utxo, isCoinbase: known };
     if (utxo.confirmations <= 0) return { ...utxo, isCoinbase: false };
@@ -85,5 +87,5 @@ export const annotateCoinbaseMaturity = async (
     } catch {
       return utxo;
     }
-  }));
+  });
 };

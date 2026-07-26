@@ -190,4 +190,157 @@ describe('transparent HD scan', () => {
     })).rejects.toThrow('Transparent wallet scan incomplete');
     expect(targetAttempts).toBe(3);
   });
+
+  it('bounds legacy transaction hydration even when one address has many UTXOs', async () => {
+    const [legacyAddress] = await crypto.deriveAddresses(mnemonic, [{
+      path: "m/44'/0'/0'/0/0",
+      scriptType: 'p2pkh',
+    }]);
+    let inFlight = 0;
+    let peakInFlight = 0;
+    const fakeReader = {
+      async getAddressBalance(): Promise<ElectrumBalance> {
+        return { confirmedSats: 0, unconfirmedSats: 0, totalSats: 0 };
+      },
+      async getAddressHistory(address: string): Promise<ElectrumHistoryEntry[]> {
+        return address === legacyAddress?.address
+          ? [{ txid: 'f'.repeat(64), height: 100, address }]
+          : [];
+      },
+      async getAddressUtxos(address: string): Promise<ElectrumUtxo[]> {
+        if (address !== legacyAddress?.address) return [];
+        return Array.from({ length: 12 }, (_, index) => ({
+          txid: index.toString(16).padStart(64, '0'),
+          vout: 0,
+          valueSats: 100,
+          height: 1,
+          address,
+          confirmations: 200,
+        }));
+      },
+      async getTransactionHex(): Promise<string> {
+        inFlight += 1;
+        peakInFlight = Math.max(peakInFlight, inFlight);
+        await new Promise((resolve) => setTimeout(resolve, 2));
+        inFlight -= 1;
+        return '00';
+      },
+    };
+
+    await scanP2wpkhAccount({
+      mnemonic,
+      electrum: fakeReader,
+      gapLimit: 1,
+      crypto,
+    });
+
+    expect(peakInFlight).toBeLessThanOrEqual(6);
+  });
+
+  it('reports address progress through the complete cold scan', async () => {
+    const progress: { done: number; total: number }[] = [];
+    const fakeReader = {
+      async getAddressBalance(): Promise<ElectrumBalance> {
+        return { confirmedSats: 0, unconfirmedSats: 0, totalSats: 0 };
+      },
+      async getAddressUtxos(): Promise<ElectrumUtxo[]> {
+        return [];
+      },
+      async getAddressHistory(): Promise<ElectrumHistoryEntry[]> {
+        return [];
+      },
+    };
+
+    const snapshot = await scanP2wpkhAccount({
+      mnemonic,
+      electrum: fakeReader,
+      gapLimit: 2,
+      crypto,
+      onProgress: (done, total) => progress.push({ done, total }),
+    });
+
+    expect(progress.at(-1)).toEqual({ done: snapshot.addresses.length, total: snapshot.addresses.length });
+  });
+
+  it('bounds the refresh of every known used address', async () => {
+    const emptyReader = {
+      async getAddressBalance(): Promise<ElectrumBalance> {
+        return { confirmedSats: 0, unconfirmedSats: 0, totalSats: 0 };
+      },
+      async getAddressUtxos(): Promise<ElectrumUtxo[]> {
+        return [];
+      },
+      async getAddressHistory(): Promise<ElectrumHistoryEntry[]> {
+        return [];
+      },
+    };
+    const initial = await scanP2wpkhAccount({
+      mnemonic,
+      electrum: emptyReader,
+      gapLimit: 2,
+      crypto,
+    });
+    const knownUsed = {
+      ...initial,
+      addresses: initial.addresses.map((address) => ({ ...address, used: true })),
+    };
+    let inFlight = 0;
+    let peakInFlight = 0;
+    const delayedReader = {
+      ...emptyReader,
+      async getAddressHistory(): Promise<ElectrumHistoryEntry[]> {
+        inFlight += 1;
+        peakInFlight = Math.max(peakInFlight, inFlight);
+        await new Promise((resolve) => setTimeout(resolve, 2));
+        inFlight -= 1;
+        return [];
+      },
+    };
+
+    await refreshKnownUsedAddresses({ snapshot: knownUsed, electrum: delayedReader });
+
+    expect(peakInFlight).toBeLessThanOrEqual(6);
+  });
+
+  it('bounds refreshes from a previous full-scan snapshot', async () => {
+    const emptyReader = {
+      async getAddressBalance(): Promise<ElectrumBalance> {
+        return { confirmedSats: 0, unconfirmedSats: 0, totalSats: 0 };
+      },
+      async getAddressUtxos(): Promise<ElectrumUtxo[]> {
+        return [];
+      },
+      async getAddressHistory(): Promise<ElectrumHistoryEntry[]> {
+        return [];
+      },
+    };
+    const initial = await scanP2wpkhAccount({
+      mnemonic,
+      electrum: emptyReader,
+      gapLimit: 2,
+      crypto,
+    });
+    let inFlight = 0;
+    let peakInFlight = 0;
+    const delayedReader = {
+      ...emptyReader,
+      async getAddressHistory(): Promise<ElectrumHistoryEntry[]> {
+        inFlight += 1;
+        peakInFlight = Math.max(peakInFlight, inFlight);
+        await new Promise((resolve) => setTimeout(resolve, 2));
+        inFlight -= 1;
+        return [];
+      },
+    };
+
+    await scanP2wpkhAccount({
+      mnemonic,
+      electrum: delayedReader,
+      gapLimit: 2,
+      previousSnapshot: initial,
+      crypto,
+    });
+
+    expect(peakInFlight).toBeLessThanOrEqual(6);
+  });
 });

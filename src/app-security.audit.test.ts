@@ -75,6 +75,12 @@ describe('mobile wallet UX and security invariants', () => {
     expect(appSource).toContain('reconcileBroadcasts(txids, session)');
   });
 
+  it('bounds broadcast reconciliation and exposes transparent scan progress', () => {
+    expect(appSource).toMatch(/mapWithConcurrency\(\s*txids,\s*BROADCAST_RECONCILIATION_CONCURRENCY,/);
+    expect(appSource).toContain('onProgress: onScanProgress');
+    expect(appSource).toContain('setHistoryProgress({ done, total });');
+  });
+
   it('never recreates or replaces a vault after a stale PBKDF2 upgrade', () => {
     expect(appSource).toContain(
       'const upgradeCommit = prepareVaultUpgradeCommit(upgraded, latest, payload.address);',

@@ -2,6 +2,7 @@ import type {
   ElectrumHistoryEntry,
   ElectrumVerboseTransaction,
 } from '../network/electrum';
+import { createConcurrencyLimiter, mapWithConcurrency } from './concurrency';
 
 export type HistoryExportDirection = 'received' | 'sent' | 'self';
 
@@ -21,26 +22,7 @@ type VerboseTransactionReader = {
 };
 
 export const DEFAULT_HISTORY_CONCURRENCY = 6;
-
-const mapWithConcurrency = async <T, R>(
-  items: T[],
-  limit: number,
-  worker: (item: T, index: number) => Promise<R>,
-): Promise<R[]> => {
-  const results = new Array<R>(items.length);
-  let cursor = 0;
-  const size = Math.max(1, Math.min(limit, items.length));
-  const runners = Array.from({ length: size }, async () => {
-    for (;;) {
-      const index = cursor;
-      cursor += 1;
-      if (index >= items.length) return;
-      results[index] = await worker(items[index] as T, index);
-    }
-  });
-  await Promise.all(runners);
-  return results;
-};
+export const DEFAULT_HISTORY_INPUT_CONCURRENCY = 4;
 
 const outputAddresses = (output: ElectrumVerboseTransaction['vout'][number]) => {
   const addresses = [...(output.scriptPubKey?.addresses ?? [])];
@@ -64,6 +46,7 @@ const buildHistoryExportRecord = async (
   entry: ElectrumHistoryEntry,
   owned: Set<string>,
   getTransaction: (txid: string) => Promise<ElectrumVerboseTransaction>,
+  inputConcurrency: number,
 ): Promise<HistoryExportRecord> => {
   const transaction = await getTransaction(entry.txid);
   const currentOutputs = transaction.vout.map((output) => ({
@@ -80,18 +63,23 @@ const buildHistoryExportRecord = async (
   let totalInputSats = 0;
   let walletInputSats = 0;
 
-  await Promise.all(transaction.vin.map(async (input) => {
+  const resolvedInputs = await mapWithConcurrency(transaction.vin, inputConcurrency, async (input) => {
     if (!input.txid || typeof input.vout !== 'number') return;
     const previous = await getTransaction(input.txid);
     const previousOutput = previous.vout.find((output, index) => (output.n ?? index) === input.vout);
     if (!previousOutput) return;
     const valueSats = outputValueSats(previousOutput);
     const addresses = outputAddresses(previousOutput);
-    totalInputSats += valueSats;
-    if (addresses.some((address) => owned.has(address))) {
-      walletInputSats += valueSats;
-    }
-  }));
+    return {
+      valueSats,
+      owned: addresses.some((address) => owned.has(address)),
+    };
+  });
+  for (const input of resolvedInputs) {
+    if (!input) continue;
+    totalInputSats += input.valueSats;
+    if (input.owned) walletInputSats += input.valueSats;
+  }
 
   const totalOutputSats = currentOutputs.reduce((total, output) => total + output.valueSats, 0);
   const externalOutputSats = externalOutputs.reduce((total, output) => total + output.valueSats, 0);
@@ -122,27 +110,30 @@ export const buildHistoryExportRecords = async ({
   walletAddresses,
   reader,
   concurrency = DEFAULT_HISTORY_CONCURRENCY,
+  inputConcurrency = DEFAULT_HISTORY_INPUT_CONCURRENCY,
   onProgress,
 }: {
   history: ElectrumHistoryEntry[];
   walletAddresses: string[];
   reader: VerboseTransactionReader;
   concurrency?: number;
+  inputConcurrency?: number;
   onProgress?: (done: number, total: number) => void;
 }): Promise<HistoryExportRecord[]> => {
   const owned = new Set(walletAddresses);
   const cache = new Map<string, Promise<ElectrumVerboseTransaction>>();
+  const transactionLimiter = createConcurrencyLimiter(concurrency);
   const getTransaction = (txid: string) => {
     const cached = cache.get(txid);
     if (cached) return cached;
-    const request = reader.getVerboseTransaction(txid);
+    const request = transactionLimiter.run(() => reader.getVerboseTransaction(txid));
     cache.set(txid, request);
     return request;
   };
 
   let completed = 0;
   return mapWithConcurrency(history, concurrency, async (entry) => {
-    const record = await buildHistoryExportRecord(entry, owned, getTransaction);
+    const record = await buildHistoryExportRecord(entry, owned, getTransaction, inputConcurrency);
     completed += 1;
     onProgress?.(completed, history.length);
     return record;
