@@ -45,6 +45,7 @@ const messages = {
 const client = {
   connected: true,
   blockHeight: 100,
+  currentServerUrl: 'wss://electrum.nito.network:50004',
   connect: vi.fn(async () => undefined),
 } as unknown as NitoElectrumClient;
 
@@ -158,6 +159,7 @@ describe('WalletNetworkController', () => {
     expect(publishNetwork).toHaveBeenCalledWith(expect.objectContaining({
       status: 'connected',
       snapshot,
+      serverUrl: 'wss://electrum.nito.network:50004',
       height: 100,
     }));
     expect(finishSync).toHaveBeenCalledOnce();

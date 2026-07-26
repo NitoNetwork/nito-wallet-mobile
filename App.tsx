@@ -93,6 +93,7 @@ import {
   type PreparedTransparentTx,
 } from './src/wallet/transparentSend';
 import { makeConsolidationTranslator } from './src/i18n.consolidation';
+import { useAutoLockTimeout } from './src/hooks/useAutoLockTimeout';
 import { useBalanceDecimals } from './src/hooks/useBalanceDecimals';
 import { useLanguage } from './src/hooks/useLanguage';
 import { useWalletSubscriptions } from './src/hooks/useWalletSubscriptions';
@@ -338,6 +339,7 @@ export default function App() {
   const [historySyncing, setHistorySyncing] = useState(false);
   const { language, t, selected: selectedLanguage, pickerOpen: languagePickerOpen, togglePicker: toggleLanguagePicker, select: selectLanguage } = useLanguage();
   const { balanceDecimals, selectBalanceDecimals } = useBalanceDecimals();
+  const { autoLockTimeoutMs, selectAutoLockTimeout } = useAutoLockTimeout();
   const [balanceRefreshing, setBalanceRefreshing] = useState(false);
   const [refreshCooldownUntil, setRefreshCooldownUntil] = useState(0);
   const [qrScannerOpen, setQrScannerOpen] = useState(false);
@@ -1228,14 +1230,14 @@ export default function App() {
       if (!systemPromptActiveRef.current) {
         lockWallet();
       }
-    });
+    }, autoLockTimeoutMs);
     autoLockRef.current = lock;
     lock.resetTimer();
     return () => {
       lock.stop();
       autoLockRef.current = null;
     };
-  }, [screen, seedSaved, lockWallet]);
+  }, [autoLockTimeoutMs, screen, seedSaved, lockWallet]);
 
   const registerActivity = useCallback(() => {
     autoLockRef.current?.resetTimer();
@@ -1805,6 +1807,74 @@ export default function App() {
     });
   };
 
+  const resynchronizeWalletHistory = async () => {
+    await runExclusiveAction('history', async () => {
+      resetFeedback();
+      const activeWallet = walletRef.current;
+      if (!activeWallet) {
+        setError(t('errors.noActiveWallet'));
+        return;
+      }
+      if (walletNetworkController.syncInFlight || walletNetworkController.enrichmentInFlight) {
+        setError(t('errors.walletSyncing'));
+        return;
+      }
+      const session = walletNetworkController.sessions.capture(activeWallet.address);
+      if (!session) {
+        setError(t('errors.noActiveWallet'));
+        return;
+      }
+
+      try {
+        clearAddressSubscriptions();
+        await clearWalletHistoryCache(activeWallet.address);
+        if (!walletNetworkController.isCurrent(session)) return;
+        enrichAttemptedRef.current.clear();
+        setHistoryPage(0);
+        await syncTransparentNetwork(true, { force: true, rescanGap: true });
+        if (!walletNetworkController.isCurrent(session)) return;
+        if (networkRef.current.status !== 'connected') return;
+        setStatus('');
+        await enrichWalletHistory();
+        while (
+          walletNetworkController.isCurrent(session)
+          && walletNetworkController.enrichmentInFlight
+        ) {
+          await new Promise((resolve) => setTimeout(resolve, 50));
+        }
+        if (!walletNetworkController.isCurrent(session)) return;
+        const remaining = networkRef.current.snapshot?.history.some(
+          (entry) => entry.direction === undefined,
+        );
+        if (networkRef.current.status === 'connected' && !remaining) {
+          setStatus(t('status.historyResynchronized'));
+        } else if (networkRef.current.status === 'connected') {
+          setError(t('errors.historyResyncIncomplete'));
+        }
+      } catch (caught) {
+        if (walletNetworkController.isCurrent(session)) {
+          setError(caught instanceof Error ? caught.message : t('errors.networkUnavailable'));
+        }
+      }
+    });
+  };
+
+  const askResynchronizeWalletHistory = () => {
+    Alert.alert(
+      t('dialog.resyncHistoryTitle'),
+      t('dialog.resyncHistoryBody'),
+      [
+        { text: t('actions.cancel'), style: 'cancel' },
+        {
+          text: t('dialog.resyncHistoryConfirm'),
+          onPress: () => {
+            void resynchronizeWalletHistory();
+          },
+        },
+      ],
+    );
+  };
+
   const refreshBalance = async () => {
     const now = Date.now();
     const activeWallet = walletRef.current;
@@ -1980,31 +2050,47 @@ export default function App() {
       return (
         <SecurityTab
           t={t}
-          wallet={wallet}
-          seedSaved={seedSaved}
           actionLocked={actionLocked}
           pendingAction={pendingAction}
-          vaultBiometricsEnabled={vaultBiometricsEnabled}
-          biometricMethod={biometricMethod}
-          showMnemonic={showMnemonic}
-          vaultUnlockMode={vaultUnlockMode}
-          sensitiveAction={sensitiveAction}
-          sensitivePassword={sensitivePassword}
-          onChangeSensitivePassword={setSensitivePassword}
-          showSensitivePassword={showSensitivePassword}
-          onToggleSensitivePassword={() => setShowSensitivePassword((current) => !current)}
-          sensitiveBusy={sensitiveBusy}
-          onLockWallet={lockWallet}
-          onToggleMnemonic={toggleMnemonic}
-          onAskDelete={askDeleteWallet}
-          onConfirmSensitive={() => { void confirmSensitiveAction(); }}
-          onCancelSensitive={() => { setSensitiveAction(null); setSensitivePassword(''); }}
-          languageSettings={languageSettings}
-          balanceDecimals={balanceDecimals}
-          onSelectBalanceDecimals={selectBalanceDecimals}
-          biometricAvailable={!biometricUnavailableReason}
-          onEnableBiometrics={askEnableBiometrics}
-          onDisableBiometrics={askDisableBiometrics}
+          security={{
+            wallet,
+            seedSaved,
+            vaultBiometricsEnabled,
+            biometricMethod,
+            showMnemonic,
+            biometricAvailable: !biometricUnavailableReason,
+            autoLockTimeoutMs,
+            onSelectAutoLockTimeout: selectAutoLockTimeout,
+            onLockWallet: lockWallet,
+            onToggleMnemonic: toggleMnemonic,
+            onEnableBiometrics: askEnableBiometrics,
+            onDisableBiometrics: askDisableBiometrics,
+          }}
+          confirmation={{
+            vaultUnlockMode,
+            sensitiveAction,
+            sensitivePassword,
+            onChangeSensitivePassword: setSensitivePassword,
+            showSensitivePassword,
+            onToggleSensitivePassword: () => setShowSensitivePassword((current) => !current),
+            sensitiveBusy,
+            onConfirmSensitive: () => { void confirmSensitiveAction(); },
+            onCancelSensitive: () => { setSensitiveAction(null); setSensitivePassword(''); },
+          }}
+          display={{
+            languageSettings,
+            balanceDecimals,
+            onSelectBalanceDecimals: selectBalanceDecimals,
+          }}
+          networkSettings={{
+            network,
+            historyBusy: historySyncing || historyProgress !== null,
+            onResynchronizeHistory: askResynchronizeWalletHistory,
+          }}
+          danger={{
+            seedSaved,
+            onAskDelete: askDeleteWallet,
+          }}
         />
       );
     }

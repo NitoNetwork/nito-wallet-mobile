@@ -14,4 +14,32 @@ describe('AutoLock', () => {
     locker.stop();
     vi.useRealTimers();
   });
+
+  test('uses the configured timeout', async () => {
+    vi.useFakeTimers();
+    const onLock = vi.fn();
+    const locker = new AutoLock(onLock, 60_000);
+
+    locker.resetTimer();
+    await vi.advanceTimersByTimeAsync(59_999);
+    expect(onLock).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1);
+    expect(onLock).toHaveBeenCalledTimes(1);
+
+    locker.stop();
+    vi.useRealTimers();
+  });
+
+  test('leaves immediate background locking to the app-state boundary', async () => {
+    vi.useFakeTimers();
+    const onLock = vi.fn();
+    const locker = new AutoLock(onLock, 0);
+
+    locker.resetTimer();
+    await vi.runAllTimersAsync();
+    expect(onLock).not.toHaveBeenCalled();
+
+    locker.stop();
+    vi.useRealTimers();
+  });
 });

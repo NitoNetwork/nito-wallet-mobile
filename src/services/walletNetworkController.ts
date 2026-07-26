@@ -338,6 +338,7 @@ export const synchronizeWalletNetwork = async (
     const client = ports.getClient() ?? new NitoElectrumClient();
     ports.setClient(client);
     await client.connect();
+    const serverUrl = client.currentServerUrl;
     const requireConnectedSession = () => {
       if (!client.connected) {
         throw new ElectrumSessionUnhealthyError(
@@ -353,6 +354,12 @@ export const synchronizeWalletNetwork = async (
       ? cacheRead.value
       : { history: [], fullHistoryHeight: 0 };
     if (!ports.controller.isCurrent(session)) return;
+    if (ports.getNetwork().serverUrl !== serverUrl) {
+      ports.publishNetwork({
+        ...ports.getNetwork(),
+        serverUrl,
+      });
+    }
     const wantsFullHistory = (
       ports.fullHistoryByDefault
       || includeHistory
@@ -384,6 +391,7 @@ export const synchronizeWalletNetwork = async (
         ...currentNetwork,
         status: 'connected',
         error: '',
+        serverUrl,
         height: Math.max(currentNetwork.height, knownHeight),
         fullHistoryEnabled: currentNetwork.fullHistoryEnabled || cache.fullHistoryHeight > 0,
       });
@@ -410,6 +418,7 @@ export const synchronizeWalletNetwork = async (
         status: 'connected',
         snapshot,
         error: '',
+        serverUrl,
         height: knownHeight,
         fullHistoryEnabled: true,
       };
@@ -428,6 +437,7 @@ export const synchronizeWalletNetwork = async (
         ...ports.getNetwork(),
         status: 'syncing',
         error: '',
+        serverUrl,
         height: Math.max(ports.getNetwork().height, knownHeight),
         fullHistoryEnabled: wantsFullHistory || ports.getNetwork().fullHistoryEnabled,
       });
@@ -465,7 +475,7 @@ export const synchronizeWalletNetwork = async (
       status: 'connected',
       snapshot,
       error: '',
-      serverUrl: '',
+      serverUrl,
       height: knownHeight,
       fullHistoryEnabled: wantsFullHistory,
     };
@@ -486,7 +496,7 @@ export const synchronizeWalletNetwork = async (
       status: 'error',
       snapshot: fallbackNetwork.snapshot,
       error: message,
-      serverUrl: '',
+      serverUrl: client?.currentServerUrl ?? fallbackNetwork.serverUrl,
       height: client?.blockHeight || fallbackNetwork.height || 0,
       fullHistoryEnabled: fallbackNetwork.fullHistoryEnabled,
     });

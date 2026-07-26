@@ -1,9 +1,14 @@
+import Constants from 'expo-constants';
 import { useEffect, useState, type ReactNode } from 'react';
-import { ActivityIndicator, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { ActivityIndicator, Linking, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import QRCode from 'react-native-qrcode-svg';
 
-import { CONSOLIDATION_MIN_UTXOS } from '../constants/nito';
-import type { LanguageCode, Translator } from '../i18n';
+import {
+  AUTO_LOCK_TIMEOUT_OPTIONS_MS,
+  CONSOLIDATION_MIN_UTXOS,
+  type AutoLockTimeoutMs,
+} from '../constants/nito';
+import type { LanguageCode, TranslationKey, Translator } from '../i18n';
 import { makeConsolidationTranslator } from '../i18n.consolidation';
 import { HISTORY_PAGE_SIZE } from '../services/historyEnrichmentQueue';
 import type { CachedTransactionOutput } from '../services/historyExport';
@@ -437,126 +442,288 @@ export function HistoryTab({
   );
 }
 
-export function SecurityTab({
-  t,
-  wallet,
-  seedSaved,
-  actionLocked,
-  pendingAction,
-  vaultBiometricsEnabled,
-  biometricMethod,
-  showMnemonic,
-  vaultUnlockMode,
-  sensitiveAction,
-  sensitivePassword,
-  onChangeSensitivePassword,
-  showSensitivePassword,
-  onToggleSensitivePassword,
-  sensitiveBusy,
-  onLockWallet,
-  onToggleMnemonic,
-  onAskDelete,
-  onConfirmSensitive,
-  onCancelSensitive,
-  languageSettings,
-  balanceDecimals,
-  onSelectBalanceDecimals,
-  biometricAvailable,
-  onEnableBiometrics,
-  onDisableBiometrics,
-}: {
-  t: Translator;
-  wallet: Wallet;
-  seedSaved: boolean;
-  actionLocked: boolean;
-  pendingAction: PendingAction | null;
-  vaultBiometricsEnabled: boolean;
-  biometricMethod: BiometricMethod;
-  showMnemonic: boolean;
+type SettingsRoute = 'root' | 'security' | 'display' | 'network' | 'about' | 'danger';
+type SensitiveAction = 'reveal' | 'delete' | 'enableBiometrics' | 'disableBiometrics' | null;
+
+type SensitiveConfirmationControls = {
   vaultUnlockMode: 'password' | 'biometric';
-  sensitiveAction: 'reveal' | 'delete' | 'enableBiometrics' | 'disableBiometrics' | null;
+  sensitiveAction: SensitiveAction;
   sensitivePassword: string;
   onChangeSensitivePassword: (value: string) => void;
   showSensitivePassword: boolean;
   onToggleSensitivePassword: () => void;
   sensitiveBusy: boolean;
-  onLockWallet: () => void;
-  onToggleMnemonic: () => void;
-  onAskDelete: () => void;
   onConfirmSensitive: () => void;
   onCancelSensitive: () => void;
-  languageSettings: ReactNode;
-  balanceDecimals: BalanceDecimals;
-  onSelectBalanceDecimals: (next: BalanceDecimals) => void;
-  biometricAvailable: boolean;
-  onEnableBiometrics: () => void;
-  onDisableBiometrics: () => void;
+};
+
+const APP_VERSION = Constants.expoConfig?.version ?? '—';
+const DERIVATION_PATHS = ["m/44'", "m/49'", "m/84'", "m/86'"] as const;
+const SOURCE_URL = 'https://github.com/NitoNetwork/nito-wallet-mobile';
+const LICENSE_URL = `${SOURCE_URL}/blob/main/LICENSE`;
+const PRIVACY_URL = `${SOURCE_URL}/blob/main/PRIVACY.md`;
+const AUTO_LOCK_LABEL_KEYS = {
+  0: 'settings.autoLockImmediate',
+  60_000: 'settings.autoLockOneMinute',
+  300_000: 'settings.autoLockFiveMinutes',
+  900_000: 'settings.autoLockFifteenMinutes',
+} satisfies Record<AutoLockTimeoutMs, TranslationKey>;
+const NETWORK_STATUS_KEYS = {
+  idle: 'settings.networkIdle',
+  syncing: 'settings.networkSyncing',
+  connected: 'settings.networkConnected',
+  error: 'settings.networkError',
+} satisfies Record<NetworkState['status'], TranslationKey>;
+
+function SettingsHeader({
+  t,
+  title,
+  onBack,
+}: {
+  t: Translator;
+  title: string;
+  onBack: () => void;
 }) {
   return (
+    <View style={styles.settingsHeader}>
+      <TouchableOpacity
+        accessibilityRole="button"
+        accessibilityLabel={t('actions.back')}
+        onPress={onBack}
+        style={styles.settingsBackButton}
+      >
+        <Text style={styles.settingsBackText}>{'‹'}</Text>
+      </TouchableOpacity>
+      <Text style={styles.settingsHeaderTitle}>{title}</Text>
+    </View>
+  );
+}
+
+function SettingsNavigationRow({
+  label,
+  onPress,
+  danger = false,
+}: {
+  label: string;
+  onPress: () => void;
+  danger?: boolean;
+}) {
+  return (
+    <TouchableOpacity
+      accessibilityRole="button"
+      onPress={onPress}
+      style={[styles.settingsNavigationRow, danger && styles.settingsNavigationRowDanger]}
+    >
+      <Text style={[styles.settingsNavigationLabel, danger && styles.settingsNavigationLabelDanger]}>
+        {label}
+      </Text>
+      <Text style={[styles.settingsChevron, danger && styles.settingsNavigationLabelDanger]}>
+        {'›'}
+      </Text>
+    </TouchableOpacity>
+  );
+}
+
+function SettingsValue({ label, value }: { label: string; value: string }) {
+  return (
+    <View style={styles.settingsValue}>
+      <Text style={styles.label}>{label}</Text>
+      <Text selectable style={styles.settingsValueText}>{value}</Text>
+    </View>
+  );
+}
+
+function SensitiveConfirmation({
+  t,
+  pendingAction,
+  actionLocked,
+  biometricMethod,
+  controls,
+}: {
+  t: Translator;
+  pendingAction: PendingAction | null;
+  actionLocked: boolean;
+  biometricMethod: BiometricMethod;
+  controls: SensitiveConfirmationControls;
+}) {
+  const { sensitiveAction } = controls;
+  if (!sensitiveAction) return null;
+
+  return (
+    <View style={styles.notice}>
+      <Text style={styles.noticeTitle}>
+        {sensitiveAction === 'reveal'
+          ? t('security.confirmReveal')
+          : sensitiveAction === 'enableBiometrics'
+            ? t('security.confirmEnableBiometric', { method: biometricMethod })
+            : sensitiveAction === 'disableBiometrics'
+              ? t('security.confirmDisableBiometric', { method: biometricMethod })
+              : t('security.confirmDelete')}
+      </Text>
+      {controls.vaultUnlockMode === 'password' || sensitiveAction === 'disableBiometrics' ? (
+        <PasswordField
+          value={controls.sensitivePassword}
+          onChangeText={controls.onChangeSensitivePassword}
+          placeholder={t('unlock.password')}
+          visible={controls.showSensitivePassword}
+          onToggleVisible={controls.onToggleSensitivePassword}
+          showLabel={t('actions.show')}
+          hideLabel={t('actions.hide')}
+        />
+      ) : (
+        <Text style={styles.noticeText}>{t('security.biometricRequested', { method: biometricMethod })}</Text>
+      )}
+      <ActionButton
+        label={controls.sensitiveBusy ? t('security.checking') : t('actions.confirm')}
+        loading={pendingAction === 'reveal' || pendingAction === 'delete' || controls.sensitiveBusy}
+        disabled={actionLocked || controls.sensitiveBusy}
+        onPress={controls.onConfirmSensitive}
+      />
+      <ActionButton
+        label={t('actions.cancel')}
+        variant="ghost"
+        disabled={actionLocked || controls.sensitiveBusy}
+        onPress={controls.onCancelSensitive}
+      />
+    </View>
+  );
+}
+
+function SecuritySettingsSection({
+  t,
+  actionLocked,
+  pendingAction,
+  settings,
+  confirmation,
+  onBack,
+}: {
+  t: Translator;
+  actionLocked: boolean;
+  pendingAction: PendingAction | null;
+  settings: {
+    wallet: Wallet;
+    seedSaved: boolean;
+    vaultBiometricsEnabled: boolean;
+    biometricMethod: BiometricMethod;
+    showMnemonic: boolean;
+    biometricAvailable: boolean;
+    autoLockTimeoutMs: AutoLockTimeoutMs;
+    onSelectAutoLockTimeout: (next: AutoLockTimeoutMs) => void;
+    onLockWallet: () => void;
+    onToggleMnemonic: () => void;
+    onEnableBiometrics: () => void;
+    onDisableBiometrics: () => void;
+  };
+  confirmation: SensitiveConfirmationControls;
+  onBack: () => void;
+}) {
+  const securityConfirmation = confirmation.sensitiveAction === 'delete'
+    ? { ...confirmation, sensitiveAction: null }
+    : confirmation;
+
+  return (
     <View style={styles.card}>
-      <Text style={styles.sectionTitle}>{t('security.title')}</Text>
+      <SettingsHeader t={t} title={t('settings.sectionSecurity')} onBack={onBack} />
       <View style={styles.tiles}>
         <View style={styles.tile}>
           <Text style={styles.label}>{t('security.vault')}</Text>
-          <Text style={styles.tileValue}>{seedSaved ? t('wallet.protected') : t('wallet.needsProtection')}</Text>
+          <Text style={styles.tileValue}>
+            {settings.seedSaved ? t('wallet.protected') : t('wallet.needsProtection')}
+          </Text>
         </View>
         <View style={styles.tile}>
           <Text style={styles.label}>{t('security.unlockMethod')}</Text>
-          <Text style={styles.tileValue}>{vaultBiometricsEnabled ? biometricMethod : t('security.password')}</Text>
+          <Text style={styles.tileValue}>
+            {settings.vaultBiometricsEnabled ? settings.biometricMethod : t('security.password')}
+          </Text>
         </View>
       </View>
-      <ActionButton label={t('actions.lockWallet')} variant="success" disabled={actionLocked} onPress={onLockWallet} />
-      {biometricAvailable ? (
+      {settings.biometricAvailable ? (
         <ActionButton
-          label={vaultBiometricsEnabled
-            ? t('actions.disableBiometric', { method: biometricMethod })
-            : t('actions.enableBiometric', { method: biometricMethod })}
+          label={settings.vaultBiometricsEnabled
+            ? t('actions.disableBiometric', { method: settings.biometricMethod })
+            : t('actions.enableBiometric', { method: settings.biometricMethod })}
           variant="secondary"
           disabled={actionLocked}
-          onPress={vaultBiometricsEnabled ? onDisableBiometrics : onEnableBiometrics}
+          onPress={settings.vaultBiometricsEnabled
+            ? settings.onDisableBiometrics
+            : settings.onEnableBiometrics}
         />
       ) : null}
-      <ActionButton label={showMnemonic ? t('actions.hideSeed') : t('actions.showSeed')} variant="secondary" disabled={actionLocked} onPress={onToggleMnemonic} />
-      {showMnemonic ? <Text selectable style={styles.mnemonic}>{wallet.mnemonic}</Text> : null}
-      {seedSaved ? <ActionButton label={t('actions.deleteWallet')} variant="danger" disabled={actionLocked} onPress={onAskDelete} /> : null}
-      {sensitiveAction ? (
-        <View style={styles.notice}>
-          <Text style={styles.noticeTitle}>
-            {sensitiveAction === 'reveal'
-              ? t('security.confirmReveal')
-              : sensitiveAction === 'enableBiometrics'
-                ? t('security.confirmEnableBiometric', { method: biometricMethod })
-                : sensitiveAction === 'disableBiometrics'
-                  ? t('security.confirmDisableBiometric', { method: biometricMethod })
-                  : t('security.confirmDelete')}
-          </Text>
-          {vaultUnlockMode === 'password' || sensitiveAction === 'disableBiometrics' ? (
-            <PasswordField
-              value={sensitivePassword}
-              onChangeText={onChangeSensitivePassword}
-              placeholder={t('unlock.password')}
-              visible={showSensitivePassword}
-              onToggleVisible={onToggleSensitivePassword}
-              showLabel={t('actions.show')}
-              hideLabel={t('actions.hide')}
-            />
-          ) : (
-            <Text style={styles.noticeText}>{t('security.biometricRequested', { method: biometricMethod })}</Text>
-          )}
-          <ActionButton
-            label={sensitiveBusy ? t('security.checking') : t('actions.confirm')}
-            loading={pendingAction === 'reveal' || pendingAction === 'delete' || sensitiveBusy}
-            disabled={actionLocked || sensitiveBusy}
-            onPress={onConfirmSensitive}
-          />
-          <ActionButton
-            label={t('actions.cancel')}
-            variant="ghost"
-            disabled={actionLocked || sensitiveBusy}
-            onPress={onCancelSensitive}
-          />
-        </View>
+      <ActionButton
+        label={t('actions.lockWallet')}
+        variant="success"
+        disabled={actionLocked}
+        onPress={settings.onLockWallet}
+      />
+      <ActionButton
+        label={settings.showMnemonic ? t('actions.hideSeed') : t('actions.showSeed')}
+        variant="secondary"
+        disabled={actionLocked}
+        onPress={settings.onToggleMnemonic}
+      />
+      {settings.showMnemonic ? (
+        <Text selectable style={styles.mnemonic}>{settings.wallet.mnemonic}</Text>
       ) : null}
+      <SensitiveConfirmation
+        t={t}
+        pendingAction={pendingAction}
+        actionLocked={actionLocked}
+        biometricMethod={settings.biometricMethod}
+        controls={securityConfirmation}
+      />
+      <View style={styles.settingsOptionPanel}>
+        <Text style={styles.label}>{t('settings.autoLockTitle')}</Text>
+        <Text style={styles.helper}>{t('settings.autoLockHint')}</Text>
+        <View style={styles.settingsChoiceList}>
+          {AUTO_LOCK_TIMEOUT_OPTIONS_MS.map((option) => (
+            <TouchableOpacity
+              key={option}
+              accessibilityRole="button"
+              accessibilityState={{ selected: settings.autoLockTimeoutMs === option }}
+              disabled={actionLocked}
+              onPress={() => settings.onSelectAutoLockTimeout(option)}
+              style={[
+                styles.settingsChoice,
+                settings.autoLockTimeoutMs === option && styles.settingsChoiceActive,
+                actionLocked && styles.balanceDecimalsOptionDisabled,
+              ]}
+            >
+              <Text
+                style={[
+                  styles.settingsChoiceText,
+                  settings.autoLockTimeoutMs === option && styles.settingsChoiceTextActive,
+                ]}
+              >
+                {t(AUTO_LOCK_LABEL_KEYS[option])}
+              </Text>
+            </TouchableOpacity>
+          ))}
+        </View>
+      </View>
+    </View>
+  );
+}
+
+function DisplaySettingsSection({
+  t,
+  actionLocked,
+  languageSettings,
+  balanceDecimals,
+  onSelectBalanceDecimals,
+  onBack,
+}: {
+  t: Translator;
+  actionLocked: boolean;
+  languageSettings: ReactNode;
+  balanceDecimals: BalanceDecimals;
+  onSelectBalanceDecimals: (next: BalanceDecimals) => void;
+  onBack: () => void;
+}) {
+  return (
+    <View style={styles.card}>
+      <SettingsHeader t={t} title={t('settings.sectionDisplay')} onBack={onBack} />
+      {languageSettings}
       <View style={styles.balanceDecimalsSettings}>
         <Text style={styles.label}>{t('security.balanceDecimalsTitle')}</Text>
         <Text style={styles.helper}>{t('security.balanceDecimalsHint')}</Text>
@@ -587,7 +754,265 @@ export function SecurityTab({
           ))}
         </View>
       </View>
-      {languageSettings}
+    </View>
+  );
+}
+
+function NetworkSettingsSection({
+  t,
+  actionLocked,
+  network,
+  historyBusy,
+  onResynchronizeHistory,
+  onBack,
+}: {
+  t: Translator;
+  actionLocked: boolean;
+  network: NetworkState;
+  historyBusy: boolean;
+  onResynchronizeHistory: () => void;
+  onBack: () => void;
+}) {
+  const server = network.serverUrl.replace(/^wss:\/\//i, '') || '—';
+  const blockHeight = network.height > 0 ? network.height.toLocaleString('fr-FR') : '—';
+
+  return (
+    <View style={styles.card}>
+      <SettingsHeader t={t} title={t('settings.sectionNetwork')} onBack={onBack} />
+      <SettingsValue label={t('settings.server')} value={server} />
+      <SettingsValue
+        label={t('settings.connectionStatus')}
+        value={t(NETWORK_STATUS_KEYS[network.status])}
+      />
+      <SettingsValue label={t('settings.blockHeight')} value={blockHeight} />
+      <View style={styles.settingsOptionPanel}>
+        <Text style={styles.helper}>{t('settings.resyncHistoryHint')}</Text>
+        <ActionButton
+          label={t('settings.resyncHistory')}
+          variant="secondary"
+          disabled={actionLocked || historyBusy || network.status === 'syncing'}
+          onPress={onResynchronizeHistory}
+        />
+      </View>
+    </View>
+  );
+}
+
+function AboutLink({
+  label,
+  url,
+}: {
+  label: string;
+  url: string;
+}) {
+  return (
+    <TouchableOpacity
+      accessibilityRole="link"
+      onPress={() => {
+        void Linking.openURL(url).catch((caught) => {
+          reportNonFinancialFailure('settings external link', caught);
+        });
+      }}
+      style={styles.settingsNavigationRow}
+    >
+      <Text style={styles.settingsNavigationLabel}>{label}</Text>
+      <Text style={styles.settingsExternalLink}>{'↗'}</Text>
+    </TouchableOpacity>
+  );
+}
+
+function AboutSettingsSection({ t, onBack }: { t: Translator; onBack: () => void }) {
+  return (
+    <View style={styles.card}>
+      <SettingsHeader t={t} title={t('settings.sectionAbout')} onBack={onBack} />
+      <SettingsValue label={t('settings.appVersion')} value={APP_VERSION} />
+      <SettingsValue label={t('settings.derivationPaths')} value={DERIVATION_PATHS.join(' · ')} />
+      <View style={styles.settingsList}>
+        <AboutLink label={t('settings.license')} url={LICENSE_URL} />
+        <AboutLink label={t('settings.privacy')} url={PRIVACY_URL} />
+        <AboutLink label={t('settings.sourceCode')} url={SOURCE_URL} />
+      </View>
+    </View>
+  );
+}
+
+function DangerSettingsSection({
+  t,
+  actionLocked,
+  pendingAction,
+  seedSaved,
+  biometricMethod,
+  confirmation,
+  onAskDelete,
+  onBack,
+}: {
+  t: Translator;
+  actionLocked: boolean;
+  pendingAction: PendingAction | null;
+  seedSaved: boolean;
+  biometricMethod: BiometricMethod;
+  confirmation: SensitiveConfirmationControls;
+  onAskDelete: () => void;
+  onBack: () => void;
+}) {
+  const deleteConfirmation = confirmation.sensitiveAction === 'delete'
+    ? confirmation
+    : { ...confirmation, sensitiveAction: null };
+
+  return (
+    <View style={[styles.card, styles.settingsDangerCard]}>
+      <SettingsHeader t={t} title={t('settings.sectionDanger')} onBack={onBack} />
+      {seedSaved ? (
+        <ActionButton
+          label={t('actions.deleteWallet')}
+          variant="danger"
+          disabled={actionLocked}
+          onPress={onAskDelete}
+        />
+      ) : null}
+      <SensitiveConfirmation
+        t={t}
+        pendingAction={pendingAction}
+        actionLocked={actionLocked}
+        biometricMethod={biometricMethod}
+        controls={deleteConfirmation}
+      />
+    </View>
+  );
+}
+
+export function SecurityTab({
+  t,
+  actionLocked,
+  pendingAction,
+  security,
+  confirmation,
+  display,
+  networkSettings,
+  danger,
+}: {
+  t: Translator;
+  actionLocked: boolean;
+  pendingAction: PendingAction | null;
+  security: {
+    wallet: Wallet;
+    seedSaved: boolean;
+    vaultBiometricsEnabled: boolean;
+    biometricMethod: BiometricMethod;
+    showMnemonic: boolean;
+    biometricAvailable: boolean;
+    autoLockTimeoutMs: AutoLockTimeoutMs;
+    onSelectAutoLockTimeout: (next: AutoLockTimeoutMs) => void;
+    onLockWallet: () => void;
+    onToggleMnemonic: () => void;
+    onEnableBiometrics: () => void;
+    onDisableBiometrics: () => void;
+  };
+  confirmation: SensitiveConfirmationControls;
+  display: {
+    languageSettings: ReactNode;
+    balanceDecimals: BalanceDecimals;
+    onSelectBalanceDecimals: (next: BalanceDecimals) => void;
+  };
+  networkSettings: {
+    network: NetworkState;
+    historyBusy: boolean;
+    onResynchronizeHistory: () => void;
+  };
+  danger: {
+    seedSaved: boolean;
+    onAskDelete: () => void;
+  };
+}) {
+  const [route, setRoute] = useState<SettingsRoute>('root');
+  const goBack = () => {
+    confirmation.onCancelSensitive();
+    if (route === 'security' && security.showMnemonic) {
+      security.onToggleMnemonic();
+    }
+    setRoute('root');
+  };
+
+  if (route === 'security') {
+    return (
+      <SecuritySettingsSection
+        t={t}
+        actionLocked={actionLocked}
+        pendingAction={pendingAction}
+        settings={security}
+        confirmation={confirmation}
+        onBack={goBack}
+      />
+    );
+  }
+  if (route === 'display') {
+    return (
+      <DisplaySettingsSection
+        t={t}
+        actionLocked={actionLocked}
+        languageSettings={display.languageSettings}
+        balanceDecimals={display.balanceDecimals}
+        onSelectBalanceDecimals={display.onSelectBalanceDecimals}
+        onBack={goBack}
+      />
+    );
+  }
+  if (route === 'network') {
+    return (
+      <NetworkSettingsSection
+        t={t}
+        actionLocked={actionLocked}
+        network={networkSettings.network}
+        historyBusy={networkSettings.historyBusy}
+        onResynchronizeHistory={networkSettings.onResynchronizeHistory}
+        onBack={goBack}
+      />
+    );
+  }
+  if (route === 'about') {
+    return <AboutSettingsSection t={t} onBack={goBack} />;
+  }
+  if (route === 'danger') {
+    return (
+      <DangerSettingsSection
+        t={t}
+        actionLocked={actionLocked}
+        pendingAction={pendingAction}
+        seedSaved={danger.seedSaved}
+        biometricMethod={security.biometricMethod}
+        confirmation={confirmation}
+        onAskDelete={danger.onAskDelete}
+        onBack={goBack}
+      />
+    );
+  }
+
+  return (
+    <View style={styles.card}>
+      <Text style={styles.sectionTitle}>{t('tabs.security')}</Text>
+      <View style={styles.settingsList}>
+        <SettingsNavigationRow
+          label={t('settings.sectionSecurity')}
+          onPress={() => setRoute('security')}
+        />
+        <SettingsNavigationRow
+          label={t('settings.sectionDisplay')}
+          onPress={() => setRoute('display')}
+        />
+        <SettingsNavigationRow
+          label={t('settings.sectionNetwork')}
+          onPress={() => setRoute('network')}
+        />
+        <SettingsNavigationRow
+          label={t('settings.sectionAbout')}
+          onPress={() => setRoute('about')}
+        />
+        <SettingsNavigationRow
+          label={t('settings.sectionDanger')}
+          danger
+          onPress={() => setRoute('danger')}
+        />
+      </View>
     </View>
   );
 }
