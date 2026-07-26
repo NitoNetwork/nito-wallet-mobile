@@ -292,14 +292,26 @@ export class NitoElectrumClient {
     let lastError: Error | null = null;
 
     for (let attempt = 0; attempt < this.servers.length; attempt += 1) {
+      const attemptedServerUrl = this.currentServerUrl;
       try {
-        await this.openSocket(this.currentServerUrl);
-        await this.requestRaw('server.version', ['Nito-Mobile-Wallet', ELECTRUM_PROTOCOL_VERSION]);
+        await this.openSocket(attemptedServerUrl);
+        const serverVersion = await this.requestRaw<unknown>(
+          'server.version',
+          ['Nito-Mobile-Wallet', ELECTRUM_PROTOCOL_VERSION],
+        );
+        if (
+          !Array.isArray(serverVersion)
+          || typeof serverVersion[0] !== 'string'
+          || typeof serverVersion[1] !== 'string'
+        ) {
+          throw new Error('ElectrumX returned an invalid server.version response.');
+        }
         const header = await this.requestRaw<{ height?: number }>('blockchain.headers.subscribe', []);
         this.blockHeight = Number(header?.height || 0);
         return;
       } catch (caught) {
-        lastError = caught instanceof Error ? caught : new Error('Unlock ElectrumX impossible.');
+        const failure = caught instanceof Error ? caught : new Error('ElectrumX connection failed.');
+        lastError = new Error(`ElectrumX server unavailable: ${attemptedServerUrl}. ${failure.message}`);
         this.disconnect();
         this.currentServerIndex = (this.currentServerIndex + 1) % this.servers.length;
       }

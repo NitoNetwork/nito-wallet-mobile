@@ -53,7 +53,7 @@ import type {
 
 import {
   ElectrumSessionUnhealthyError,
-  NitoElectrumClient,
+  type NitoElectrumClient,
   scriptPubKeyForNitoAddress,
 } from './src/network/electrum';
 import {
@@ -64,6 +64,18 @@ import {
 import { readOptionalCache } from './src/services/cachePolicy';
 import { reportNonFinancialFailure } from './src/services/diagnostics';
 import { ExclusiveActionGate } from './src/services/exclusiveActionGate';
+import {
+  CustomElectrumServerValidationError,
+  createElectrumClient,
+  getConfiguredElectrumServerUrl,
+  getElectrumServerPreference,
+  loadElectrumServerPreference,
+  parseCustomElectrumServerUrl,
+  restoreOfficialElectrumServers,
+  saveCustomElectrumServerPreference,
+  type ElectrumServerPreference,
+} from './src/services/electrumClientFactory';
+import { invalidateElectrumRuntimeForServerChange } from './src/services/electrumServerTransition';
 import {
   HistoryEnrichmentQueue,
   historyEnrichmentKey as enrichKey,
@@ -165,6 +177,19 @@ const formatCooldownRemaining = (milliseconds: number) => {
   const minutes = Math.floor(totalSeconds / 60);
   const seconds = String(totalSeconds % 60).padStart(2, '0');
   return `${minutes}:${seconds}`;
+};
+const customElectrumValidationMessage = (caught: unknown, t: Translator): string => {
+  if (!(caught instanceof CustomElectrumServerValidationError)) {
+    return caught instanceof Error ? caught.message : t('errors.networkUnavailable');
+  }
+
+  const keys = {
+    'wss-required': 'errors.customElectrumWssRequired',
+    'invalid-format': 'errors.customElectrumFormat',
+    'invalid-host': 'errors.customElectrumHost',
+    'invalid-port': 'errors.customElectrumPort',
+  } as const;
+  return t(keys[caught.code]);
 };
 type ImportWordCheck = {
   index: number;
@@ -302,6 +327,8 @@ export default function App() {
   const pendingActionRef = useRef<PendingAction | null>(null);
   const [loadingSpin] = useState(() => new Animated.Value(0));
   const [network, setNetwork] = useState<NetworkState>(createEmptyNetworkState);
+  const [electrumServerPreference, setElectrumServerPreference] =
+    useState<ElectrumServerPreference>(getElectrumServerPreference);
   const [importText, setImportText] = useState('');
   const [showImportSeed, setShowImportSeed] = useState(false);
   const [sendAddress, setSendAddress] = useState('');
@@ -435,7 +462,14 @@ export default function App() {
 
     const bootstrap = async () => {
       try {
-        const [vault, hasHardware, isEnrolled, method, savedRefreshUntil] = await Promise.all([
+        const [
+          vault,
+          hasHardware,
+          isEnrolled,
+          method,
+          savedRefreshUntil,
+          savedElectrumServerPreference,
+        ] = await Promise.all([
           loadVault(),
           LocalAuthentication.hasHardwareAsync(),
           LocalAuthentication.isEnrolledAsync(),
@@ -444,6 +478,7 @@ export default function App() {
             reportNonFinancialFailure('balance refresh cooldown read', caught);
             return null;
           }),
+          loadElectrumServerPreference(),
         ]);
 
         if (!mounted) {
@@ -451,6 +486,7 @@ export default function App() {
         }
 
         setBiometricMethod(method);
+        setElectrumServerPreference(savedElectrumServerPreference);
         applyVaultTransition({ type: 'load', vault });
 
 
@@ -561,7 +597,7 @@ export default function App() {
     pendingNetworkRef.current = null;
 
     try {
-      const client = electrumClientRef.current || new NitoElectrumClient();
+      const client = electrumClientRef.current || createElectrumClient();
       electrumClientRef.current = client;
       const prefetched = await prefetchWalletSnapshot(nextWallet, client);
       if (!walletNetworkController.isCurrentPrefetch(generation)) {
@@ -601,7 +637,7 @@ export default function App() {
     historyEnrichmentQueueRef.current = queue;
     let activeBatchKeys: string[] = [];
     try {
-      const client = electrumClientRef.current || new NitoElectrumClient();
+      const client = electrumClientRef.current || createElectrumClient();
       electrumClientRef.current = client;
       const requireCurrentSession = () => {
         if (!walletNetworkController.isCurrent(session)) {
@@ -755,7 +791,7 @@ export default function App() {
     txids: readonly string[],
     session: WalletSessionToken,
   ) => {
-    const client = electrumClientRef.current ?? new NitoElectrumClient();
+    const client = electrumClientRef.current ?? createElectrumClient();
     electrumClientRef.current = client;
     const found = await reconcileBroadcastTransactions({
       txids,
@@ -821,6 +857,128 @@ export default function App() {
     onHeightAdvance: advanceBlockHeight,
     onConnectionError: reportNetworkFailure,
   });
+
+  const invalidateElectrumRuntime = useCallback(() => {
+    const activeWalletAddress = walletRef.current?.address ?? null;
+    invalidateElectrumRuntimeForServerChange({
+      client: electrumClientRef.current,
+      controller: walletNetworkController,
+      walletAddress: activeWalletAddress,
+      clearClient: () => {
+        electrumClientRef.current = null;
+      },
+      clearPreparedTransaction: () => setPreparedTx(null),
+      clearPreparedConsolidation: () => setPreparedConsolidation(null),
+      clearDeferredNetworkWork: () => {
+        pendingNetworkRef.current = null;
+        silentNextAutoSyncRef.current = false;
+        historyEnrichmentQueueRef.current = null;
+        clearAddressSubscriptions();
+        setHistorySyncing(false);
+        setHistoryProgress(null);
+        setBalanceRefreshing(false);
+      },
+    });
+  }, [clearAddressSubscriptions, walletNetworkController]);
+
+  const synchronizeAfterElectrumServerChange = useCallback(async (
+    preference: ElectrumServerPreference,
+    successMessage: string,
+  ) => {
+    setElectrumServerPreference(preference);
+    const nextNetwork: NetworkState = {
+      ...networkRef.current,
+      status: 'syncing',
+      error: '',
+      serverUrl: getConfiguredElectrumServerUrl(),
+      height: 0,
+    };
+    networkRef.current = nextNetwork;
+    setNetwork(nextNetwork);
+    if (!walletRef.current) {
+      setStatus(successMessage);
+      return;
+    }
+    await syncTransparentNetwork(false, { force: true });
+    if (networkRef.current.status === 'connected') {
+      setStatus(successMessage);
+    }
+  }, [syncTransparentNetwork]);
+
+  const configureCustomElectrumServer = async (input: string) => {
+    await runExclusiveAction('electrumServer', async () => {
+      resetFeedback();
+      try {
+        const preference = await saveCustomElectrumServerPreference(
+          input,
+          invalidateElectrumRuntime,
+        );
+        await synchronizeAfterElectrumServerChange(
+          preference,
+          t('status.customElectrumSaved'),
+        );
+      } catch (caught) {
+        setError(customElectrumValidationMessage(caught, t));
+      }
+    });
+  };
+
+  const askUseCustomElectrumServer = (input: string) => {
+    resetFeedback();
+    try {
+      parseCustomElectrumServerUrl(input);
+    } catch (caught) {
+      setError(customElectrumValidationMessage(caught, t));
+      return;
+    }
+
+    Alert.alert(
+      t('dialog.customElectrumTitle'),
+      t('dialog.customElectrumRisk'),
+      [
+        { text: t('actions.cancel'), style: 'cancel' },
+        {
+          text: t('dialog.customElectrumConfirm'),
+          onPress: () => {
+            void configureCustomElectrumServer(input);
+          },
+        },
+      ],
+    );
+  };
+
+  const restoreOfficialElectrumServerSelection = async () => {
+    await runExclusiveAction('electrumServer', async () => {
+      resetFeedback();
+      try {
+        const preference = await restoreOfficialElectrumServers(
+          invalidateElectrumRuntime,
+        );
+        await synchronizeAfterElectrumServerChange(
+          preference,
+          t('status.officialElectrumRestored'),
+        );
+      } catch (caught) {
+        setError(customElectrumValidationMessage(caught, t));
+      }
+    });
+  };
+
+  const askUseOfficialElectrumServers = () => {
+    Alert.alert(
+      t('dialog.officialElectrumTitle'),
+      t('dialog.officialElectrumBody'),
+      [
+        { text: t('actions.cancel'), style: 'cancel' },
+        {
+          text: t('dialog.officialElectrumConfirm'),
+          onPress: () => {
+            void restoreOfficialElectrumServerSelection();
+          },
+        },
+      ],
+    );
+  };
 
   useEffect(() => {
     subscriptionSyncFlushRef.current = flushPendingSync;
@@ -1353,7 +1511,7 @@ export default function App() {
 
     try {
       setBroadcasting(true);
-      const client = electrumClientRef.current || new NitoElectrumClient();
+      const client = electrumClientRef.current || createElectrumClient();
       electrumClientRef.current = client;
       const transaction = preparedTx;
       const txid = await client.broadcastTransaction(transaction.hex);
@@ -1456,7 +1614,7 @@ export default function App() {
       }
 
       setBroadcasting(true);
-      const client = electrumClientRef.current || new NitoElectrumClient();
+      const client = electrumClientRef.current || createElectrumClient();
       electrumClientRef.current = client;
       const txids: string[] = [];
       let sentCount = 0;
@@ -1703,7 +1861,7 @@ export default function App() {
           const missing = snapshot.history.filter((entry) => entry.direction === undefined);
 
           if (missing.length > 0) {
-            const client = electrumClientRef.current || new NitoElectrumClient();
+            const client = electrumClientRef.current || createElectrumClient();
             electrumClientRef.current = client;
             await client.connect();
             if (!walletNetworkController.isCurrent(session)) return;
@@ -1969,6 +2127,7 @@ export default function App() {
     prepare: t('loading.prepare'),
     broadcast: t('loading.broadcast'),
     broadcastConsolidation: makeConsolidationTranslator(language)('loadingSend'),
+    electrumServer: t('loading.electrumServer'),
     history: t('loading.history'),
     reveal: t('loading.reveal'),
     delete: t('loading.delete'),
@@ -2084,7 +2243,11 @@ export default function App() {
           }}
           networkSettings={{
             network,
+            pendingAction,
+            electrumServerPreference,
             historyBusy: historySyncing || historyProgress !== null,
+            onUseCustomElectrumServer: askUseCustomElectrumServer,
+            onUseOfficialElectrumServers: askUseOfficialElectrumServers,
             onResynchronizeHistory: askResynchronizeWalletHistory,
           }}
           danger={{

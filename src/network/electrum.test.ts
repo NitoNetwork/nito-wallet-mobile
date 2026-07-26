@@ -86,6 +86,44 @@ describe('Nito Electrum helpers', () => {
     client.disconnect();
   });
 
+  it('names the attempted server when the server.version handshake is rejected', async () => {
+    class RejectingHandshakeWebSocket {
+      onopen: (() => void) | null = null;
+      onerror: (() => void) | null = null;
+      onclose: (() => void) | null = null;
+      onmessage: ((event: { data: string }) => void) | null = null;
+
+      constructor(_url: string) {
+        queueMicrotask(() => this.onopen?.());
+      }
+
+      send(raw: string) {
+        const request = JSON.parse(raw) as { id: number };
+        queueMicrotask(() => {
+          this.onmessage?.({
+            data: JSON.stringify({
+              id: request.id,
+              error: { code: -32000, message: 'unsupported protocol' },
+            }),
+          });
+        });
+      }
+
+      close() {
+        this.onclose?.();
+      }
+    }
+
+    vi.stubGlobal('WebSocket', RejectingHandshakeWebSocket);
+    const client = new NitoElectrumClient([
+      { host: 'private.example.org', port: 50005, protocol: 'wss', priority: 1 },
+    ]);
+
+    await expect(client.connect()).rejects.toThrow(
+      'wss://private.example.org:50005',
+    );
+  });
+
   it('marks a persistently failing session unhealthy and reconnects before the next read', async () => {
     class RecoveringFakeWebSocket {
       static instances = 0;

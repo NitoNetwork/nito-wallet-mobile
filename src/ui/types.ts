@@ -16,6 +16,7 @@ export type PendingAction =
   | 'prepare'
   | 'broadcast'
   | 'broadcastConsolidation'
+  | 'electrumServer'
   | 'history'
   | 'reveal'
   | 'delete'

@@ -9,6 +9,12 @@ import {
   synchronizeWalletNetwork,
 } from './walletNetworkController';
 
+vi.mock('expo-secure-store', () => ({
+  getItemAsync: vi.fn(),
+  setItemAsync: vi.fn(),
+  deleteItemAsync: vi.fn(),
+}));
+
 const wallet: Wallet = {
   mnemonic: 'test mnemonic',
   address: 'wallet-a',
@@ -170,6 +176,52 @@ describe('WalletNetworkController', () => {
       'balance-idle',
       'finish',
     ]);
+  });
+
+  it('preserves cached wallet data when a saved custom server is unreachable', async () => {
+    const controller = new WalletNetworkController();
+    controller.beginWalletSession(wallet.address);
+    let currentNetwork = network;
+    const publishNetwork = vi.fn((next: NetworkState) => {
+      currentNetwork = next;
+    });
+    const customUrl = 'wss://offline.example.org:50005';
+    const offlineClient = {
+      connected: false,
+      blockHeight: 0,
+      currentServerUrl: customUrl,
+      connect: vi.fn(async () => {
+        throw new Error(`ElectrumX server unavailable: ${customUrl}`);
+      }),
+    } as unknown as NitoElectrumClient;
+
+    await synchronizeWalletNetwork({
+      controller,
+      getWallet: () => wallet,
+      getNetwork: () => currentNetwork,
+      getClient: () => offlineClient,
+      setClient: vi.fn(),
+      actionPending: () => false,
+      fullHistoryByDefault: true,
+      readHistoryCache: vi.fn(),
+      saveHistory: vi.fn(),
+      saveSnapshot: vi.fn(),
+      publishNetwork,
+      setError: vi.fn(),
+      setStatus: vi.fn(),
+      setHistorySyncing: vi.fn(),
+      setHistoryProgress: vi.fn(),
+      setBalanceRefreshing: vi.fn(),
+      finishSync: () => controller.finishSync(vi.fn()),
+      messages,
+    });
+
+    expect(currentNetwork).toMatchObject({
+      status: 'error',
+      snapshot,
+      serverUrl: customUrl,
+    });
+    expect(currentNetwork.error).toContain(customUrl);
   });
 });
 

@@ -76,4 +76,27 @@ describe('i18n coverage', () => {
       expect(keys.map((key) => makeTranslator(code)(key))).toEqual(expected[code]);
     }
   });
+
+  it('resolves custom Electrum recovery controls in every language', () => {
+    const expected = {
+      en: ['Custom ElectrumX server', 'Return to official servers'],
+      zh: ['自定义 ElectrumX 服务器', '恢复官方服务器'],
+      hi: ['कस्टम ElectrumX सर्वर', 'आधिकारिक सर्वर बहाल करें'],
+      es: ['Servidor ElectrumX personalizado', 'Volver a servidores oficiales'],
+      fr: ['Serveur ElectrumX personnalisé', 'Revenir aux serveurs officiels'],
+      ar: ['خادم ElectrumX مخصص', 'العودة إلى الخوادم الرسمية'],
+      bn: ['কাস্টম ElectrumX সার্ভার', 'অফিসিয়াল সার্ভারে ফিরুন'],
+      pt: ['Servidor ElectrumX personalizado', 'Voltar aos servidores oficiais'],
+      ru: ['Пользовательский сервер ElectrumX', 'Вернуться к официальным серверам'],
+    } satisfies Record<LanguageCode, string[]>;
+
+    for (const code of Object.keys(expected) as LanguageCode[]) {
+      const t = makeTranslator(code);
+      expect([
+        t('settings.customElectrumTitle'),
+        t('actions.useOfficialElectrum'),
+      ]).toEqual(expected[code]);
+      expect(t('settings.customElectrumCertificateWarning')).toContain('wss://');
+    }
+  });
 });

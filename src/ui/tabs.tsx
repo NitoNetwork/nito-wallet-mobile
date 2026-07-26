@@ -13,6 +13,7 @@ import { makeConsolidationTranslator } from '../i18n.consolidation';
 import { HISTORY_PAGE_SIZE } from '../services/historyEnrichmentQueue';
 import type { CachedTransactionOutput } from '../services/historyExport';
 import { reportNonFinancialFailure } from '../services/diagnostics';
+import type { ElectrumServerPreference } from '../services/electrumClientFactory';
 import { loadTransactionOutputCache } from '../services/walletHistoryDb';
 import { isTransparentUtxoSpendable } from '../wallet/coinbaseMaturity';
 import { satoshisToNito } from '../wallet/transparentScan';
@@ -761,20 +762,31 @@ function DisplaySettingsSection({
 function NetworkSettingsSection({
   t,
   actionLocked,
+  pendingAction,
   network,
+  electrumServerPreference,
   historyBusy,
+  onUseCustomElectrumServer,
+  onUseOfficialElectrumServers,
   onResynchronizeHistory,
   onBack,
 }: {
   t: Translator;
   actionLocked: boolean;
+  pendingAction: PendingAction | null;
   network: NetworkState;
+  electrumServerPreference: ElectrumServerPreference;
   historyBusy: boolean;
+  onUseCustomElectrumServer: (input: string) => void;
+  onUseOfficialElectrumServers: () => void;
   onResynchronizeHistory: () => void;
   onBack: () => void;
 }) {
   const server = network.serverUrl.replace(/^wss:\/\//i, '') || '—';
   const blockHeight = network.height > 0 ? network.height.toLocaleString('fr-FR') : '—';
+  const [customServerInput, setCustomServerInput] = useState(
+    electrumServerPreference.customServerUrl ?? '',
+  );
 
   return (
     <View style={styles.card}>
@@ -785,6 +797,45 @@ function NetworkSettingsSection({
         value={t(NETWORK_STATUS_KEYS[network.status])}
       />
       <SettingsValue label={t('settings.blockHeight')} value={blockHeight} />
+      <View style={styles.settingsOptionPanel}>
+        <Text style={styles.label}>{t('settings.customElectrumTitle')}</Text>
+        <Text style={styles.helper}>{t('settings.customElectrumHint')}</Text>
+        <TextInput
+          value={customServerInput}
+          onChangeText={setCustomServerInput}
+          placeholder="wss://host:port"
+          placeholderTextColor="#6d7892"
+          autoCapitalize="none"
+          autoCorrect={false}
+          style={styles.input}
+        />
+        <Text style={styles.settingsWarning}>
+          {t('settings.customElectrumCertificateWarning')}
+        </Text>
+        <Text style={styles.helper}>{t('settings.customElectrumCacheHint')}</Text>
+        <ActionButton
+          label={t('actions.useCustomElectrum')}
+          loading={pendingAction === 'electrumServer'}
+          disabled={actionLocked || !customServerInput.trim()}
+          onPress={() => onUseCustomElectrumServer(customServerInput)}
+        />
+        {electrumServerPreference.mode !== 'official' ? (
+          <>
+            {electrumServerPreference.mode === 'recovery' ? (
+              <Text style={styles.settingsWarning}>
+                {t('settings.customElectrumRecovery')}
+              </Text>
+            ) : null}
+            <ActionButton
+              label={t('actions.useOfficialElectrum')}
+              variant="secondary"
+              loading={pendingAction === 'electrumServer'}
+              disabled={actionLocked}
+              onPress={onUseOfficialElectrumServers}
+            />
+          </>
+        ) : null}
+      </View>
       <View style={styles.settingsOptionPanel}>
         <Text style={styles.helper}>{t('settings.resyncHistoryHint')}</Text>
         <ActionButton
@@ -916,7 +967,11 @@ export function SecurityTab({
   };
   networkSettings: {
     network: NetworkState;
+    pendingAction: PendingAction | null;
+    electrumServerPreference: ElectrumServerPreference;
     historyBusy: boolean;
+    onUseCustomElectrumServer: (input: string) => void;
+    onUseOfficialElectrumServers: () => void;
     onResynchronizeHistory: () => void;
   };
   danger: {
@@ -962,8 +1017,12 @@ export function SecurityTab({
       <NetworkSettingsSection
         t={t}
         actionLocked={actionLocked}
+        pendingAction={networkSettings.pendingAction}
         network={networkSettings.network}
+        electrumServerPreference={networkSettings.electrumServerPreference}
         historyBusy={networkSettings.historyBusy}
+        onUseCustomElectrumServer={networkSettings.onUseCustomElectrumServer}
+        onUseOfficialElectrumServers={networkSettings.onUseOfficialElectrumServers}
         onResynchronizeHistory={networkSettings.onResynchronizeHistory}
         onBack={goBack}
       />

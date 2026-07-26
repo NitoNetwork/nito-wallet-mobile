@@ -1,6 +1,6 @@
 import {
   ElectrumSessionUnhealthyError,
-  NitoElectrumClient,
+  type NitoElectrumClient,
 } from '../network/electrum';
 import type { NetworkState, Wallet } from '../ui/types';
 import {
@@ -17,6 +17,7 @@ import {
 } from './historyExport';
 import type { OptionalCacheRead } from './cachePolicy';
 import { mapWithConcurrency } from './concurrency';
+import { createElectrumClient } from './electrumClientFactory';
 import { DirtySyncQueue, type DirtySyncOptions } from './syncDirtyQueue';
 import { normalizeWalletHistory } from './walletHistory';
 import {
@@ -335,7 +336,7 @@ export const synchronizeWalletNetwork = async (
   if (!includeHistory) ports.setBalanceRefreshing(true);
 
   try {
-    const client = ports.getClient() ?? new NitoElectrumClient();
+    const client = ports.getClient() ?? createElectrumClient();
     ports.setClient(client);
     await client.connect();
     const serverUrl = client.currentServerUrl;

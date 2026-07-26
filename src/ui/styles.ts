@@ -811,6 +811,12 @@ export const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: 'rgba(185, 204, 237, 0.12)',
   },
+  settingsWarning: {
+    color: '#ffc66d',
+    fontSize: 13,
+    lineHeight: 19,
+    fontWeight: '700',
+  },
   settingsChoiceList: {
     gap: 8,
   },
