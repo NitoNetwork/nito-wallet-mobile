@@ -6,7 +6,6 @@ import {
   formatHomeBalance,
   historyAmountBreakdown,
   historyPageFromInput,
-  isBalanceDecimals,
   isValidTransactionId,
   signedHistoryAmountLines,
   shortAddress,
@@ -67,50 +66,35 @@ describe('ui format helpers', () => {
     expect(historyPageFromInput('1.5', 8)).toBeNull();
   });
 
-  it('validates the supported balance decimal preferences', () => {
-    expect(isBalanceDecimals('2')).toBe(true);
-    expect(isBalanceDecimals('8')).toBe(true);
-    expect(isBalanceDecimals('4')).toBe(false);
-    expect(isBalanceDecimals('6')).toBe(false);
-    expect(isBalanceDecimals('3')).toBe(false);
-    expect(isBalanceDecimals(null)).toBe(false);
-  });
-
-  it('truncates the home balance and marks significant hidden decimals', () => {
-    expect(formatHomeBalance(112_345_678, 2, 'fr')).toEqual({
-      text: '1,12…',
-    });
-    expect(formatHomeBalance(112_345_678, 8, 'fr')).toEqual({
+  it('always shows the home balance with all eight decimals', () => {
+    expect(formatHomeBalance(112_345_678, 'fr')).toEqual({
       text: '1,12345678',
     });
-    expect(formatHomeBalance(112_000_000, 2, 'fr')).toEqual({
-      text: '1,12',
+    expect(formatHomeBalance(112_000_000, 'fr')).toEqual({
+      text: '1,12000000',
     });
-    expect(formatHomeBalance(199_999_999, 2, 'fr').text).toBe('1,99…');
-    expect(formatHomeBalance(998_380_428_123_426, 2, 'fr')).toEqual({
-      text: '9\u202f983\u202f804,28…',
-    });
-    expect(formatHomeBalance(998_380_428_123_426, 8, 'fr')).toEqual({
+    expect(formatHomeBalance(199_999_999, 'fr').text).toBe('1,99999999');
+    expect(formatHomeBalance(998_380_428_123_426, 'fr')).toEqual({
       text: '9\u202f983\u202f804,28123426',
     });
   });
 
   it('formats the same reference amount deterministically in all nine languages', () => {
     const expected = {
-      en: ['9,983,804.28…', '9,983,804.28123426'],
-      zh: ['9,983,804.28…', '9,983,804.28123426'],
-      hi: ['99,83,804.28…', '99,83,804.28123426'],
-      es: ['9.983.804,28…', '9.983.804,28123426'],
-      fr: ['9\u202f983\u202f804,28…', '9\u202f983\u202f804,28123426'],
-      ar: ['9,983,804.28…', '9,983,804.28123426'],
-      bn: ['9,983,804.28…', '9,983,804.28123426'],
-      pt: ['9.983.804,28…', '9.983.804,28123426'],
-      ru: ['9\u202f983\u202f804,28…', '9\u202f983\u202f804,28123426'],
-    } satisfies Record<LanguageCode, [string, string]>;
+      en: '9,983,804.28123426',
+      zh: '9,983,804.28123426',
+      hi: '99,83,804.28123426',
+      es: '9.983.804,28123426',
+      fr: '9\u202f983\u202f804,28123426',
+      ar: '9,983,804.28123426',
+      bn: '9,983,804.28123426',
+      pt: '9.983.804,28123426',
+      ru: '9\u202f983\u202f804,28123426',
+    } satisfies Record<LanguageCode, string>;
 
     for (const code of Object.keys(expected) as LanguageCode[]) {
-      expect(formatHomeBalance(998_380_428_123_426, 2, code).text).toBe(expected[code][0]);
-      expect(satoshisToNito(998_380_428_123_426, code)).toBe(expected[code][1]);
+      expect(formatHomeBalance(998_380_428_123_426, code).text).toBe(expected[code]);
+      expect(satoshisToNito(998_380_428_123_426, code)).toBe(expected[code]);
     }
   });
 

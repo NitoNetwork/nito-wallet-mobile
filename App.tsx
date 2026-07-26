@@ -117,7 +117,6 @@ import {
 } from './src/wallet/transparentSend';
 import { makeConsolidationTranslator } from './src/i18n.consolidation';
 import { useAutoLockTimeout } from './src/hooks/useAutoLockTimeout';
-import { useBalanceDecimals } from './src/hooks/useBalanceDecimals';
 import { useLanguage } from './src/hooks/useLanguage';
 import { useWalletSubscriptions } from './src/hooks/useWalletSubscriptions';
 import { AutoLock } from './src/services/session';
@@ -389,7 +388,6 @@ export default function App() {
   const [historyProgress, setHistoryProgress] = useState<{ done: number; total: number } | null>(null);
   const [historySyncing, setHistorySyncing] = useState(false);
   const { language, t, selected: selectedLanguage, pickerOpen: languagePickerOpen, togglePicker: toggleLanguagePicker, select: selectLanguage } = useLanguage();
-  const { balanceDecimals, selectBalanceDecimals } = useBalanceDecimals();
   const { autoLockTimeoutMs, selectAutoLockTimeout } = useAutoLockTimeout();
   const [balanceRefreshing, setBalanceRefreshing] = useState(false);
   const [refreshCooldownUntil, setRefreshCooldownUntil] = useState(0);
@@ -2445,8 +2443,6 @@ export default function App() {
           }}
           display={{
             languageSettings,
-            balanceDecimals,
-            onSelectBalanceDecimals: selectBalanceDecimals,
           }}
           networkSettings={{
             network,
@@ -2474,7 +2470,6 @@ export default function App() {
         actionLocked={actionLocked}
         pendingAction={pendingAction}
         balanceRefreshing={balanceRefreshing}
-        balanceDecimals={balanceDecimals}
         preparedConsolidation={preparedConsolidation}
         onRefreshBalance={() => { void refreshBalance(); }}
         onConfirmConsolidation={confirmTransparentConsolidation}

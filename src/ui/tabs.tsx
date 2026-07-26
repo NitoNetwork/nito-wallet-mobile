@@ -20,14 +20,12 @@ import { satoshisToNito } from '../wallet/transparentScan';
 import type { PreparedTransparentConsolidation, PreparedTransparentSend } from '../wallet/transparentSend';
 import { ActionButton, PasswordField } from './components';
 import {
-  BALANCE_DECIMAL_OPTIONS,
   canShowHistoryExport,
   formatHomeBalance,
   historyAmountBreakdown,
   historyPageFromInput,
   signedHistoryAmountLines,
   shortAddress,
-  type BalanceDecimals,
 } from './format';
 import {
   duplicateRecipientAddresses,
@@ -771,7 +769,7 @@ function SecuritySettingsSection({
               style={[
                 styles.settingsChoice,
                 settings.autoLockTimeoutMs === option && styles.settingsChoiceActive,
-                actionLocked && styles.balanceDecimalsOptionDisabled,
+                actionLocked && styles.settingsChoiceDisabled,
               ]}
             >
               <Text
@@ -792,53 +790,17 @@ function SecuritySettingsSection({
 
 function DisplaySettingsSection({
   t,
-  actionLocked,
   languageSettings,
-  balanceDecimals,
-  onSelectBalanceDecimals,
   onBack,
 }: {
   t: Translator;
-  actionLocked: boolean;
   languageSettings: ReactNode;
-  balanceDecimals: BalanceDecimals;
-  onSelectBalanceDecimals: (next: BalanceDecimals) => void;
   onBack: () => void;
 }) {
   return (
     <View style={styles.card}>
       <SettingsHeader t={t} title={t('settings.sectionDisplay')} onBack={onBack} />
       {languageSettings}
-      <View style={styles.balanceDecimalsSettings}>
-        <Text style={styles.label}>{t('security.balanceDecimalsTitle')}</Text>
-        <Text style={styles.helper}>{t('security.balanceDecimalsHint')}</Text>
-        <View style={styles.balanceDecimalsOptions}>
-          {BALANCE_DECIMAL_OPTIONS.map((option) => (
-            <TouchableOpacity
-              key={option}
-              accessibilityRole="button"
-              accessibilityLabel={t('security.balanceDecimalsOption', { count: option })}
-              accessibilityState={{ selected: balanceDecimals === option, disabled: actionLocked }}
-              disabled={actionLocked}
-              onPress={() => onSelectBalanceDecimals(option)}
-              style={[
-                styles.balanceDecimalsOption,
-                balanceDecimals === option && styles.balanceDecimalsOptionActive,
-                actionLocked && styles.balanceDecimalsOptionDisabled,
-              ]}
-            >
-              <Text
-                style={[
-                  styles.balanceDecimalsOptionText,
-                  balanceDecimals === option && styles.balanceDecimalsOptionTextActive,
-                ]}
-              >
-                {option}
-              </Text>
-            </TouchableOpacity>
-          ))}
-        </View>
-      </View>
     </View>
   );
 }
@@ -1047,8 +1009,6 @@ export function SecurityTab({
   confirmation: SensitiveConfirmationControls;
   display: {
     languageSettings: ReactNode;
-    balanceDecimals: BalanceDecimals;
-    onSelectBalanceDecimals: (next: BalanceDecimals) => void;
   };
   networkSettings: {
     network: NetworkState;
@@ -1089,10 +1049,7 @@ export function SecurityTab({
     return (
       <DisplaySettingsSection
         t={t}
-        actionLocked={actionLocked}
         languageSettings={display.languageSettings}
-        balanceDecimals={display.balanceDecimals}
-        onSelectBalanceDecimals={display.onSelectBalanceDecimals}
         onBack={goBack}
       />
     );
@@ -1169,7 +1126,6 @@ export function HomeTab({
   actionLocked,
   pendingAction,
   balanceRefreshing,
-  balanceDecimals,
   preparedConsolidation,
   onRefreshBalance,
   onConfirmConsolidation,
@@ -1181,7 +1137,6 @@ export function HomeTab({
   actionLocked: boolean;
   pendingAction: PendingAction | null;
   balanceRefreshing: boolean;
-  balanceDecimals: BalanceDecimals;
   preparedConsolidation: PreparedTransparentConsolidation | null;
   onRefreshBalance: () => void;
   onConfirmConsolidation: () => void;
@@ -1194,7 +1149,7 @@ export function HomeTab({
   );
   const refreshDisabled = actionLocked || balanceRefreshing || network.status === 'syncing';
   const balanceDisplay = network.snapshot
-    ? formatHomeBalance(network.snapshot.spendableSats, balanceDecimals, language)
+    ? formatHomeBalance(network.snapshot.spendableSats, language)
     : { text: '--' };
 
   return (

@@ -10,14 +10,6 @@ export const isValidTransactionId = (txid: string): boolean => /^[0-9a-f]{64}$/i
 export const transactionExplorerUrl = (txid: string) =>
   `https://mempool-explorer.nito.network/tx/${txid.toLowerCase()}`;
 
-export const BALANCE_DECIMAL_OPTIONS = [2, 8] as const;
-export type BalanceDecimals = (typeof BALANCE_DECIMAL_OPTIONS)[number];
-
-export const isBalanceDecimals = (
-  value: unknown,
-): value is BalanceDecimals | `${BalanceDecimals}` =>
-  BALANCE_DECIMAL_OPTIONS.some((option) => String(option) === String(value));
-
 export const canShowHistoryExport = ({
   entries,
   historyProgress,
@@ -52,14 +44,12 @@ export const historyPageFromInput = (value: string, pageCount: number): number |
 
 export const formatHomeBalance = (
   satoshis: number,
-  decimals: BalanceDecimals,
   language: LanguageCode,
 ): { text: string } => {
   return {
     text: formatNitoAmount(satoshis, language, {
-      minimumFractionDigits: decimals,
-      maximumFractionDigits: decimals,
-      markTruncated: true,
+      minimumFractionDigits: 8,
+      maximumFractionDigits: 8,
       minusSign: '−',
     }),
   };

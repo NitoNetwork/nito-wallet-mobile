@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest';
 
 import appSource from '../App.tsx?raw';
 import amountFormatSource from './i18n.amounts.ts?raw';
+import i18nSource from './i18n.ts?raw';
 import formatSource from './ui/format.ts?raw';
 import stylesSource from './ui/styles.ts?raw';
 import tabsSource from './ui/tabs.tsx?raw';
@@ -220,5 +221,15 @@ describe('mobile wallet UX and security invariants', () => {
     expect(transparentScanSource).not.toContain("toLocaleString('fr-FR')");
     expect(amountFormatSource).toContain("hi: { groupSeparator: ',', decimalSeparator: '.', grouping: 'indian' }");
     expect(amountFormatSource).toContain("fr: { groupSeparator: '\\u202f'");
+  });
+
+  it('keeps the main balance fixed at eight decimals without a persisted display preference', () => {
+    expect(appSource).not.toContain('useBalanceDecimals');
+    expect(tabsSource).not.toContain('balanceDecimals');
+    expect(formatSource).not.toContain('BALANCE_DECIMAL_OPTIONS');
+    expect(formatSource).not.toContain('markTruncated');
+    expect(amountFormatSource).not.toContain('markTruncated');
+    expect(i18nSource).not.toContain('security.balanceDecimals');
+    expect(stylesSource).not.toContain('balanceDecimals');
   });
 });

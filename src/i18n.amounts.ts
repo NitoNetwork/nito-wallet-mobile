@@ -54,12 +54,10 @@ export const formatNitoAmount = (
   {
     minimumFractionDigits = 0,
     maximumFractionDigits = 8,
-    markTruncated = false,
     minusSign = '-',
   }: {
     minimumFractionDigits?: number;
     maximumFractionDigits?: number;
-    markTruncated?: boolean;
     minusSign?: '-' | '−';
   } = {},
 ) => {
@@ -78,7 +76,6 @@ export const formatNitoAmount = (
   const absolute = negative ? -normalized : normalized;
   const wholeDigits = (absolute / 100_000_000n).toString();
   const allFractionDigits = (absolute % 100_000_000n).toString().padStart(8, '0');
-  const hiddenFractionDigits = allFractionDigits.slice(maximumFractionDigits);
   let visibleFractionDigits = allFractionDigits.slice(0, maximumFractionDigits);
 
   while (
@@ -93,7 +90,6 @@ export const formatNitoAmount = (
   const decimal = visibleFractionDigits
     ? `${format.decimalSeparator}${visibleFractionDigits}`
     : '';
-  const suffix = markTruncated && /[1-9]/.test(hiddenFractionDigits) ? '…' : '';
 
-  return `${negative ? minusSign : ''}${groupedWhole}${decimal}${suffix}`;
+  return `${negative ? minusSign : ''}${groupedWhole}${decimal}`;
 };

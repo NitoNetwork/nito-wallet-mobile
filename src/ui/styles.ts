@@ -867,6 +867,9 @@ export const styles = StyleSheet.create({
     backgroundColor: 'rgba(245, 189, 49, 0.16)',
     borderColor: 'rgba(245, 189, 49, 0.52)',
   },
+  settingsChoiceDisabled: {
+    opacity: 0.42,
+  },
   settingsChoiceText: {
     color: '#dbeaff',
     fontSize: 14,
@@ -880,43 +883,6 @@ export const styles = StyleSheet.create({
   settingsDangerCard: {
     backgroundColor: 'rgba(48, 9, 18, 0.74)',
     borderColor: 'rgba(255, 86, 110, 0.34)',
-  },
-  balanceDecimalsSettings: {
-    borderRadius: 18,
-    padding: 14,
-    gap: 9,
-    backgroundColor: 'rgba(3, 9, 20, 0.82)',
-    borderWidth: 1,
-    borderColor: 'rgba(185, 204, 237, 0.12)',
-  },
-  balanceDecimalsOptions: {
-    flexDirection: 'row',
-    gap: 8,
-  },
-  balanceDecimalsOption: {
-    flex: 1,
-    minHeight: 42,
-    borderRadius: 14,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: 'rgba(117, 139, 171, 0.12)',
-    borderWidth: 1,
-    borderColor: 'rgba(185, 204, 237, 0.12)',
-  },
-  balanceDecimalsOptionActive: {
-    backgroundColor: 'rgba(245, 189, 49, 0.16)',
-    borderColor: 'rgba(245, 189, 49, 0.52)',
-  },
-  balanceDecimalsOptionDisabled: {
-    opacity: 0.42,
-  },
-  balanceDecimalsOptionText: {
-    color: '#dbeaff',
-    fontSize: 15,
-    fontWeight: '900',
-  },
-  balanceDecimalsOptionTextActive: {
-    color: '#f6c44f',
   },
   mnemonic: {
     color: '#fff4d6',
