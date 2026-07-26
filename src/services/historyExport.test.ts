@@ -1,7 +1,12 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import type { ElectrumHistoryEntry, ElectrumVerboseTransaction } from '../network/electrum';
-import { buildHistoryExportRecords, historyExportCsvRows, historyRecordsFromEntries } from './historyExport';
+import {
+  buildHistoryExportBatch,
+  buildHistoryExportRecords,
+  historyExportCsvRows,
+  historyRecordsFromEntries,
+} from './historyExport';
 
 const output = (value: number, address: string, n = 0) => ({
   n,
@@ -169,5 +174,106 @@ describe('wallet history export', () => {
 
     expect(records).toHaveLength(1);
     expect(maxInFlight).toBeLessThanOrEqual(4);
+  });
+
+  it('resolves parent outputs from persistent cache before requesting the network', async () => {
+    const requested: string[] = [];
+    const reader = {
+      async getVerboseTransaction(txid: string): Promise<ElectrumVerboseTransaction> {
+        requested.push(txid);
+        if (txid !== 'received') throw new Error(`Unexpected network request for ${txid}`);
+        return {
+          vin: [{ txid: 'cached-parent', vout: 0 }],
+          vout: [output(0.9, 'wallet-address')],
+        };
+      },
+    };
+
+    const batch = await buildHistoryExportBatch({
+      history: [{ txid: 'received', height: 20, address: 'wallet-address' }],
+      walletAddresses: ['wallet-address'],
+      reader,
+      loadCachedOutputs: async () => [{
+        txid: 'cached-parent',
+        outputIndex: 0,
+        valueSats: 100_000_000,
+        address: 'external-source',
+      }],
+    });
+
+    expect(requested).toEqual(['received']);
+    expect(batch.records[0]).toMatchObject({
+      direction: 'received',
+      amountSats: 90_000_000,
+    });
+    expect(batch.outputs).toEqual(expect.arrayContaining([
+      {
+        txid: 'received',
+        outputIndex: 0,
+        valueSats: 90_000_000,
+        address: 'wallet-address',
+      },
+    ]));
+  });
+
+  it('reports a cache read failure and falls back to complete network data', async () => {
+    const requested: string[] = [];
+    const onCacheReadError = vi.fn();
+    const transactions: Record<string, ElectrumVerboseTransaction> = {
+      received: {
+        vin: [{ txid: 'network-parent', vout: 0 }],
+        vout: [output(0.9, 'wallet-address')],
+      },
+      'network-parent': {
+        vin: [{ coinbase: '00' }],
+        vout: [output(1, 'external-source')],
+      },
+    };
+
+    const batch = await buildHistoryExportBatch({
+      history: [{ txid: 'received', height: 20, address: 'wallet-address' }],
+      walletAddresses: ['wallet-address'],
+      reader: {
+        async getVerboseTransaction(txid: string) {
+          requested.push(txid);
+          const transaction = transactions[txid];
+          if (!transaction) throw new Error(`Missing transaction ${txid}`);
+          return transaction;
+        },
+      },
+      loadCachedOutputs: async () => {
+        throw new Error('SQLite read failed');
+      },
+      onCacheReadError,
+    });
+
+    expect(onCacheReadError).toHaveBeenCalledOnce();
+    expect(requested).toEqual(['received', 'network-parent']);
+    expect(batch.records).toHaveLength(1);
+  });
+
+  it('never publishes a record when a required parent output is missing', async () => {
+    const transactions: Record<string, ElectrumVerboseTransaction> = {
+      received: {
+        vin: [{ txid: 'parent', vout: 9 }],
+        vout: [output(0.9, 'wallet-address')],
+      },
+      parent: {
+        vin: [{ coinbase: '00' }],
+        vout: [output(1, 'external-source')],
+      },
+    };
+
+    await expect(buildHistoryExportBatch({
+      history: [{ txid: 'received', height: 20, address: 'wallet-address' }],
+      walletAddresses: ['wallet-address'],
+      reader: {
+        async getVerboseTransaction(txid: string) {
+          const transaction = transactions[txid];
+          if (!transaction) throw new Error(`Missing transaction ${txid}`);
+          return transaction;
+        },
+      },
+    })).rejects.toThrow('Missing parent output parent:9');
   });
 });

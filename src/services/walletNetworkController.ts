@@ -11,7 +11,8 @@ import {
 } from '../wallet/transparentScan';
 import { pendingRefreshAddresses } from '../wallet/pendingRefresh';
 import {
-  buildHistoryExportRecords,
+  buildHistoryExportBatch,
+  type CachedTransactionOutput,
   type HistoryExportRecord,
 } from './historyExport';
 import type { OptionalCacheRead } from './cachePolicy';
@@ -170,18 +171,30 @@ export const enrichHistorySnapshot = async ({
   snapshot,
   pending,
   client,
+  loadCachedOutputs,
+  onCacheReadError,
   onProgress,
 }: {
   snapshot: TransparentWalletSnapshot;
   pending: TransparentWalletSnapshot['history'];
   client: NitoElectrumClient;
+  loadCachedOutputs?: (
+    txids: readonly string[],
+  ) => Promise<readonly CachedTransactionOutput[]>;
+  onCacheReadError?: (caught: unknown) => void;
   onProgress: (done: number, total: number) => void;
-}): Promise<{ snapshot: TransparentWalletSnapshot; records: HistoryExportRecord[] }> => {
+}): Promise<{
+  snapshot: TransparentWalletSnapshot;
+  records: HistoryExportRecord[];
+  outputs: CachedTransactionOutput[];
+}> => {
   await client.connect();
-  const records = await buildHistoryExportRecords({
+  const { records, outputs } = await buildHistoryExportBatch({
     history: pending,
     walletAddresses: snapshot.addresses.map((address) => address.address),
     reader: client,
+    loadCachedOutputs,
+    onCacheReadError,
     onProgress,
   });
   if (!client.connected) {
@@ -189,7 +202,7 @@ export const enrichHistorySnapshot = async ({
       new Error('ElectrumX connection closed before history enrichment completed.'),
     );
   }
-  return { records, snapshot: mergeHistoryEnrichment(snapshot, records) };
+  return { records, outputs, snapshot: mergeHistoryEnrichment(snapshot, records) };
 };
 
 export const mergeHistoryEnrichment = (

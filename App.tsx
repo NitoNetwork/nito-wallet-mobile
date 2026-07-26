@@ -57,7 +57,7 @@ import {
   scriptPubKeyForNitoAddress,
 } from './src/network/electrum';
 import {
-  buildHistoryExportRecords,
+  buildHistoryExportBatch,
   historyExportCsvRows,
   historyRecordsFromEntries,
 } from './src/services/historyExport';
@@ -73,9 +73,10 @@ import { type Translator } from './src/i18n';
 import { nitoWalletCrypto } from './src/native/nitoWalletCrypto';
 import {
   clearWalletHistoryCache,
+  loadTransactionOutputCache,
   loadWalletHistoryCache,
   loadWalletSnapshotCache,
-  saveEnrichedHistoryRecords,
+  saveHistoryEnrichmentBatch,
   saveWalletHistoryCache,
   saveWalletSnapshotCache,
 } from './src/services/walletHistoryDb';
@@ -612,18 +613,25 @@ export default function App() {
         },
         enrichBatch: async (batch, onBatchProgress) => {
           requireCurrentSession();
-          const { records } = await enrichHistorySnapshot({
+          const { records, outputs } = await enrichHistorySnapshot({
             snapshot,
             pending: batch,
             client,
+            loadCachedOutputs: (txids) => loadTransactionOutputCache(
+              activeWallet.address,
+              txids,
+            ),
+            onCacheReadError: (caught) => {
+              reportNonFinancialFailure('transaction output cache read', caught);
+            },
             onProgress: (done) => onBatchProgress(done),
           });
           requireCurrentSession();
-          return records;
+          return { records, outputs };
         },
-        publishBatch: async (records) => {
+        publishBatch: async ({ records, outputs }) => {
           requireCurrentSession();
-          await saveEnrichedHistoryRecords(
+          await saveHistoryEnrichmentBatch(
             activeWallet.address,
             records
               .filter((record) => record.blockHeight > 0)
@@ -636,6 +644,7 @@ export default function App() {
                 counterparty: record.counterparty,
                 blockTime: record.blockTime,
               })),
+            outputs,
           );
           requireCurrentSession();
           if (!client.connected) {
@@ -1694,10 +1703,17 @@ export default function App() {
             electrumClientRef.current = client;
             await client.connect();
             if (!walletNetworkController.isCurrent(session)) return;
-            const fresh = await buildHistoryExportRecords({
+            const { records: fresh, outputs } = await buildHistoryExportBatch({
               history: missing,
               walletAddresses: snapshot.addresses.map((address) => address.address),
               reader: client,
+              loadCachedOutputs: (txids) => loadTransactionOutputCache(
+                activeWallet.address,
+                txids,
+              ),
+              onCacheReadError: (caught) => {
+                reportNonFinancialFailure('transaction output cache read', caught);
+              },
               onProgress: (done, total) => {
                 if (walletNetworkController.isCurrent(session)) {
                   setStatus(t('status.historyExporting', { done, total }));
@@ -1710,7 +1726,7 @@ export default function App() {
               );
             }
             if (!walletNetworkController.isCurrent(session)) return;
-            await saveEnrichedHistoryRecords(
+            await saveHistoryEnrichmentBatch(
               activeWallet.address,
               fresh
                 .filter((record) => record.blockHeight > 0)
@@ -1723,6 +1739,7 @@ export default function App() {
                   counterparty: record.counterparty,
                   blockTime: record.blockTime,
                 })),
+              outputs,
             );
             if (!client.connected) {
               throw new ElectrumSessionUnhealthyError(

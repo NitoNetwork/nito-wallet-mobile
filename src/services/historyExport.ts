@@ -3,6 +3,7 @@ import type {
   ElectrumVerboseTransaction,
 } from '../network/electrum';
 import { createConcurrencyLimiter, mapWithConcurrency } from './concurrency';
+import { reportNonFinancialFailure } from './diagnostics';
 
 export type HistoryExportDirection = 'received' | 'sent' | 'self';
 
@@ -15,6 +16,18 @@ export type HistoryExportRecord = {
   counterparty: string;
   amountSats: number;
   feeSats: number;
+};
+
+export type CachedTransactionOutput = {
+  txid: string;
+  outputIndex: number;
+  valueSats: number;
+  address: string;
+};
+
+export type HistoryExportBatch = {
+  records: HistoryExportRecord[];
+  outputs: CachedTransactionOutput[];
 };
 
 type VerboseTransactionReader = {
@@ -35,6 +48,58 @@ const outputAddresses = (output: ElectrumVerboseTransaction['vout'][number]) => 
 const outputValueSats = (output: ElectrumVerboseTransaction['vout'][number]) =>
   Math.round(Number(output.value) * 100_000_000);
 
+const outputKey = (txid: string, outputIndex: number) => `${txid}:${outputIndex}`;
+const cachedOutputKey = (output: CachedTransactionOutput) => (
+  `${outputKey(output.txid, output.outputIndex)}:${output.address}`
+);
+
+const transactionOutputs = (
+  txid: string,
+  transaction: ElectrumVerboseTransaction,
+): CachedTransactionOutput[] => transaction.vout.flatMap((output, index) => {
+  const addresses = outputAddresses(output);
+  return (addresses.length > 0 ? addresses : ['']).map((address) => ({
+    txid,
+    outputIndex: output.n ?? index,
+    valueSats: outputValueSats(output),
+    address,
+  }));
+});
+
+const validateCachedOutput = (output: CachedTransactionOutput) => {
+  if (
+    !output.txid
+    || !Number.isInteger(output.outputIndex)
+    || output.outputIndex < 0
+    || !Number.isSafeInteger(output.valueSats)
+    || output.valueSats < 0
+    || typeof output.address !== 'string'
+  ) {
+    throw new Error('Invalid transaction output cache row.');
+  }
+};
+
+const indexOutputs = (
+  rows: readonly CachedTransactionOutput[],
+  target: Map<string, CachedTransactionOutput[]>,
+) => {
+  for (const row of rows) {
+    validateCachedOutput(row);
+    const key = outputKey(row.txid, row.outputIndex);
+    const existing = target.get(key) ?? [];
+    if (
+      existing.length > 0
+      && existing.some((entry) => entry.valueSats !== row.valueSats)
+    ) {
+      throw new Error(`Conflicting transaction output cache rows for ${key}.`);
+    }
+    if (!existing.some((entry) => entry.address === row.address)) {
+      existing.push(row);
+      target.set(key, existing);
+    }
+  }
+};
+
 const formatSats = (sats: number) => {
   const safeSats = Math.max(0, Math.trunc(sats));
   const whole = Math.floor(safeSats / 100_000_000);
@@ -42,13 +107,12 @@ const formatSats = (sats: number) => {
   return fraction ? `${whole}.${fraction}` : String(whole);
 };
 
-const buildHistoryExportRecord = async (
+const buildHistoryExportRecord = (
   entry: ElectrumHistoryEntry,
   owned: Set<string>,
-  getTransaction: (txid: string) => Promise<ElectrumVerboseTransaction>,
-  inputConcurrency: number,
-): Promise<HistoryExportRecord> => {
-  const transaction = await getTransaction(entry.txid);
+  transaction: ElectrumVerboseTransaction,
+  resolvedOutputs: ReadonlyMap<string, CachedTransactionOutput[]>,
+): HistoryExportRecord => {
   const currentOutputs = transaction.vout.map((output) => ({
     addresses: outputAddresses(output),
     valueSats: outputValueSats(output),
@@ -63,22 +127,20 @@ const buildHistoryExportRecord = async (
   let totalInputSats = 0;
   let walletInputSats = 0;
 
-  const resolvedInputs = await mapWithConcurrency(transaction.vin, inputConcurrency, async (input) => {
-    if (!input.txid || typeof input.vout !== 'number') return;
-    const previous = await getTransaction(input.txid);
-    const previousOutput = previous.vout.find((output, index) => (output.n ?? index) === input.vout);
-    if (!previousOutput) return;
-    const valueSats = outputValueSats(previousOutput);
-    const addresses = outputAddresses(previousOutput);
-    return {
-      valueSats,
-      owned: addresses.some((address) => owned.has(address)),
-    };
-  });
-  for (const input of resolvedInputs) {
-    if (!input) continue;
-    totalInputSats += input.valueSats;
-    if (input.owned) walletInputSats += input.valueSats;
+  for (const input of transaction.vin) {
+    if (input.coinbase) continue;
+    if (!input.txid || typeof input.vout !== 'number') {
+      throw new Error(`Incomplete transaction input in ${entry.txid}.`);
+    }
+    const previousOutputs = resolvedOutputs.get(outputKey(input.txid, input.vout));
+    if (!previousOutputs || previousOutputs.length === 0) {
+      throw new Error(`Missing parent output ${input.txid}:${input.vout}.`);
+    }
+    const valueSats = previousOutputs[0]!.valueSats;
+    totalInputSats += valueSats;
+    if (previousOutputs.some(({ address }) => owned.has(address))) {
+      walletInputSats += valueSats;
+    }
   }
 
   const totalOutputSats = currentOutputs.reduce((total, output) => total + output.valueSats, 0);
@@ -105,21 +167,29 @@ const buildHistoryExportRecord = async (
   };
 };
 
-export const buildHistoryExportRecords = async ({
-  history,
-  walletAddresses,
-  reader,
-  concurrency = DEFAULT_HISTORY_CONCURRENCY,
-  inputConcurrency = DEFAULT_HISTORY_INPUT_CONCURRENCY,
-  onProgress,
-}: {
+type BuildHistoryExportBatchOptions = {
   history: ElectrumHistoryEntry[];
   walletAddresses: string[];
   reader: VerboseTransactionReader;
   concurrency?: number;
   inputConcurrency?: number;
+  loadCachedOutputs?: (
+    txids: readonly string[],
+  ) => Promise<readonly CachedTransactionOutput[]>;
+  onCacheReadError?: (caught: unknown) => void;
   onProgress?: (done: number, total: number) => void;
-}): Promise<HistoryExportRecord[]> => {
+};
+
+export const buildHistoryExportBatch = async ({
+  history,
+  walletAddresses,
+  reader,
+  concurrency = DEFAULT_HISTORY_CONCURRENCY,
+  inputConcurrency = DEFAULT_HISTORY_INPUT_CONCURRENCY,
+  loadCachedOutputs,
+  onCacheReadError,
+  onProgress,
+}: BuildHistoryExportBatchOptions): Promise<HistoryExportBatch> => {
   const owned = new Set(walletAddresses);
   const cache = new Map<string, Promise<ElectrumVerboseTransaction>>();
   const transactionLimiter = createConcurrencyLimiter(concurrency);
@@ -131,13 +201,98 @@ export const buildHistoryExportRecords = async ({
     return request;
   };
 
+  const currentTransactions = await mapWithConcurrency(
+    history,
+    concurrency,
+    async (entry) => ({
+      entry,
+      transaction: await getTransaction(entry.txid),
+    }),
+  );
+  const resolvedOutputs = new Map<string, CachedTransactionOutput[]>();
+  const outputsToPersist = new Map<string, CachedTransactionOutput>();
+  const addNetworkOutputs = (txid: string, transaction: ElectrumVerboseTransaction) => {
+    const outputs = transactionOutputs(txid, transaction);
+    indexOutputs(outputs, resolvedOutputs);
+    outputs.forEach((output) => outputsToPersist.set(cachedOutputKey(output), output));
+  };
+  currentTransactions.forEach(({ entry, transaction }) => {
+    addNetworkOutputs(entry.txid, transaction);
+  });
+
+  const parentReferences = new Map<string, { txid: string; outputIndex: number }>();
+  currentTransactions.forEach(({ entry, transaction }) => {
+    transaction.vin.forEach((input) => {
+      if (input.coinbase) return;
+      if (!input.txid || typeof input.vout !== 'number') {
+        throw new Error(`Incomplete transaction input in ${entry.txid}.`);
+      }
+      parentReferences.set(outputKey(input.txid, input.vout), {
+        txid: input.txid,
+        outputIndex: input.vout,
+      });
+    });
+  });
+
+  const unresolvedReferences = () => [...parentReferences.entries()]
+    .filter(([key]) => !resolvedOutputs.has(key))
+    .map(([, reference]) => reference);
+  const uncachedReferences = unresolvedReferences();
+  if (loadCachedOutputs && uncachedReferences.length > 0) {
+    try {
+      const cachedOutputs = await loadCachedOutputs(
+        [...new Set(uncachedReferences.map(({ txid }) => txid))],
+      );
+      const validatedCachedOutputs = new Map<string, CachedTransactionOutput[]>();
+      indexOutputs(cachedOutputs, validatedCachedOutputs);
+      indexOutputs(
+        [...validatedCachedOutputs.values()].flat(),
+        resolvedOutputs,
+      );
+    } catch (caught) {
+      (onCacheReadError ?? ((error) => {
+        reportNonFinancialFailure('transaction output cache read', error);
+      }))(caught);
+    }
+  }
+
+  const unresolvedKeys = new Set(
+    unresolvedReferences().map(({ txid, outputIndex }) => outputKey(txid, outputIndex)),
+  );
+  await mapWithConcurrency(currentTransactions, concurrency, async ({ transaction }) => {
+    const missingForTransaction = [
+      ...new Set(transaction.vin.flatMap((input) => (
+        input.txid
+        && typeof input.vout === 'number'
+        && unresolvedKeys.has(outputKey(input.txid, input.vout))
+          ? [input.txid]
+          : []
+      ))),
+    ];
+    await mapWithConcurrency(missingForTransaction, inputConcurrency, async (txid) => {
+      addNetworkOutputs(txid, await getTransaction(txid));
+    });
+  });
+
   let completed = 0;
-  return mapWithConcurrency(history, concurrency, async (entry) => {
-    const record = await buildHistoryExportRecord(entry, owned, getTransaction, inputConcurrency);
+  const records = currentTransactions.map(({ entry, transaction }) => {
+    const record = buildHistoryExportRecord(entry, owned, transaction, resolvedOutputs);
     completed += 1;
     onProgress?.(completed, history.length);
     return record;
   });
+
+  return {
+    records,
+    outputs: [...outputsToPersist.values()],
+  };
+};
+
+export const buildHistoryExportRecords = async (
+  options: BuildHistoryExportBatchOptions,
+): Promise<HistoryExportRecord[]> => {
+  const { records } = await buildHistoryExportBatch(options);
+  return records;
 };
 
 const formatUtcDate = (blockTime: number | null) => {

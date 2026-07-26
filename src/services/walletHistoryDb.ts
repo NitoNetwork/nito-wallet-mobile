@@ -2,6 +2,7 @@ import * as SQLite from 'expo-sqlite';
 
 import type { ElectrumHistoryEntry } from '../network/electrum';
 import type { TransparentWalletSnapshot } from '../wallet/transparentScan';
+import type { CachedTransactionOutput } from './historyExport';
 import { isDuplicateColumnError, retrySqliteWrite } from './sqliteReliability';
 import { normalizeWalletHistory } from './walletHistory';
 import type { EnrichedHistoryRecord } from './walletHistory';
@@ -10,6 +11,7 @@ export { normalizeWalletHistory } from './walletHistory';
 export type { EnrichedHistoryRecord } from './walletHistory';
 
 const DB_NAME = 'nito-wallet-history.db';
+const SQLITE_TXID_QUERY_CHUNK_SIZE = 400;
 
 type HistoryRow = {
   txid: string;
@@ -30,6 +32,13 @@ type SyncStateRow = {
 type SnapshotRow = {
   snapshot_json: string;
   height: number;
+};
+
+type TransactionOutputRow = {
+  txid: string;
+  output_index: number;
+  value_sats: number;
+  address: string;
 };
 
 export type WalletHistoryCache = {
@@ -101,6 +110,23 @@ const initializeHistoryDb = async () => {
       await db.execAsync('PRAGMA user_version = 1');
     });
   }
+  if ((version?.user_version ?? 0) < 2) {
+    await runWriteTransaction(db, async () => {
+      await db.execAsync(`
+        CREATE TABLE IF NOT EXISTS wallet_transaction_outputs (
+          wallet_id TEXT NOT NULL,
+          txid TEXT NOT NULL,
+          output_index INTEGER NOT NULL,
+          value_sats INTEGER NOT NULL,
+          address TEXT NOT NULL,
+          PRIMARY KEY (wallet_id, txid, output_index, address)
+        );
+        CREATE INDEX IF NOT EXISTS idx_wallet_transaction_outputs_wallet_txid
+          ON wallet_transaction_outputs(wallet_id, txid);
+        PRAGMA user_version = 2;
+      `);
+    });
+  }
 
   return db;
 };
@@ -112,6 +138,36 @@ const openHistoryDb = async () => {
   });
 
   return dbPromise;
+};
+
+export const loadTransactionOutputCache = async (
+  walletId: string,
+  txids: readonly string[],
+): Promise<CachedTransactionOutput[]> => {
+  const uniqueTxids = [...new Set(txids.filter(Boolean))];
+  if (uniqueTxids.length === 0) return [];
+
+  const db = await openHistoryDb();
+  const outputs: CachedTransactionOutput[] = [];
+  for (let offset = 0; offset < uniqueTxids.length; offset += SQLITE_TXID_QUERY_CHUNK_SIZE) {
+    const chunk = uniqueTxids.slice(offset, offset + SQLITE_TXID_QUERY_CHUNK_SIZE);
+    const placeholders = chunk.map(() => '?').join(', ');
+    const rows = await db.getAllAsync<TransactionOutputRow>(
+      `SELECT txid, output_index, value_sats, address
+       FROM wallet_transaction_outputs
+       WHERE wallet_id = ? AND txid IN (${placeholders})
+       ORDER BY txid, output_index, address`,
+      walletId,
+      ...chunk,
+    );
+    outputs.push(...rows.map((row) => ({
+      txid: row.txid,
+      outputIndex: row.output_index,
+      valueSats: row.value_sats,
+      address: row.address,
+    })));
+  }
+  return outputs;
 };
 
 const runWriteTransaction = async (
@@ -243,11 +299,12 @@ export const saveWalletHistoryCache = async (
   });
 };
 
-export const saveEnrichedHistoryRecords = async (
+export const saveHistoryEnrichmentBatch = async (
   walletId: string,
   records: EnrichedHistoryRecord[],
+  outputs: readonly CachedTransactionOutput[],
 ) => {
-  if (records.length === 0) return;
+  if (records.length === 0 && outputs.length === 0) return;
   const db = await openHistoryDb();
   const now = new Date().toISOString();
 
@@ -268,12 +325,41 @@ export const saveEnrichedHistoryRecords = async (
         record.height,
       );
     }
+    for (const output of outputs) {
+      if (
+        !output.txid
+        || !Number.isInteger(output.outputIndex)
+        || output.outputIndex < 0
+        || !Number.isSafeInteger(output.valueSats)
+        || output.valueSats < 0
+      ) {
+        throw new Error('Invalid transaction output cache write.');
+      }
+      await db.runAsync(
+        `INSERT INTO wallet_transaction_outputs
+           (wallet_id, txid, output_index, value_sats, address)
+         VALUES (?, ?, ?, ?, ?)
+         ON CONFLICT(wallet_id, txid, output_index, address) DO UPDATE SET
+           value_sats = excluded.value_sats`,
+        walletId,
+        output.txid,
+        output.outputIndex,
+        output.valueSats,
+        output.address,
+      );
+    }
   });
 };
+
+export const saveEnrichedHistoryRecords = async (
+  walletId: string,
+  records: EnrichedHistoryRecord[],
+) => saveHistoryEnrichmentBatch(walletId, records, []);
 
 export const clearWalletHistoryCache = async (walletId: string) => {
   const db = await openHistoryDb();
   await runWriteTransaction(db, async () => {
+    await db.runAsync('DELETE FROM wallet_transaction_outputs WHERE wallet_id = ?', walletId);
     await db.runAsync('DELETE FROM wallet_transactions WHERE wallet_id = ?', walletId);
     await db.runAsync('DELETE FROM wallet_sync_state WHERE wallet_id = ?', walletId);
     await db.runAsync('DELETE FROM wallet_snapshot_cache WHERE wallet_id = ?', walletId);
