@@ -69,6 +69,7 @@ import {
 import { readOptionalCache } from './src/services/cachePolicy';
 import { reportNonFinancialFailure } from './src/services/diagnostics';
 import { ExclusiveActionGate } from './src/services/exclusiveActionGate';
+import { shouldLockWalletForAppState } from './src/services/appStateSecurity';
 import {
   CustomElectrumServerValidationError,
   createElectrumClient,
@@ -335,6 +336,7 @@ export default function App() {
   const biometricDismissedRef = useRef(false);
   const biometricInterruptedRef = useRef(false);
   const lockedDuringSessionRef = useRef(false);
+  const walletLockAppliedRef = useRef(false);
   const enrichAttemptedRef = useRef<Set<string>>(new Set());
   const appStateRef = useRef(AppState.currentState);
   const systemPromptActiveRef = useRef(false);
@@ -653,6 +655,7 @@ export default function App() {
     cachedNetwork?: { snapshot: TransparentWalletSnapshot; height: number } | null,
     cachedHistory?: Awaited<ReturnType<typeof loadWalletHistoryCache>> | null,
   ) => {
+    walletLockAppliedRef.current = false;
     const entry = prepareWalletEntry({
       pendingNetwork: pendingNetworkRef.current,
       wallet: nextWallet,
@@ -1408,6 +1411,8 @@ export default function App() {
   };
 
   const lockWallet = useCallback(() => {
+    if (walletLockAppliedRef.current) return;
+    walletLockAppliedRef.current = true;
     lockedDuringSessionRef.current = true;
     applyVaultTransition({ type: 'lock' });
     walletNetworkController.cancel();
@@ -1453,10 +1458,14 @@ export default function App() {
     const subscription = AppState.addEventListener('change', (nextState) => {
       const previousState = appStateRef.current;
       appStateRef.current = nextState;
-      if (previousState === 'active' && nextState !== 'active' && screen === 'wallet' && seedSaved && !systemPromptActiveRef.current) {
+      if (shouldLockWalletForAppState({
+        nextState,
+        systemPromptActive: systemPromptActiveRef.current,
+        walletOpen: screen === 'wallet',
+      })) {
         lockWallet();
       }
-      if (previousState === 'active' && nextState !== 'active' && systemPromptActiveRef.current) {
+      if (nextState !== 'active' && systemPromptActiveRef.current) {
         biometricInterruptedRef.current = true;
       }
       if (
@@ -1475,7 +1484,7 @@ export default function App() {
       }
     });
     return () => subscription.remove();
-  }, [lockWallet, screen, seedSaved, vaultBiometricsEnabled, biometricUnavailableReason]);
+  }, [lockWallet, screen, vaultBiometricsEnabled, biometricUnavailableReason]);
 
   useEffect(() => {
     if (screen !== 'wallet' || !seedSaved) {
