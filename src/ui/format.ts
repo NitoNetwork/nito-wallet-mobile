@@ -7,7 +7,7 @@ export const isValidTransactionId = (txid: string): boolean => /^[0-9a-f]{64}$/i
 export const transactionExplorerUrl = (txid: string) =>
   `https://mempool-explorer.nito.network/tx/${txid.toLowerCase()}`;
 
-export const BALANCE_DECIMAL_OPTIONS = [2, 4, 6, 8] as const;
+export const BALANCE_DECIMAL_OPTIONS = [2, 8] as const;
 export type BalanceDecimals = (typeof BALANCE_DECIMAL_OPTIONS)[number];
 
 export const isBalanceDecimals = (
@@ -50,7 +50,7 @@ export const historyPageFromInput = (value: string, pageCount: number): number |
 export const formatHomeBalance = (
   satoshis: number,
   decimals: BalanceDecimals,
-): { text: string; lines: 1 | 2 } => {
+): { text: string } => {
   const normalizedSatoshis = Math.trunc(satoshis);
   const sign = normalizedSatoshis < 0 ? '−' : '';
   const absoluteSatoshis = Math.abs(normalizedSatoshis);
@@ -62,12 +62,5 @@ export const formatHomeBalance = (
     || /[2-9]/.test(allDecimals.slice(decimals));
   const suffix = hiddenSignificantDecimals ? '…' : '';
 
-  if (decimals === 2) {
-    return { text: `${sign}${formattedWhole},${visibleDecimals}${suffix} NITO`, lines: 1 };
-  }
-
-  return {
-    text: `${sign}${formattedWhole}\n,${visibleDecimals}${suffix} NITO`,
-    lines: 2,
-  };
+  return { text: `${sign}${formattedWhole},${visibleDecimals}${suffix}` };
 };

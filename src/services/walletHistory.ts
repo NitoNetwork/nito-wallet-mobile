@@ -41,6 +41,16 @@ export const normalizeWalletHistory = (history: ElectrumHistoryEntry[]) => {
   }
 
   return [...byTxid.values()].sort((a, b) => {
+    const aMempool = a.height <= 0;
+    const bMempool = b.height <= 0;
+    if (aMempool !== bMempool) {
+      return aMempool ? -1 : 1;
+    }
+
+    if (aMempool && bMempool) {
+      return a.txid.localeCompare(b.txid);
+    }
+
     if (a.height !== b.height) {
       return b.height - a.height;
     }

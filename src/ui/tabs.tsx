@@ -553,7 +553,7 @@ export function HomeTab({
   const refreshDisabled = actionLocked || balanceRefreshing || network.status === 'syncing';
   const balanceDisplay = network.snapshot
     ? formatHomeBalance(network.snapshot.spendableSats, balanceDecimals)
-    : { text: '-- NITO', lines: 1 as const };
+    : { text: '--' };
 
   return (
     <View style={styles.card}>
@@ -571,7 +571,7 @@ export function HomeTab({
       <View style={styles.balanceCard}>
         <Text
           style={styles.balance}
-          numberOfLines={balanceDisplay.lines}
+          numberOfLines={1}
           adjustsFontSizeToFit
           minimumFontScale={0.65}
         >

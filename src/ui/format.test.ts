@@ -65,38 +65,29 @@ describe('ui format helpers', () => {
 
   it('validates the supported balance decimal preferences', () => {
     expect(isBalanceDecimals('2')).toBe(true);
-    expect(isBalanceDecimals('4')).toBe(true);
-    expect(isBalanceDecimals('6')).toBe(true);
     expect(isBalanceDecimals('8')).toBe(true);
+    expect(isBalanceDecimals('4')).toBe(false);
+    expect(isBalanceDecimals('6')).toBe(false);
     expect(isBalanceDecimals('3')).toBe(false);
     expect(isBalanceDecimals(null)).toBe(false);
   });
 
   it('truncates the home balance and marks significant hidden decimals', () => {
     expect(formatHomeBalance(112_345_678, 2)).toEqual({
-      text: '1,12… NITO',
-      lines: 1,
-    });
-    expect(formatHomeBalance(112_345_678, 4)).toEqual({
-      text: '1\n,1234… NITO',
-      lines: 2,
+      text: '1,12…',
     });
     expect(formatHomeBalance(112_345_678, 8)).toEqual({
-      text: '1\n,12345678 NITO',
-      lines: 2,
+      text: '1,12345678',
     });
     expect(formatHomeBalance(112_000_000, 2)).toEqual({
-      text: '1,12 NITO',
-      lines: 1,
+      text: '1,12',
     });
-    expect(formatHomeBalance(199_999_999, 2).text).toBe('1,99… NITO');
+    expect(formatHomeBalance(199_999_999, 2).text).toBe('1,99…');
     expect(formatHomeBalance(998_380_428_123_426, 2)).toEqual({
-      text: '9 983 804,28… NITO',
-      lines: 1,
+      text: '9 983 804,28…',
     });
     expect(formatHomeBalance(998_380_428_123_426, 8)).toEqual({
-      text: '9 983 804\n,28123426 NITO',
-      lines: 2,
+      text: '9 983 804,28123426',
     });
   });
 });
