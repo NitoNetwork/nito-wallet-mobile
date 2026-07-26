@@ -33,4 +33,22 @@ describe('i18n coverage', () => {
       expect(makeTranslator(code)('home.title')).toBe(expected[code]);
     }
   });
+
+  it('resolves the NITO history title in every language', () => {
+    const expected = {
+      en: 'History NITO',
+      zh: '历史 NITO',
+      hi: 'इतिहास NITO',
+      es: 'Historial NITO',
+      fr: 'Historique NITO',
+      ar: 'السجل NITO',
+      bn: 'ইতিহাস NITO',
+      pt: 'Histórico NITO',
+      ru: 'История NITO',
+    } satisfies Record<LanguageCode, string>;
+
+    for (const code of Object.keys(expected) as LanguageCode[]) {
+      expect(makeTranslator(code)('history.title')).toBe(expected[code]);
+    }
+  });
 });

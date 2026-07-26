@@ -1962,6 +1962,7 @@ export default function App() {
       return (
         <HistoryTab
           t={t}
+          walletId={wallet.address}
           network={network}
           actionLocked={actionLocked}
           pendingAction={pendingAction}

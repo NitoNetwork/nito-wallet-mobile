@@ -64,3 +64,59 @@ export const formatHomeBalance = (
 
   return { text: `${sign}${formattedWhole},${visibleDecimals}${suffix}` };
 };
+
+type HistoryAmountOutput = {
+  outputIndex: number;
+  valueSats: number;
+  address: string;
+};
+
+export const historyAmountBreakdown = ({
+  direction,
+  totalSats,
+  outputs,
+  walletAddresses,
+}: {
+  direction: 'received' | 'sent' | 'self';
+  totalSats: number;
+  outputs: readonly HistoryAmountOutput[];
+  walletAddresses: readonly string[];
+}): { amountsSats: number[]; hiddenOutputCount: number } => {
+  const owned = new Set(walletAddresses);
+  const outputsByIndex = new Map<number, {
+    valueSats: number;
+    addresses: Set<string>;
+  }>();
+
+  for (const output of outputs) {
+    const existing = outputsByIndex.get(output.outputIndex);
+    if (existing) {
+      existing.addresses.add(output.address);
+    } else {
+      outputsByIndex.set(output.outputIndex, {
+        valueSats: output.valueSats,
+        addresses: new Set([output.address]),
+      });
+    }
+  }
+
+  const relevantOutputs = [...outputsByIndex.entries()]
+    .filter(([, output]) => {
+      const addresses = [...output.addresses].filter(Boolean);
+      return direction === 'sent'
+        ? addresses.length > 0 && addresses.every((address) => !owned.has(address))
+        : addresses.some((address) => owned.has(address));
+    })
+    .sort(([aIndex], [bIndex]) => aIndex - bIndex);
+
+  if (relevantOutputs.length <= 1) {
+    return { amountsSats: [totalSats], hiddenOutputCount: 0 };
+  }
+
+  return {
+    amountsSats: relevantOutputs
+      .slice(0, 4)
+      .map(([, output]) => output.valueSats),
+    hiddenOutputCount: Math.max(0, relevantOutputs.length - 4),
+  };
+};

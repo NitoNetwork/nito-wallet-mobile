@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { ActivityIndicator, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import QRCode from 'react-native-qrcode-svg';
 
@@ -6,6 +6,9 @@ import { CONSOLIDATION_MIN_UTXOS } from '../constants/nito';
 import type { LanguageCode, Translator } from '../i18n';
 import { makeConsolidationTranslator } from '../i18n.consolidation';
 import { HISTORY_PAGE_SIZE } from '../services/historyEnrichmentQueue';
+import type { CachedTransactionOutput } from '../services/historyExport';
+import { reportNonFinancialFailure } from '../services/diagnostics';
+import { loadTransactionOutputCache } from '../services/walletHistoryDb';
 import { isTransparentUtxoSpendable } from '../wallet/coinbaseMaturity';
 import { satoshisToNito } from '../wallet/transparentScan';
 import type { PreparedTransparentConsolidation, PreparedTransparentTx } from '../wallet/transparentSend';
@@ -14,6 +17,7 @@ import {
   BALANCE_DECIMAL_OPTIONS,
   canShowHistoryExport,
   formatHomeBalance,
+  historyAmountBreakdown,
   historyPageFromInput,
   shortAddress,
   type BalanceDecimals,
@@ -196,6 +200,7 @@ function HistoryLoadingStatus({
 
 export function HistoryTab({
   t,
+  walletId,
   network,
   actionLocked,
   pendingAction,
@@ -207,6 +212,7 @@ export function HistoryTab({
   onOpenTx,
 }: {
   t: Translator;
+  walletId: string;
   network: NetworkState;
   actionLocked: boolean;
   pendingAction: PendingAction | null;
@@ -226,12 +232,56 @@ export function HistoryTab({
     activeHistoryPage * HISTORY_PAGE_SIZE,
     (activeHistoryPage + 1) * HISTORY_PAGE_SIZE,
   );
+  const visibleTxidKey = visibleHistory.map((entry) => entry.txid).join(',');
+  const outputPageKey = [
+    walletId,
+    activeHistoryPage,
+    historyProgress === null && !historySyncing ? 'idle' : 'busy',
+    visibleTxidKey,
+  ].join(':');
+  const [outputPage, setOutputPage] = useState<{
+    key: string;
+    outputsByTxid: Map<string, CachedTransactionOutput[]>;
+  }>(() => ({ key: '', outputsByTxid: new Map() }));
+  const outputsByTxid = outputPage.key === outputPageKey
+    ? outputPage.outputsByTxid
+    : new Map<string, CachedTransactionOutput[]>();
+  const walletAddresses = network.snapshot?.addresses.map((address) => address.address) ?? [];
   const showHistoryExport = canShowHistoryExport({
     entries: historyEntries,
     historyProgress,
     historySyncing,
     networkStatus: network.status,
   });
+
+  useEffect(() => {
+    let current = true;
+    const visibleTxids = visibleTxidKey ? visibleTxidKey.split(',') : [];
+    if (visibleTxids.length === 0) {
+      return () => {
+        current = false;
+      };
+    }
+
+    void loadTransactionOutputCache(walletId, visibleTxids)
+      .then((outputs) => {
+        if (!current) return;
+        const nextOutputsByTxid = new Map<string, CachedTransactionOutput[]>();
+        for (const output of outputs) {
+          const transactionOutputs = nextOutputsByTxid.get(output.txid) ?? [];
+          transactionOutputs.push(output);
+          nextOutputsByTxid.set(output.txid, transactionOutputs);
+        }
+        setOutputPage({ key: outputPageKey, outputsByTxid: nextOutputsByTxid });
+      })
+      .catch((caught) => {
+        reportNonFinancialFailure('visible history output cache read', caught);
+      });
+
+    return () => {
+      current = false;
+    };
+  }, [outputPageKey, visibleTxidKey, walletId]);
 
   const commitHistoryPageInput = (value: string) => {
     const nextPage = historyPageFromInput(value, historyPageCount);
@@ -274,38 +324,62 @@ export function HistoryTab({
       ) : null}
       {visibleHistory.length > 0 ? (
         <View style={styles.historyList}>
-          {visibleHistory.map((entry) => (
-            <TouchableOpacity
-              key={entry.txid}
-              style={styles.historyRow}
-              onPress={() => { onOpenTx(entry.txid); }}
-            >
-              <View style={styles.historyRowTop}>
-                <View style={styles.historyRowText}>
-                  <Text style={styles.historyTxid}>
-                    {entry.direction === undefined
-                      ? shortAddress(entry.txid)
-                      : `${entry.direction === 'received' ? '+' : entry.direction === 'sent' ? '−' : ''}${satoshisToNito(entry.amountSats ?? 0)} NITO`}
-                  </Text>
-                  <Text style={styles.helper}>
-                    {[
-                      entry.direction === 'received'
-                        ? t('history.received')
-                        : entry.direction === 'sent'
-                          ? t('history.sent')
-                          : entry.direction === 'self'
-                            ? t('history.self')
-                            : '',
-                      entry.height > 0 ? t('history.block', { height: entry.height }) : t('history.mempool'),
-                    ].filter(Boolean).join(' · ')}
-                  </Text>
+          {visibleHistory.map((entry) => {
+            const amountBreakdown = entry.direction === undefined
+              ? null
+              : historyAmountBreakdown({
+                direction: entry.direction,
+                totalSats: entry.amountSats ?? 0,
+                outputs: outputsByTxid.get(entry.txid) ?? [],
+                walletAddresses,
+              });
+            const sign = entry.direction === 'received'
+              ? '+'
+              : entry.direction === 'sent'
+                ? '−'
+                : '';
+            const amountLines = amountBreakdown?.amountsSats.map(
+              (amountSats, index) => `${index === 0 ? sign : ''}${satoshisToNito(amountSats)}`,
+            ) ?? [];
+            if (amountBreakdown && amountBreakdown.hiddenOutputCount > 0) {
+              amountLines.push(t('history.moreOutputs', {
+                count: amountBreakdown.hiddenOutputCount,
+              }));
+            }
+
+            return (
+              <TouchableOpacity
+                key={entry.txid}
+                style={styles.historyRow}
+                onPress={() => { onOpenTx(entry.txid); }}
+              >
+                <View style={styles.historyRowTop}>
+                  <View style={styles.historyRowText}>
+                    <Text style={styles.historyTxid}>
+                      {entry.direction === undefined
+                        ? shortAddress(entry.txid)
+                        : amountLines.join('\n')}
+                    </Text>
+                    <Text style={styles.helper}>
+                      {[
+                        entry.direction === 'received'
+                          ? t('history.received')
+                          : entry.direction === 'sent'
+                            ? t('history.sent')
+                            : entry.direction === 'self'
+                              ? t('history.self')
+                              : '',
+                        entry.height > 0 ? t('history.block', { height: entry.height }) : t('history.mempool'),
+                      ].filter(Boolean).join(' · ')}
+                    </Text>
+                  </View>
+                  <View style={styles.viewTxBadge}>
+                    <Text style={styles.viewTxText}>{t('actions.viewTx')}</Text>
+                  </View>
                 </View>
-                <View style={styles.viewTxBadge}>
-                  <Text style={styles.viewTxText}>{t('actions.viewTx')}</Text>
-                </View>
-              </View>
-            </TouchableOpacity>
-          ))}
+              </TouchableOpacity>
+            );
+          })}
           {historyPageCount > 1 ? (
             <View style={styles.historyPagination}>
               <TouchableOpacity
