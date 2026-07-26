@@ -55,6 +55,7 @@ export const formatHomeBalance = (
   const sign = normalizedSatoshis < 0 ? '−' : '';
   const absoluteSatoshis = Math.abs(normalizedSatoshis);
   const whole = Math.floor(absoluteSatoshis / 100_000_000);
+  const formattedWhole = whole.toLocaleString('fr-FR');
   const allDecimals = String(absoluteSatoshis % 100_000_000).padStart(8, '0');
   const visibleDecimals = allDecimals.slice(0, decimals);
   const hiddenSignificantDecimals = allDecimals.slice(decimals).includes('1')
@@ -62,11 +63,11 @@ export const formatHomeBalance = (
   const suffix = hiddenSignificantDecimals ? '…' : '';
 
   if (decimals === 2) {
-    return { text: `${sign}${whole}.${visibleDecimals}${suffix} NITO`, lines: 1 };
+    return { text: `${sign}${formattedWhole},${visibleDecimals}${suffix} NITO`, lines: 1 };
   }
 
   return {
-    text: `${sign}${whole}\n.${visibleDecimals}${suffix} NITO`,
+    text: `${sign}${formattedWhole}\n,${visibleDecimals}${suffix} NITO`,
     lines: 2,
   };
 };
