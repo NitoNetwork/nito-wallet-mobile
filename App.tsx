@@ -93,6 +93,7 @@ import {
   type PreparedTransparentTx,
 } from './src/wallet/transparentSend';
 import { makeConsolidationTranslator } from './src/i18n.consolidation';
+import { useBalanceDecimals } from './src/hooks/useBalanceDecimals';
 import { useLanguage } from './src/hooks/useLanguage';
 import { useWalletSubscriptions } from './src/hooks/useWalletSubscriptions';
 import { AutoLock } from './src/services/session';
@@ -336,6 +337,7 @@ export default function App() {
   const [historyProgress, setHistoryProgress] = useState<{ done: number; total: number } | null>(null);
   const [historySyncing, setHistorySyncing] = useState(false);
   const { language, t, selected: selectedLanguage, pickerOpen: languagePickerOpen, togglePicker: toggleLanguagePicker, select: selectLanguage } = useLanguage();
+  const { balanceDecimals, selectBalanceDecimals } = useBalanceDecimals();
   const [balanceRefreshing, setBalanceRefreshing] = useState(false);
   const [refreshCooldownUntil, setRefreshCooldownUntil] = useState(0);
   const [qrScannerOpen, setQrScannerOpen] = useState(false);
@@ -1997,6 +1999,8 @@ export default function App() {
           onConfirmSensitive={() => { void confirmSensitiveAction(); }}
           onCancelSensitive={() => { setSensitiveAction(null); setSensitivePassword(''); }}
           languageSettings={languageSettings}
+          balanceDecimals={balanceDecimals}
+          onSelectBalanceDecimals={selectBalanceDecimals}
           biometricAvailable={!biometricUnavailableReason}
           onEnableBiometrics={askEnableBiometrics}
           onDisableBiometrics={askDisableBiometrics}
@@ -2013,6 +2017,7 @@ export default function App() {
         actionLocked={actionLocked}
         pendingAction={pendingAction}
         balanceRefreshing={balanceRefreshing}
+        balanceDecimals={balanceDecimals}
         preparedConsolidation={preparedConsolidation}
         onRefreshBalance={() => { void refreshBalance(); }}
         onConfirmConsolidation={confirmTransparentConsolidation}

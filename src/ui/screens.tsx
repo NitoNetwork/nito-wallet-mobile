@@ -16,7 +16,6 @@ export function Hero({ t }: { t: Translator }) {
       <View style={styles.brandRow}>
         <Image source={NITO_LOGO} style={styles.logo} resizeMode="contain" />
         <View style={styles.brandText}>
-          <Text style={styles.eyebrow}>{t('brand.network')}</Text>
           <Text style={styles.title}>{t('brand.wallet')}</Text>
         </View>
       </View>

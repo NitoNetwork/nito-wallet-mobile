@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react';
+import { useState, type ReactNode } from 'react';
 import { ActivityIndicator, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import QRCode from 'react-native-qrcode-svg';
 
@@ -10,7 +10,14 @@ import { isTransparentUtxoSpendable } from '../wallet/coinbaseMaturity';
 import { satoshisToNito } from '../wallet/transparentScan';
 import type { PreparedTransparentConsolidation, PreparedTransparentTx } from '../wallet/transparentSend';
 import { ActionButton, PasswordField } from './components';
-import { shortAddress } from './format';
+import {
+  BALANCE_DECIMAL_OPTIONS,
+  canShowHistoryExport,
+  formatHomeBalance,
+  historyPageFromInput,
+  shortAddress,
+  type BalanceDecimals,
+} from './format';
 import { styles } from './styles';
 import type { BiometricMethod, NetworkState, PendingAction, Wallet } from './types';
 
@@ -158,6 +165,35 @@ export function SendTab({
   );
 }
 
+function HistoryLoadingStatus({
+  t,
+  historyProgress,
+  indicatorSize,
+}: {
+  t: Translator;
+  historyProgress: { done: number; total: number } | null;
+  indicatorSize: 'small' | 'large';
+}) {
+  return (
+    <View style={styles.historyLoadingStatus}>
+      <ActivityIndicator
+        accessibilityLabel={t('history.syncing')}
+        color="#dbeaff"
+        size={indicatorSize}
+      />
+      <Text style={styles.historyLoadingTitle}>{t('history.loading')}</Text>
+      {historyProgress ? (
+        <Text style={styles.historyLoadingCount}>
+          {t('history.loadingCount', {
+            done: historyProgress.done,
+            total: historyProgress.total,
+          })}
+        </Text>
+      ) : null}
+    </View>
+  );
+}
+
 export function HistoryTab({
   t,
   network,
@@ -185,23 +221,37 @@ export function HistoryTab({
   const loading = network.status === 'syncing' || historyProgress !== null || historySyncing;
   const historyPageCount = Math.max(1, Math.ceil(historyEntries.length / HISTORY_PAGE_SIZE));
   const activeHistoryPage = Math.min(historyPage, historyPageCount - 1);
+  const [historyPageInput, setHistoryPageInput] = useState<string | null>(null);
   const visibleHistory = historyEntries.slice(
     activeHistoryPage * HISTORY_PAGE_SIZE,
     (activeHistoryPage + 1) * HISTORY_PAGE_SIZE,
   );
+  const showHistoryExport = canShowHistoryExport({
+    entries: historyEntries,
+    historyProgress,
+    historySyncing,
+    networkStatus: network.status,
+  });
+
+  const commitHistoryPageInput = (value: string) => {
+    const nextPage = historyPageFromInput(value, historyPageCount);
+    setHistoryPageInput(null);
+    if (nextPage === null) {
+      return;
+    }
+
+    if (nextPage !== activeHistoryPage) {
+      onChangeHistoryPage(nextPage);
+    }
+  };
 
   if (loading && historyEntries.length === 0) {
     return (
       <View style={styles.card}>
         <Text style={styles.sectionTitle}>{t('history.title')}</Text>
         <View style={styles.empty}>
-          <ActivityIndicator color="#dbeaff" size="large" />
-          <Text style={styles.emptyTitle}>{t('history.loading')}</Text>
-          <Text style={styles.body}>
-            {historyProgress
-              ? t('history.loadingProgress', { done: historyProgress.done, total: historyProgress.total })
-              : t('history.loadingHint')}
-          </Text>
+          <HistoryLoadingStatus t={t} historyProgress={historyProgress} indicatorSize="large" />
+          {!historyProgress ? <Text style={styles.body}>{t('history.loadingHint')}</Text> : null}
         </View>
       </View>
     );
@@ -211,16 +261,9 @@ export function HistoryTab({
     <View style={styles.card}>
       <Text style={styles.sectionTitle}>{t('history.title')}</Text>
       {loading ? (
-        <View style={styles.historySyncButtonContent}>
-          <ActivityIndicator color="#dbeaff" size="small" />
-          <Text style={styles.historySyncButtonText}>
-            {historyProgress
-              ? t('history.loadingProgress', { done: historyProgress.done, total: historyProgress.total })
-              : t('history.syncing')}
-          </Text>
-        </View>
+        <HistoryLoadingStatus t={t} historyProgress={historyProgress} indicatorSize="small" />
       ) : null}
-      {historyEntries.length > 0 ? (
+      {showHistoryExport ? (
         <ActionButton
           label={t('actions.exportHistory')}
           variant="secondary"
@@ -268,19 +311,42 @@ export function HistoryTab({
               <TouchableOpacity
                 disabled={activeHistoryPage === 0 || actionLocked}
                 onPress={() => onChangeHistoryPage(Math.max(0, activeHistoryPage - 1))}
-                style={[styles.historyPageButton, activeHistoryPage === 0 && styles.historyPageButtonDisabled]}
+                style={[
+                  styles.historyPageButton,
+                  (activeHistoryPage === 0 || actionLocked) && styles.historyPageButtonDisabled,
+                ]}
               >
                 <Text style={styles.historyPageButtonText}>{t('actions.previousPage')}</Text>
               </TouchableOpacity>
-              <Text style={styles.historyPageLabel}>
-                {t('history.page', { current: activeHistoryPage + 1, total: historyPageCount })}
-              </Text>
+              <View style={styles.historyPageInputContainer}>
+                <TextInput
+                  accessibilityLabel={t('history.pageInputLabel')}
+                  accessibilityHint={t('history.pageInputHint', { total: historyPageCount })}
+                  accessibilityState={{ disabled: actionLocked }}
+                  accessibilityValue={{
+                    text: t('history.page', {
+                      current: activeHistoryPage + 1,
+                      total: historyPageCount,
+                    }),
+                  }}
+                  value={historyPageInput ?? String(activeHistoryPage + 1)}
+                  onChangeText={setHistoryPageInput}
+                  onEndEditing={(event) => commitHistoryPageInput(event.nativeEvent.text)}
+                  editable={!actionLocked}
+                  keyboardType="number-pad"
+                  returnKeyType="done"
+                  selectTextOnFocus
+                  style={styles.historyPageInput}
+                />
+                <Text style={styles.historyPageTotal}>{`/ ${historyPageCount}`}</Text>
+              </View>
               <TouchableOpacity
                 disabled={activeHistoryPage >= historyPageCount - 1 || actionLocked}
                 onPress={() => onChangeHistoryPage(Math.min(historyPageCount - 1, activeHistoryPage + 1))}
                 style={[
                   styles.historyPageButton,
-                  activeHistoryPage >= historyPageCount - 1 && styles.historyPageButtonDisabled,
+                  (activeHistoryPage >= historyPageCount - 1 || actionLocked)
+                    && styles.historyPageButtonDisabled,
                 ]}
               >
                 <Text style={styles.historyPageButtonText}>{t('actions.nextPage')}</Text>
@@ -320,6 +386,8 @@ export function SecurityTab({
   onConfirmSensitive,
   onCancelSensitive,
   languageSettings,
+  balanceDecimals,
+  onSelectBalanceDecimals,
   biometricAvailable,
   onEnableBiometrics,
   onDisableBiometrics,
@@ -345,6 +413,8 @@ export function SecurityTab({
   onConfirmSensitive: () => void;
   onCancelSensitive: () => void;
   languageSettings: ReactNode;
+  balanceDecimals: BalanceDecimals;
+  onSelectBalanceDecimals: (next: BalanceDecimals) => void;
   biometricAvailable: boolean;
   onEnableBiometrics: () => void;
   onDisableBiometrics: () => void;
@@ -414,6 +484,36 @@ export function SecurityTab({
           />
         </View>
       ) : null}
+      <View style={styles.balanceDecimalsSettings}>
+        <Text style={styles.label}>{t('security.balanceDecimalsTitle')}</Text>
+        <Text style={styles.helper}>{t('security.balanceDecimalsHint')}</Text>
+        <View style={styles.balanceDecimalsOptions}>
+          {BALANCE_DECIMAL_OPTIONS.map((option) => (
+            <TouchableOpacity
+              key={option}
+              accessibilityRole="button"
+              accessibilityLabel={t('security.balanceDecimalsOption', { count: option })}
+              accessibilityState={{ selected: balanceDecimals === option, disabled: actionLocked }}
+              disabled={actionLocked}
+              onPress={() => onSelectBalanceDecimals(option)}
+              style={[
+                styles.balanceDecimalsOption,
+                balanceDecimals === option && styles.balanceDecimalsOptionActive,
+                actionLocked && styles.balanceDecimalsOptionDisabled,
+              ]}
+            >
+              <Text
+                style={[
+                  styles.balanceDecimalsOptionText,
+                  balanceDecimals === option && styles.balanceDecimalsOptionTextActive,
+                ]}
+              >
+                {option}
+              </Text>
+            </TouchableOpacity>
+          ))}
+        </View>
+      </View>
       {languageSettings}
     </View>
   );
@@ -427,6 +527,7 @@ export function HomeTab({
   actionLocked,
   pendingAction,
   balanceRefreshing,
+  balanceDecimals,
   preparedConsolidation,
   onRefreshBalance,
   onConfirmConsolidation,
@@ -438,6 +539,7 @@ export function HomeTab({
   actionLocked: boolean;
   pendingAction: PendingAction | null;
   balanceRefreshing: boolean;
+  balanceDecimals: BalanceDecimals;
   preparedConsolidation: PreparedTransparentConsolidation | null;
   onRefreshBalance: () => void;
   onConfirmConsolidation: () => void;
@@ -449,6 +551,9 @@ export function HomeTab({
     (utxo) => isTransparentUtxoSpendable(utxo) && spendableAddressSet.has(utxo.address),
   );
   const refreshDisabled = actionLocked || balanceRefreshing || network.status === 'syncing';
+  const balanceDisplay = network.snapshot
+    ? formatHomeBalance(network.snapshot.spendableSats, balanceDecimals)
+    : { text: '-- NITO', lines: 1 as const };
 
   return (
     <View style={styles.card}>
@@ -464,8 +569,13 @@ export function HomeTab({
         </TouchableOpacity>
       </View>
       <View style={styles.balanceCard}>
-        <Text style={styles.balance}>
-          {network.snapshot ? satoshisToNito(network.snapshot.spendableSats) + ' NITO' : '-- NITO'}
+        <Text
+          style={styles.balance}
+          numberOfLines={balanceDisplay.lines}
+          adjustsFontSizeToFit
+          minimumFontScale={0.65}
+        >
+          {balanceDisplay.text}
         </Text>
         {network.snapshot && network.snapshot.unconfirmedSats > 0 ? (
           <Text style={styles.pendingBalance}>
