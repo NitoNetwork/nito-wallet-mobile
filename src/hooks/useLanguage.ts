@@ -2,6 +2,7 @@ import * as SecureStore from 'expo-secure-store';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import { DEFAULT_LANGUAGE, LANGUAGES, makeTranslator, type LanguageCode } from '../i18n';
+import { reportNonFinancialFailure } from '../services/diagnostics';
 
 const LANGUAGE_PREFERENCE_KEY = 'nito.wallet.language.v1';
 
@@ -13,7 +14,8 @@ export const detectSystemLanguage = (): LanguageCode => {
     const locale = Intl.DateTimeFormat().resolvedOptions().locale;
     const primaryLanguage = locale.toLowerCase().replace('_', '-').split('-', 1)[0] ?? '';
     return isLanguageCode(primaryLanguage) ? primaryLanguage : DEFAULT_LANGUAGE;
-  } catch {
+  } catch (caught) {
+    reportNonFinancialFailure('system language detection', caught);
     return DEFAULT_LANGUAGE;
   }
 };
@@ -30,7 +32,9 @@ export const useLanguage = () => {
           setLanguage(saved);
         }
       })
-      .catch(() => undefined);
+      .catch((caught) => {
+        reportNonFinancialFailure('language preference read', caught);
+      });
     return () => {
       mounted = false;
     };
@@ -45,7 +49,9 @@ export const useLanguage = () => {
   const select = useCallback((next: LanguageCode) => {
     setLanguage(next);
     setPickerOpen(false);
-    void SecureStore.setItemAsync(LANGUAGE_PREFERENCE_KEY, next).catch(() => undefined);
+    void SecureStore.setItemAsync(LANGUAGE_PREFERENCE_KEY, next).catch((caught) => {
+      reportNonFinancialFailure('language preference write', caught);
+    });
   }, []);
 
   const togglePicker = useCallback(() => setPickerOpen((current) => !current), []);

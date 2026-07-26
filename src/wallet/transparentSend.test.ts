@@ -118,4 +118,39 @@ describe('transparent send builder', () => {
       }),
     ).rejects.toThrow('No confirmed UTXO');
   });
+
+  it('refuses the complete send when one spendable legacy UTXO lacks raw transaction data', async () => {
+    const snapshot = await makeSnapshot();
+    const [legacy] = await crypto.deriveAddresses(mnemonic, [{
+      path: "m/44'/0'/0'/0/0",
+      scriptType: 'p2pkh',
+    }]);
+    expect(legacy).toBeDefined();
+    snapshot.addresses.push({
+      ...snapshot.addresses[0]!,
+      accountKey: 'legacy',
+      accountLabel: 'Legacy',
+      accountPath: "m/44'/0'/0'",
+      scriptType: 'p2pkh',
+      path: "m/44'/0'/0'/0/0",
+      address: legacy!.address,
+    });
+    snapshot.utxos.push({
+      txid: '33'.repeat(32),
+      vout: 0,
+      valueSats: 50_000_000,
+      height: 100,
+      address: legacy!.address,
+      confirmations: 12,
+      isCoinbase: false,
+    });
+
+    await expect(buildTransparentSend({
+      mnemonic,
+      snapshot,
+      toAddress: 'nito1qcr8te4kr609gcawutmrza0j4xv80jy8z540c02',
+      amountSats: parseNitoAmountToSats('0.25'),
+      crypto,
+    })).rejects.toThrow('legacy');
+  });
 });

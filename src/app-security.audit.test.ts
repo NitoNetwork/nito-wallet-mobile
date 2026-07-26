@@ -8,6 +8,10 @@ import tabsSource from './ui/tabs.tsx?raw';
 import vaultSource from './services/vault.ts?raw';
 import vaultCryptoSource from './services/vaultCrypto.ts?raw';
 import screensSource from './ui/screens.tsx?raw';
+import subscriptionsSource from './hooks/useWalletSubscriptions.ts?raw';
+import transparentScanSource from './wallet/transparentScan.ts?raw';
+import coinbaseSource from './wallet/coinbaseMaturity.ts?raw';
+import historyDbSource from './services/walletHistoryDb.ts?raw';
 import expoConfig from '../app.config.js?raw';
 
 describe('mobile wallet UX and security invariants', () => {
@@ -71,14 +75,43 @@ describe('mobile wallet UX and security invariants', () => {
     expect(appSource).toMatch(/const lockWallet = useCallback\(\(\) => \{[\s\S]*?walletSessionRef\.current\.invalidate\(\);/);
     expect(appSource).toContain('const session = walletSessionRef.current.capture(activeWallet.address);');
     expect(appSource.match(/walletSessionRef\.current\.isCurrent\(session\)/g)?.length ?? 0).toBeGreaterThanOrEqual(12);
-    expect(appSource).toContain('reconcileBroadcasts([txid], session)');
-    expect(appSource).toContain('reconcileBroadcasts(txids, session)');
+    expect(appSource).toContain('startBroadcastReconciliation([txid], session)');
+    expect(appSource).toContain('startBroadcastReconciliation(txids, session)');
+    expect(appSource).toMatch(
+      /reconcileBroadcasts\(txids, session\)\.catch\(reportNetworkFailure\)/,
+    );
   });
 
   it('bounds broadcast reconciliation and exposes transparent scan progress', () => {
     expect(appSource).toMatch(/mapWithConcurrency\(\s*txids,\s*BROADCAST_RECONCILIATION_CONCURRENCY,/);
     expect(appSource).toContain('onProgress: onScanProgress');
     expect(appSource).toContain('setHistoryProgress({ done, total });');
+  });
+
+  it('never disguises a failed financial read or write as complete data', () => {
+    expect(appSource).not.toMatch(/options\.silent[\s\S]{0,300}status: 'connected'/);
+    expect(appSource).not.toContain('client.connect().catch(() => undefined)');
+    expect(appSource).not.toMatch(/saveEnrichedHistoryRecords\([\s\S]{0,700}\.catch\(\(\) => undefined\)/);
+    expect(transparentScanSource).not.toContain('.catch(() => undefined)');
+    expect(coinbaseSource).not.toMatch(/catch\s*\{\s*return utxo;/);
+    expect(historyDbSource).not.toMatch(
+      /ALTER TABLE wallet_transactions ADD COLUMN \$\{column\};`\)\.catch\(\(\) => undefined\)/,
+    );
+    expect(historyDbSource).toContain('retrySqliteWrite');
+    expect(appSource).toMatch(/cacheReadFailed[\s\S]*?scanTransparentWallet/);
+    expect(appSource).toMatch(
+      /caught instanceof ElectrumSessionUnhealthyError[\s\S]*?await client\.connect\(\)[\s\S]*?snapshot = await scanNetwork\(\)/,
+    );
+    expect(appSource).toMatch(/const nextNetwork: NetworkState = preloaded \? \{\s*status: 'syncing'/);
+  });
+
+  it('keeps confirmed transactions visible when enrichment is unavailable', () => {
+    expect(tabsSource).toContain('const historyEntries = network.snapshot?.history ?? [];');
+  });
+
+  it('reports subscription read failures instead of dropping the subscription silently', () => {
+    expect(subscriptionsSource).toContain('onConnectionError');
+    expect(subscriptionsSource).toMatch(/catch \(error\) \{[\s\S]*?onConnectionError\(error\);/);
   });
 
   it('never recreates or replaces a vault after a stale PBKDF2 upgrade', () => {

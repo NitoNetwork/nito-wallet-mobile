@@ -85,6 +85,106 @@ describe('Nito Electrum helpers', () => {
     client.disconnect();
   });
 
+  it('marks a persistently failing session unhealthy and reconnects before the next read', async () => {
+    class RecoveringFakeWebSocket {
+      static instances = 0;
+      static readAttempts = 0;
+      static failReads = true;
+
+      onopen: (() => void) | null = null;
+      onerror: (() => void) | null = null;
+      onclose: (() => void) | null = null;
+      onmessage: ((event: { data: string }) => void) | null = null;
+
+      constructor(_url: string) {
+        RecoveringFakeWebSocket.instances += 1;
+        queueMicrotask(() => this.onopen?.());
+      }
+
+      send(raw: string) {
+        const request = JSON.parse(raw) as { id: number; method: string };
+        if (request.method === 'failing.read') {
+          RecoveringFakeWebSocket.readAttempts += 1;
+        }
+        const fails = request.method === 'failing.read' && RecoveringFakeWebSocket.failReads;
+        const result = request.method === 'blockchain.headers.subscribe'
+          ? { height: 123 }
+          : request.method === 'server.version'
+            ? ['Nito-ElectrumX', '1.4']
+            : [];
+        queueMicrotask(() => {
+          this.onmessage?.({
+            data: JSON.stringify(
+              fails
+                ? { id: request.id, error: { code: -32000, message: 'temporary read failure' } }
+                : { id: request.id, result },
+            ),
+          });
+        });
+      }
+
+      close() {
+        this.onclose?.();
+      }
+    }
+
+    vi.stubGlobal('WebSocket', RecoveringFakeWebSocket);
+    const client = new NitoElectrumClient(
+      [{ host: 'recovery.invalid', port: 50005, protocol: 'wss', priority: 1 }],
+      { timeoutMs: 1_000, maxConcurrentRequests: 6 },
+    );
+    await client.connect();
+
+    await expect(client.request('failing.read')).rejects.toThrow('temporary read failure');
+    expect(RecoveringFakeWebSocket.readAttempts).toBe(3);
+    expect(client.connected).toBe(false);
+
+    RecoveringFakeWebSocket.failReads = false;
+    await expect(client.request('failing.read')).resolves.toEqual([]);
+    expect(RecoveringFakeWebSocket.instances).toBe(2);
+    expect(client.connected).toBe(true);
+    client.disconnect();
+  });
+
+  it('rejects an active request immediately when its socket closes', async () => {
+    class ClosingFakeWebSocket {
+      onopen: (() => void) | null = null;
+      onerror: (() => void) | null = null;
+      onclose: (() => void) | null = null;
+      onmessage: ((event: { data: string }) => void) | null = null;
+
+      constructor(_url: string) {
+        queueMicrotask(() => this.onopen?.());
+      }
+
+      send(raw: string) {
+        const request = JSON.parse(raw) as { id: number; method: string };
+        if (request.method === 'closing.read') {
+          queueMicrotask(() => this.onclose?.());
+          return;
+        }
+        const result = request.method === 'blockchain.headers.subscribe'
+          ? { height: 123 }
+          : ['Nito-ElectrumX', '1.4'];
+        queueMicrotask(() => this.onmessage?.({ data: JSON.stringify({ id: request.id, result }) }));
+      }
+
+      close() {
+        this.onclose?.();
+      }
+    }
+
+    vi.stubGlobal('WebSocket', ClosingFakeWebSocket);
+    const client = new NitoElectrumClient(
+      [{ host: 'closing.invalid', port: 50005, protocol: 'wss', priority: 1 }],
+      { timeoutMs: 250, maxConcurrentRequests: 6 },
+    );
+    await client.connect();
+
+    await expect(client.request('closing.read')).rejects.toThrow('connection closed');
+    expect(client.connected).toBe(false);
+  });
+
   it('applies a configurable global ceiling and starts timeouts only after dispatch', async () => {
     class DelayedFakeWebSocket {
       static inFlight = 0;
@@ -213,7 +313,7 @@ describe('Nito Electrum helpers', () => {
       gapLimit: 20,
       crypto: createNitoWalletCryptoTestDouble(),
       maxConcurrentNetworkRequests: 40,
-    })).rejects.toThrow('Transparent wallet scan incomplete');
+    })).rejects.toThrow('rate limited');
     expect(RefusingOverloadWebSocket.overloaded).toBe(true);
     expect(RefusingOverloadWebSocket.peakInFlight).toBeGreaterThan(6);
     await new Promise((resolve) => setTimeout(resolve, 50));

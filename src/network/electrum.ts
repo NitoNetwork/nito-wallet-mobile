@@ -4,6 +4,8 @@ import { bech32, bech32m } from 'bech32';
 
 const ELECTRUM_PROTOCOL_VERSION = '1.4';
 const DEFAULT_TIMEOUT_MS = 30_000;
+const ELECTRUM_REQUEST_MAX_ATTEMPTS = 3;
+const ELECTRUM_REQUEST_RETRY_DELAY_MS = 100;
 export const DEFAULT_ELECTRUM_MAX_CONCURRENT_REQUESTS = 6;
 
 export type ElectrumServer = {
@@ -86,6 +88,17 @@ export type NitoElectrumClientOptions = {
   timeoutMs?: number;
   maxConcurrentRequests?: number;
 };
+
+export class ElectrumSessionUnhealthyError extends Error {
+  readonly originalError: Error;
+
+  constructor(cause: unknown) {
+    const originalError = cause instanceof Error ? cause : new Error(String(cause));
+    super(originalError.message);
+    this.name = 'ElectrumSessionUnhealthyError';
+    this.originalError = originalError;
+  }
+}
 
 type JsonRpcResponse = {
   id?: number;
@@ -295,32 +308,53 @@ export class NitoElectrumClient {
     throw lastError || new Error('Tous les serveurs ElectrumX sont indisponibles.');
   }
 
-  disconnect() {
-    if (this.socket) {
-      this.socket.close();
-    }
+  disconnect(reason: Error = new Error('ElectrumX connection closed.')) {
+    const socket = this.socket;
+    this.socket = null;
+    this.connected = false;
+    socket?.close();
+    this.rejectOutstandingRequests(reason);
+  }
 
+  private rejectOutstandingRequests(reason: Error) {
     for (const request of this.pending.values()) {
       clearTimeout(request.timer);
-      request.reject(new Error('ElectrumX connection closed.'));
+      request.reject(reason);
     }
 
     this.pending.clear();
-    const queuedError = new Error('ElectrumX connection closed.');
     for (const request of this.requestQueue.splice(0)) {
       this.recordFailedRequest();
-      request.reject(queuedError);
+      request.reject(reason);
     }
-    this.socket = null;
-    this.connected = false;
   }
 
   async request<T>(method: string, params: unknown[] = []) {
-    if (!this.connected || this.connectPromise) {
-      await this.connect();
+    let lastError: unknown;
+
+    for (let attempt = 1; attempt <= ELECTRUM_REQUEST_MAX_ATTEMPTS; attempt += 1) {
+      if (!this.connected || this.connectPromise) {
+        await this.connect();
+      }
+
+      try {
+        return await this.requestRaw<T>(method, params);
+      } catch (caught) {
+        lastError = caught;
+        if (!this.connected || caught instanceof ElectrumSessionUnhealthyError) {
+          throw caught;
+        }
+        if (attempt < ELECTRUM_REQUEST_MAX_ATTEMPTS) {
+          await new Promise<void>((resolve) => {
+            setTimeout(resolve, ELECTRUM_REQUEST_RETRY_DELAY_MS * attempt);
+          });
+        }
+      }
     }
 
-    return this.requestRaw<T>(method, params);
+    const unhealthyError = new ElectrumSessionUnhealthyError(lastError);
+    this.disconnect(unhealthyError);
+    throw unhealthyError;
   }
 
   async getAddressBalance(address: string): Promise<ElectrumBalance> {
@@ -440,11 +474,18 @@ export class NitoElectrumClient {
         if (this.socket === socket) {
           this.socket = null;
           this.connected = false;
+          this.rejectOutstandingRequests(
+            new ElectrumSessionUnhealthyError(new Error('ElectrumX connection closed unexpectedly.')),
+          );
         }
       };
 
       socket.onmessage = (event) => {
-        this.handleMessage(event.data);
+        try {
+          this.handleMessage(event.data);
+        } catch (caught) {
+          this.disconnect(new ElectrumSessionUnhealthyError(caught));
+        }
       };
     });
   }
@@ -511,7 +552,8 @@ export class NitoElectrumClient {
   }
 
   private sendRequestRaw<T = unknown>(method: string, params: unknown[] = []) {
-    if (!this.socket || !this.connected) {
+    const socket = this.socket;
+    if (!socket || !this.connected) {
       return Promise.reject(new Error('ElectrumX not connected.'));
     }
 
@@ -529,7 +571,13 @@ export class NitoElectrumClient {
         timer,
       });
 
-      this.socket?.send(JSON.stringify({ jsonrpc: '2.0', method, params, id }));
+      try {
+        socket.send(JSON.stringify({ jsonrpc: '2.0', method, params, id }));
+      } catch (caught) {
+        clearTimeout(timer);
+        this.pending.delete(id);
+        reject(caught instanceof Error ? caught : new Error(String(caught)));
+      }
     });
   }
 

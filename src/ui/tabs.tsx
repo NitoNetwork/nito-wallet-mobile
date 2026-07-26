@@ -182,9 +182,7 @@ export function HistoryTab({
   onExportHistory: () => void;
   onOpenTx: (txid: string) => void;
 }) {
-  const historyEntries = (network.snapshot?.history ?? []).filter(
-    (entry) => entry.direction !== undefined || entry.height <= 0,
-  );
+  const historyEntries = network.snapshot?.history ?? [];
   const loading = network.status === 'syncing' || historyProgress !== null || historySyncing;
   const historyPageCount = Math.max(1, Math.ceil(historyEntries.length / HISTORY_PAGE_SIZE));
   const activeHistoryPage = Math.min(historyPage, historyPageCount - 1);

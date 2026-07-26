@@ -81,11 +81,7 @@ export const annotateCoinbaseMaturity = async (
     if (known !== undefined) return { ...utxo, isCoinbase: known };
     if (utxo.confirmations <= 0) return { ...utxo, isCoinbase: false };
     if (utxo.confirmations >= COINBASE_MATURITY_CONFIRMATIONS) return utxo;
-    try {
-      const transactionHex = await loadTransactionHex(utxo.txid);
-      return { ...utxo, isCoinbase: isCoinbaseTransactionHex(transactionHex) };
-    } catch {
-      return utxo;
-    }
+    const transactionHex = await loadTransactionHex(utxo.txid);
+    return { ...utxo, isCoinbase: isCoinbaseTransactionHex(transactionHex) };
   });
 };

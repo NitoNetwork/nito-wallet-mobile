@@ -132,7 +132,6 @@ const prepareSpendableInputs = async (
 ) => {
   const owners = addressOwnerMap(snapshot);
   const spendable: PreparedSpendableInput[] = [];
-  let skippedLegacyCount = 0;
   const candidates = snapshot.utxos
     .filter(isTransparentUtxoSpendable)
     .map((utxo) => ({ utxo, owner: owners.get(utxo.address) }))
@@ -161,8 +160,7 @@ const prepareSpendableInputs = async (
 
     if (owner.scriptType === 'p2pkh') {
       if (!utxo.rawTx) {
-        skippedLegacyCount += 1;
-        continue;
+        throw new Error('Fonds legacy visibles mais donnees de signature indisponibles. Reessaie apres synchronisation.');
       }
 
       input.nonWitnessUtxo = utxo.rawTx;
@@ -187,10 +185,6 @@ const prepareSpendableInputs = async (
   }
 
   if (spendable.length === 0) {
-    if (skippedLegacyCount > 0) {
-      throw new Error('Fonds visibles mais donnees de signature legacy indisponibles. Reessaie apres synchronisation.');
-    }
-
     throw new Error('No confirmed UTXO available for this send.');
   }
 
@@ -514,14 +508,10 @@ const buildTransparentTx = ({
   const addressCodec = btc.Address(NITO_SIGNER_NETWORK);
   const ownedAddressByScript = new Map<string, string>();
   for (const owner of snapshot.addresses) {
-    try {
-      const script = btc.OutScript.encode(
-        addressCodec.decode(owner.address) as Parameters<typeof btc.OutScript.encode>[0],
-      );
-      ownedAddressByScript.set(bytesToHex(script), owner.address);
-    } catch {
-      continue;
-    }
+    const script = btc.OutScript.encode(
+      addressCodec.decode(owner.address) as Parameters<typeof btc.OutScript.encode>[0],
+    );
+    ownedAddressByScript.set(bytesToHex(script), owner.address);
   }
   const ownedAddressByAddress = new Map(
     snapshot.addresses.map((owner) => [owner.address.toLowerCase(), owner.address]),

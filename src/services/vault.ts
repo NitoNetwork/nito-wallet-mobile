@@ -39,5 +39,5 @@ export const loadBiometricSecret = async () =>
   });
 
 export const deleteBiometricSecret = async () => {
-  await SecureStore.deleteItemAsync(BIOMETRIC_SECRET_KEY).catch(() => undefined);
+  await SecureStore.deleteItemAsync(BIOMETRIC_SECRET_KEY);
 };

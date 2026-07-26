@@ -82,4 +82,14 @@ describe('coinbase maturity', () => {
     expect(classified).toHaveLength(18);
     expect(peakInFlight).toBeLessThanOrEqual(6);
   });
+
+  it('rejects classification when a required transaction cannot be read', async () => {
+    await expect(annotateCoinbaseMaturity(
+      [utxo(1)],
+      [],
+      async () => {
+        throw new Error('coinbase source unavailable');
+      },
+    )).rejects.toThrow('coinbase source unavailable');
+  });
 });

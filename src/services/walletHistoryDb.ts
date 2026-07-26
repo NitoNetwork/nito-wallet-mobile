@@ -2,6 +2,7 @@ import * as SQLite from 'expo-sqlite';
 
 import type { ElectrumHistoryEntry } from '../network/electrum';
 import type { TransparentWalletSnapshot } from '../wallet/transparentScan';
+import { isDuplicateColumnError, retrySqliteWrite } from './sqliteReliability';
 import { normalizeWalletHistory } from './walletHistory';
 import type { EnrichedHistoryRecord } from './walletHistory';
 
@@ -43,9 +44,9 @@ export type WalletSnapshotCache = {
 
 let dbPromise: Promise<SQLite.SQLiteDatabase> | null = null;
 
-const openHistoryDb = async () => {
-  dbPromise ??= SQLite.openDatabaseAsync(DB_NAME).then(async (db) => {
-    await db.execAsync(`
+const initializeHistoryDb = async () => {
+  const db = await SQLite.openDatabaseAsync(DB_NAME);
+  await retrySqliteWrite(() => db.execAsync(`
       PRAGMA journal_mode = WAL;
       CREATE TABLE IF NOT EXISTS wallet_sync_state (
         wallet_id TEXT PRIMARY KEY NOT NULL,
@@ -68,38 +69,70 @@ const openHistoryDb = async () => {
         height INTEGER NOT NULL DEFAULT 0,
         updated_at TEXT NOT NULL
       );
-    `);
+    `));
 
-    for (const column of [
-      'amount_sats INTEGER',
-      'direction TEXT',
-      'fee_sats INTEGER',
-      'enriched_at TEXT',
-      'counterparty TEXT',
-      'block_time INTEGER',
-    ]) {
-      await db.execAsync(`ALTER TABLE wallet_transactions ADD COLUMN ${column};`).catch(() => undefined);
-    }
-
-    try {
-      const version = await db.getFirstAsync<{ user_version: number }>('PRAGMA user_version');
-      if ((version?.user_version ?? 0) < 1) {
-        await db.execAsync(
-          `UPDATE wallet_transactions
-           SET amount_sats = NULL, direction = NULL, fee_sats = NULL, counterparty = NULL, enriched_at = NULL
-           WHERE direction IS NOT NULL AND block_time IS NULL`,
-        );
-        await db.execAsync('PRAGMA user_version = 1');
+  for (const column of [
+    'amount_sats INTEGER',
+    'direction TEXT',
+    'fee_sats INTEGER',
+    'enriched_at TEXT',
+    'counterparty TEXT',
+    'block_time INTEGER',
+  ]) {
+    await retrySqliteWrite(async () => {
+      try {
+        await db.execAsync(`ALTER TABLE wallet_transactions ADD COLUMN ${column};`);
+      } catch (caught) {
+        if (!isDuplicateColumnError(caught)) {
+          throw caught;
+        }
       }
-    } catch {
-      // Version bump is retried on the next launch if the migration failed.
-    }
+    });
+  }
 
-    return db;
+  const version = await db.getFirstAsync<{ user_version: number }>('PRAGMA user_version');
+  if ((version?.user_version ?? 0) < 1) {
+    await retrySqliteWrite(async () => {
+      await db.execAsync(
+        `UPDATE wallet_transactions
+         SET amount_sats = NULL, direction = NULL, fee_sats = NULL, counterparty = NULL, enriched_at = NULL
+         WHERE direction IS NOT NULL AND block_time IS NULL`,
+      );
+      await db.execAsync('PRAGMA user_version = 1');
+    });
+  }
+
+  return db;
+};
+
+const openHistoryDb = async () => {
+  dbPromise ??= initializeHistoryDb().catch((caught) => {
+    dbPromise = null;
+    throw caught;
   });
 
   return dbPromise;
 };
+
+const runWriteTransaction = async (
+  db: SQLite.SQLiteDatabase,
+  operation: () => Promise<void>,
+) => retrySqliteWrite(async () => {
+  await db.execAsync('BEGIN IMMEDIATE TRANSACTION');
+  try {
+    await operation();
+    await db.execAsync('COMMIT');
+  } catch (caught) {
+    try {
+      await db.execAsync('ROLLBACK');
+    } catch (rollbackError) {
+      const primary = caught instanceof Error ? caught : new Error(String(caught));
+      const rollback = rollbackError instanceof Error ? rollbackError : new Error(String(rollbackError));
+      throw new Error(`${primary.message} Rollback failed: ${rollback.message}`);
+    }
+    throw caught;
+  }
+});
 
 export const loadWalletHistoryCache = async (walletId: string): Promise<WalletHistoryCache> => {
   const db = await openHistoryDb();
@@ -117,9 +150,12 @@ export const loadWalletHistoryCache = async (walletId: string): Promise<WalletHi
   const history: ElectrumHistoryEntry[] = rows.map((row) => {
     const entry: ElectrumHistoryEntry = { txid: row.txid, height: row.height, address: row.address };
     if (row.direction === 'received' || row.direction === 'sent' || row.direction === 'self') {
+      if (row.amount_sats === null || row.fee_sats === null) {
+        throw new Error(`Incomplete enriched history cache row for ${row.txid}.`);
+      }
       entry.direction = row.direction;
-      entry.amountSats = row.amount_sats ?? 0;
-      entry.feeSats = row.fee_sats ?? 0;
+      entry.amountSats = row.amount_sats;
+      entry.feeSats = row.fee_sats;
       entry.counterparty = row.counterparty ?? '';
       if (row.block_time !== null) entry.blockTime = row.block_time;
     }
@@ -155,7 +191,7 @@ export const saveWalletSnapshotCache = async (
   height: number,
 ) => {
   const db = await openHistoryDb();
-  await db.runAsync(
+  await retrySqliteWrite(() => db.runAsync(
     `INSERT INTO wallet_snapshot_cache (wallet_id, snapshot_json, height, updated_at)
      VALUES (?, ?, ?, ?)
      ON CONFLICT(wallet_id) DO UPDATE SET
@@ -166,7 +202,7 @@ export const saveWalletSnapshotCache = async (
     JSON.stringify(snapshot),
     Math.max(0, height),
     new Date().toISOString(),
-  );
+  ));
 };
 
 export const saveWalletHistoryCache = async (
@@ -178,8 +214,7 @@ export const saveWalletHistoryCache = async (
   const now = new Date().toISOString();
   const normalized = normalizeWalletHistory(history);
 
-  await db.execAsync('BEGIN IMMEDIATE TRANSACTION');
-  try {
+  await runWriteTransaction(db, async () => {
     for (const entry of normalized) {
       await db.runAsync(
         `INSERT INTO wallet_transactions (wallet_id, txid, height, address, first_seen_at)
@@ -205,12 +240,7 @@ export const saveWalletHistoryCache = async (
       Math.max(0, fullHistoryHeight),
       now,
     );
-
-    await db.execAsync('COMMIT');
-  } catch (error) {
-    await db.execAsync('ROLLBACK').catch(() => undefined);
-    throw error;
-  }
+  });
 };
 
 export const saveEnrichedHistoryRecords = async (
@@ -221,8 +251,7 @@ export const saveEnrichedHistoryRecords = async (
   const db = await openHistoryDb();
   const now = new Date().toISOString();
 
-  await db.execAsync('BEGIN IMMEDIATE TRANSACTION');
-  try {
+  await runWriteTransaction(db, async () => {
     for (const record of records) {
       await db.runAsync(
         `UPDATE wallet_transactions
@@ -239,16 +268,14 @@ export const saveEnrichedHistoryRecords = async (
         record.height,
       );
     }
-    await db.execAsync('COMMIT');
-  } catch (error) {
-    await db.execAsync('ROLLBACK').catch(() => undefined);
-    throw error;
-  }
+  });
 };
 
 export const clearWalletHistoryCache = async (walletId: string) => {
   const db = await openHistoryDb();
-  await db.runAsync('DELETE FROM wallet_transactions WHERE wallet_id = ?', walletId);
-  await db.runAsync('DELETE FROM wallet_sync_state WHERE wallet_id = ?', walletId);
-  await db.runAsync('DELETE FROM wallet_snapshot_cache WHERE wallet_id = ?', walletId);
+  await runWriteTransaction(db, async () => {
+    await db.runAsync('DELETE FROM wallet_transactions WHERE wallet_id = ?', walletId);
+    await db.runAsync('DELETE FROM wallet_sync_state WHERE wallet_id = ?', walletId);
+    await db.runAsync('DELETE FROM wallet_snapshot_cache WHERE wallet_id = ?', walletId);
+  });
 };

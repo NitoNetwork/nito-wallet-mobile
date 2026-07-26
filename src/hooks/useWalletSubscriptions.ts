@@ -42,6 +42,7 @@ export const useWalletSubscriptions = ({
   syncInFlightRef,
   onHeightAdvance,
   requestSync,
+  onConnectionError,
 }: {
   enabled: boolean;
   walletAddress: string | undefined;
@@ -51,6 +52,7 @@ export const useWalletSubscriptions = ({
   syncInFlightRef: MutableRefObject<boolean>;
   onHeightAdvance: (height: number) => void;
   requestSync: (options: SyncOptions) => void;
+  onConnectionError: (error: unknown) => void;
 }) => {
   const statusRef = useRef<Map<string, string | null>>(new Map());
   const unsubscribeRef = useRef<Map<string, () => void>>(new Map());
@@ -165,8 +167,10 @@ export const useWalletSubscriptions = ({
             if (!scannedAddress.used && subscription.status !== null && !syncInFlightRef.current) {
               requestSync({ force: true, silent: true, rescanGap: true });
             }
-          } catch {
+          } catch (error) {
             statusRef.current.delete(address);
+            onConnectionError(error);
+            return;
           }
         }
       } finally {
@@ -179,7 +183,7 @@ export const useWalletSubscriptions = ({
     return () => {
       cancelled = true;
     };
-  }, [clientRef, enabled, networkRef, requestSync, snapshot, syncInFlightRef]);
+  }, [clientRef, enabled, networkRef, onConnectionError, requestSync, snapshot, syncInFlightRef]);
 
   return { clearSubscriptions };
 };

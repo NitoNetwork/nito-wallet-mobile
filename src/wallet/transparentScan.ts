@@ -1,4 +1,5 @@
 import type { ElectrumBalance, ElectrumHistoryEntry, ElectrumUtxo } from '../network/electrum';
+import { ElectrumSessionUnhealthyError } from '../network/electrum';
 import { nitoWalletCrypto } from '../native/nitoWalletCrypto';
 import { createConcurrencyLimiter, mapWithConcurrency } from '../services/concurrency';
 import type {
@@ -82,6 +83,10 @@ export type TransparentScanProgress = (done: number, total: number) => void;
 
 type ElectrumScanOperation = 'history' | 'utxos';
 type NetworkTaskRunner = <T>(task: () => Promise<T>) => Promise<T>;
+type ScanControl = {
+  failure: unknown;
+  fail(caught: unknown): void;
+};
 
 type ScanProgressTracker = {
   reserve(count: number): void;
@@ -111,6 +116,26 @@ const createScanProgressTracker = (
       onProgress(done, total);
     },
   };
+};
+
+const createScanControl = (): ScanControl => ({
+  failure: undefined,
+  fail(caught) {
+    if (this.failure === undefined) {
+      this.failure = caught;
+    }
+  },
+});
+
+const settleAll = async <T>(tasks: readonly Promise<T>[]): Promise<T[]> => {
+  const settled = await Promise.allSettled(tasks);
+  const failure = settled.find(
+    (result): result is PromiseRejectedResult => result.status === 'rejected',
+  );
+  if (failure) {
+    throw failure.reason;
+  }
+  return settled.map((result) => (result as PromiseFulfilledResult<T>).value);
 };
 
 export class TransparentScanIncompleteError extends Error {
@@ -159,6 +184,9 @@ const readElectrumWithRetry = async <T>({
     try {
       return await read();
     } catch (caught) {
+      if (caught instanceof ElectrumSessionUnhealthyError) {
+        throw caught;
+      }
       lastError = caught;
       if (attempt < ELECTRUM_READ_MAX_ATTEMPTS) {
         await waitBeforeElectrumRetry(attempt);
@@ -287,12 +315,12 @@ const hydrateLegacyUtxos = async (
     SCAN_COLLECTION_CONCURRENCY,
     async (utxo) => ({
       ...utxo,
-      rawTx: await runNetworkTask(() => electrum.getTransactionHex!(utxo.txid)).catch(() => undefined),
+      rawTx: await runNetworkTask(() => electrum.getTransactionHex!(utxo.txid)),
     }),
   );
 };
 
-const scanDerivedAddress = async (
+const scanDerivedAddressUnchecked = async (
   derived: DerivedAddress,
   electrum: ElectrumReader,
   includeHistory: boolean,
@@ -357,6 +385,31 @@ const scanDerivedAddress = async (
   return { ...derived, balance, utxos, history, used };
 };
 
+const scanDerivedAddress = (
+  derived: DerivedAddress,
+  electrum: ElectrumReader,
+  includeHistory: boolean,
+  runNetworkTask: NetworkTaskRunner,
+  control: ScanControl,
+  progress?: ScanProgressTracker,
+  previousAddress?: ScannedAddress,
+): Promise<ScannedAddress> => {
+  if (control.failure !== undefined) {
+    return Promise.reject(control.failure);
+  }
+  return scanDerivedAddressUnchecked(
+    derived,
+    electrum,
+    includeHistory,
+    runNetworkTask,
+    progress,
+    previousAddress,
+  ).catch((caught) => {
+    control.fail(caught);
+    throw caught;
+  });
+};
+
 const scanBranch = async (
   mnemonic: string,
   template: AccountTemplate,
@@ -366,6 +419,7 @@ const scanBranch = async (
   includeHistory: boolean,
   crypto: NitoWalletCryptoApi,
   runNetworkTask: NetworkTaskRunner,
+  control: ScanControl,
   progress?: ScanProgressTracker,
   previousSnapshot?: TransparentWalletSnapshot,
 ) => {
@@ -387,6 +441,7 @@ const scanBranch = async (
         electrum,
         includeHistory,
         runNetworkTask,
+        control,
         progress,
         address,
       ),
@@ -443,12 +498,13 @@ const scanBranch = async (
       return derived;
     });
     progress?.reserve(derivedBatch.length);
-    const scannedBatch = await Promise.all(
+    const scannedBatch = await settleAll(
       derivedBatch.map((derived) => scanDerivedAddress(
         derived,
         electrum,
         includeHistory,
         runNetworkTask,
+        control,
         progress,
       )),
     );
@@ -481,10 +537,16 @@ export const scanTransparentWallet = async ({
   onProgress?: TransparentScanProgress;
   maxConcurrentNetworkRequests?: number;
 }): Promise<TransparentWalletSnapshot> => {
+  const control = createScanControl();
   const networkLimiter = createConcurrencyLimiter(maxConcurrentNetworkRequests);
-  const runNetworkTask: NetworkTaskRunner = (task) => networkLimiter.run(task);
+  const runNetworkTask: NetworkTaskRunner = (task) => networkLimiter.run(() => {
+    if (control.failure !== undefined) {
+      return Promise.reject(control.failure);
+    }
+    return task();
+  });
   const progress = createScanProgressTracker(onProgress);
-  const scannedAccounts = await Promise.all(
+  const scannedAccounts = await settleAll(
     ACCOUNT_TEMPLATES.flatMap((template) => [
       scanBranch(
         mnemonic,
@@ -495,6 +557,7 @@ export const scanTransparentWallet = async ({
         includeHistory,
         crypto,
         runNetworkTask,
+        control,
         progress,
         previousSnapshot ?? undefined,
       ),
@@ -507,6 +570,7 @@ export const scanTransparentWallet = async ({
         includeHistory,
         crypto,
         runNetworkTask,
+        control,
         progress,
         previousSnapshot ?? undefined,
       ),
@@ -536,8 +600,14 @@ export const refreshKnownUsedAddresses = async ({
       ? requestedAddresses.has(address.address)
       : address.used || address.utxos.length > 0 || address.balance.unconfirmedSats !== 0,
   );
+  const control = createScanControl();
   const networkLimiter = createConcurrencyLimiter(SCAN_NETWORK_CONCURRENCY);
-  const runNetworkTask: NetworkTaskRunner = (task) => networkLimiter.run(task);
+  const runNetworkTask: NetworkTaskRunner = (task) => networkLimiter.run(() => {
+    if (control.failure !== undefined) {
+      return Promise.reject(control.failure);
+    }
+    return task();
+  });
   const progress = createScanProgressTracker(onProgress);
   progress?.reserve(targets.length);
   const refreshed = await mapWithConcurrency(
@@ -548,6 +618,7 @@ export const refreshKnownUsedAddresses = async ({
       electrum,
       includeHistory,
       runNetworkTask,
+      control,
       progress,
       address,
     ),

@@ -6,6 +6,7 @@ import { deriveP2wpkhAddress, refreshKnownUsedAddresses, scanP2wpkhAccount } fro
 
 const mnemonic = 'abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about';
 const crypto = createNitoWalletCryptoTestDouble();
+const regularTransaction = `0100000001${'11'.repeat(32)}000000000100ffffffff0000000000`;
 
 describe('transparent HD scan', () => {
   it('derives the same primary Bech32 address as the web wallet', async () => {
@@ -38,6 +39,9 @@ describe('transparent HD scan', () => {
               { txid: 'c'.repeat(64), height: 0, address },
             ]
           : [];
+      },
+      async getTransactionHex(): Promise<string> {
+        return regularTransaction;
       },
     };
 
@@ -235,6 +239,45 @@ describe('transparent HD scan', () => {
     });
 
     expect(peakInFlight).toBeLessThanOrEqual(6);
+  });
+
+  it('rejects the scan when legacy transaction hydration fails', async () => {
+    const [legacyAddress] = await crypto.deriveAddresses(mnemonic, [{
+      path: "m/44'/0'/0'/0/0",
+      scriptType: 'p2pkh',
+    }]);
+    const fakeReader = {
+      async getAddressBalance(): Promise<ElectrumBalance> {
+        return { confirmedSats: 0, unconfirmedSats: 0, totalSats: 0 };
+      },
+      async getAddressHistory(address: string): Promise<ElectrumHistoryEntry[]> {
+        return address === legacyAddress?.address
+          ? [{ txid: 'f'.repeat(64), height: 100, address }]
+          : [];
+      },
+      async getAddressUtxos(address: string): Promise<ElectrumUtxo[]> {
+        return address === legacyAddress?.address
+          ? [{
+              txid: 'f'.repeat(64),
+              vout: 0,
+              valueSats: 100,
+              height: 1,
+              address,
+              confirmations: 200,
+            }]
+          : [];
+      },
+      async getTransactionHex(): Promise<string> {
+        throw new Error('legacy transaction unavailable');
+      },
+    };
+
+    await expect(scanP2wpkhAccount({
+      mnemonic,
+      electrum: fakeReader,
+      gapLimit: 1,
+      crypto,
+    })).rejects.toThrow('legacy transaction unavailable');
   });
 
   it('reports address progress through the complete cold scan', async () => {
