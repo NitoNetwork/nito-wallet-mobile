@@ -52,6 +52,31 @@ describe('i18n coverage', () => {
     }
   });
 
+  it('resolves the multi-recipient controls in every language', () => {
+    const expected = {
+      en: 'Add recipient',
+      zh: '添加收款人',
+      hi: 'प्राप्तकर्ता जोड़ें',
+      es: 'Añadir destinatario',
+      fr: 'Ajouter un destinataire',
+      ar: 'إضافة مستلم',
+      bn: 'প্রাপক যোগ করুন',
+      pt: 'Adicionar destinatário',
+      ru: 'Добавить получателя',
+    } satisfies Record<LanguageCode, string>;
+
+    for (const code of Object.keys(expected) as LanguageCode[]) {
+      const t = makeTranslator(code);
+      expect(t('send.addRecipient')).toBe(expected[code]);
+      expect(t('send.totalWithFees', { amount: '1' })).toContain('1');
+      if (code !== 'en') {
+        expect(t('send.duplicateRecipientWarning')).not.toBe(
+          makeTranslator('en')('send.duplicateRecipientWarning'),
+        );
+      }
+    }
+  });
+
   it('resolves every settings section title in every language', () => {
     const expected = {
       en: ['Security', 'Display', 'Network and synchronization', 'About', 'Danger zone'],

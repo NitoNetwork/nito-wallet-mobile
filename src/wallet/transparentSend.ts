@@ -48,12 +48,27 @@ export type PreparedTransparentTx = {
   }[];
 };
 
+export type TransparentSendOutput = {
+  address: string;
+  amountSats: bigint;
+};
+
+export type PreparedTransparentSend = PreparedTransparentTx & {
+  recipients: TransparentSendOutput[];
+};
+
 export type MaxTransparentSendAmount = {
   amountSats: bigint;
   feeSats: number;
   inputCount: number;
   outputCount: number;
   changeUsed: boolean;
+};
+
+export type TransparentSendEstimate = Omit<MaxTransparentSendAmount, 'amountSats'> & {
+  amountSats: bigint;
+  totalSats: bigint;
+  fitsAvailable: boolean;
 };
 
 export const parseNitoAmountToSats = (amount: string) => {
@@ -234,33 +249,84 @@ const selectSpend = ({
   );
 };
 
-export const calculateMaxTransparentSendAmount = ({
-  mnemonic,
-  snapshot,
-  toAddress,
-  feePerVbyte = DEFAULT_FEE_PER_VBYTE,
-  changeAddress,
-  crypto = nitoWalletCrypto,
-}: {
+type CalculateMaxTransparentSendAmountArgs = {
   mnemonic: string;
   snapshot: TransparentWalletSnapshot;
-  toAddress: string;
   feePerVbyte?: bigint;
   changeAddress?: string;
   crypto?: NitoWalletCryptoApi;
-}): Promise<MaxTransparentSendAmount> => {
+} & (
+  {
+    toAddress: string;
+    outputs?: never;
+    targetIndex?: never;
+  }
+  | {
+    toAddress?: never;
+    outputs: TransparentSendOutput[];
+    targetIndex: number;
+  }
+);
+
+const normalizeSendOutputs = (outputs: TransparentSendOutput[]) => {
+  if (outputs.length === 0) {
+    throw new Error('At least one recipient is required.');
+  }
+
+  return outputs.map((output) => {
+    const address = output.address.trim();
+    if (!address) {
+      throw new Error('A recipient address is required.');
+    }
+    if (output.amountSats < DUST_LIMIT_SATS) {
+      throw new Error('A recipient output is dust.');
+    }
+    return { address, amountSats: output.amountSats };
+  });
+};
+
+export const calculateMaxTransparentSendAmount = (
+  args: CalculateMaxTransparentSendAmountArgs,
+): Promise<MaxTransparentSendAmount> => {
   return (async () => {
+  const {
+    mnemonic,
+    snapshot,
+    feePerVbyte = DEFAULT_FEE_PER_VBYTE,
+    changeAddress,
+    crypto = nitoWalletCrypto,
+  } = args;
   const { spendable, totalSats } = await prepareSpendableInputs(mnemonic, snapshot, crypto);
   const resolvedChangeAddress = resolveChangeAddress(snapshot, changeAddress);
+  const multiOutputs = args.outputs;
+  const targetIndex = multiOutputs ? (args.targetIndex ?? 0) : 0;
+  const candidateOutputs = multiOutputs
+    ? multiOutputs.map((output) => ({ ...output, address: output.address.trim() }))
+    : [{ address: args.toAddress.trim(), amountSats: 0n }];
+  if (
+    targetIndex < 0
+    || targetIndex >= candidateOutputs.length
+    || !candidateOutputs[targetIndex]?.address
+  ) {
+    throw new Error('Max recipient is unavailable.');
+  }
+  const fixedOutputs = candidateOutputs.filter((_, index) => index !== targetIndex);
+  if (fixedOutputs.length > 0) {
+    normalizeSendOutputs(fixedOutputs);
+  }
+  const fixedTotalSats = fixedOutputs.reduce((total, output) => total + output.amountSats, 0n);
   let low = DUST_LIMIT_SATS;
-  let high = totalSats;
+  let high = totalSats - fixedTotalSats;
   let best: MaxTransparentSendAmount | null = null;
 
   while (low <= high) {
     const amountSats = (low + high) / 2n;
     const selected = selectSpend({
       spendable,
-      outputs: [{ address: toAddress, amount: amountSats }],
+      outputs: candidateOutputs.map((output, index) => ({
+        address: output.address,
+        amount: index === targetIndex ? amountSats : output.amountSats,
+      })),
       feePerVbyte,
       changeAddress: resolvedChangeAddress,
     });
@@ -285,6 +351,72 @@ export const calculateMaxTransparentSendAmount = ({
 
   return best;
   })();
+};
+
+export const estimateTransparentMultiSend = async ({
+  mnemonic,
+  snapshot,
+  outputs,
+  feePerVbyte = DEFAULT_FEE_PER_VBYTE,
+  changeAddress,
+  crypto = nitoWalletCrypto,
+}: {
+  mnemonic: string;
+  snapshot: TransparentWalletSnapshot;
+  outputs: TransparentSendOutput[];
+  feePerVbyte?: bigint;
+  changeAddress?: string;
+  crypto?: NitoWalletCryptoApi;
+}): Promise<TransparentSendEstimate> => {
+  const normalizedOutputs = normalizeSendOutputs(outputs);
+  const { spendable } = await prepareSpendableInputs(mnemonic, snapshot, crypto);
+  const selected = selectSpend({
+    spendable,
+    outputs: normalizedOutputs.map((output) => ({
+      address: output.address,
+      amount: output.amountSats,
+    })),
+    feePerVbyte,
+    changeAddress: resolveChangeAddress(snapshot, changeAddress),
+  });
+  const amountSats = normalizedOutputs.reduce(
+    (total, output) => total + output.amountSats,
+    0n,
+  );
+
+  if (selected?.tx) {
+    const feeSats = Number(selected.tx.fee || selected.fee);
+    return {
+      amountSats,
+      feeSats,
+      totalSats: amountSats + BigInt(feeSats),
+      fitsAvailable: true,
+      inputCount: selected.inputs.length,
+      outputCount: selected.outputs.length,
+      changeUsed: selected.change,
+    };
+  }
+
+  const targetIndex = normalizedOutputs.length - 1;
+  const max = await calculateMaxTransparentSendAmount({
+    mnemonic,
+    snapshot,
+    outputs: normalizedOutputs,
+    targetIndex,
+    feePerVbyte,
+    changeAddress,
+    crypto,
+  });
+
+  return {
+    amountSats,
+    feeSats: max.feeSats,
+    totalSats: amountSats + BigInt(max.feeSats),
+    fitsAvailable: false,
+    inputCount: max.inputCount,
+    outputCount: max.outputCount,
+    changeUsed: max.changeUsed,
+  };
 };
 
 const MAX_STANDARD_CONSOLIDATION_VBYTES = 90_000;
@@ -538,6 +670,37 @@ const buildTransparentTx = ({
   })();
 };
 
+export const buildTransparentMultiSend = async ({
+  mnemonic,
+  snapshot,
+  outputs,
+  feePerVbyte = DEFAULT_FEE_PER_VBYTE,
+  changeAddress,
+  crypto = nitoWalletCrypto,
+}: {
+  mnemonic: string;
+  snapshot: TransparentWalletSnapshot;
+  outputs: TransparentSendOutput[];
+  feePerVbyte?: bigint;
+  changeAddress?: string;
+  crypto?: NitoWalletCryptoApi;
+}): Promise<PreparedTransparentSend> => {
+  const recipients = normalizeSendOutputs(outputs);
+  const transaction = await buildTransparentTx({
+    mnemonic,
+    snapshot,
+    outputs: recipients.map((recipient) => ({
+      address: recipient.address,
+      amount: recipient.amountSats,
+    })),
+    feePerVbyte,
+    changeAddress,
+    crypto,
+  });
+
+  return { ...transaction, recipients };
+};
+
 export const buildTransparentSend = ({
   mnemonic,
   snapshot,
@@ -554,11 +717,11 @@ export const buildTransparentSend = ({
   feePerVbyte?: bigint;
   changeAddress?: string;
   crypto?: NitoWalletCryptoApi;
-}): Promise<PreparedTransparentTx> =>
-  buildTransparentTx({
+}): Promise<PreparedTransparentSend> =>
+  buildTransparentMultiSend({
     mnemonic,
     snapshot,
-    outputs: [{ address: toAddress, amount: amountSats }],
+    outputs: [{ address: toAddress, amountSats }],
     feePerVbyte,
     changeAddress,
     crypto,

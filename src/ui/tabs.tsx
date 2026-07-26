@@ -17,7 +17,7 @@ import type { ElectrumServerPreference } from '../services/electrumClientFactory
 import { loadTransactionOutputCache } from '../services/walletHistoryDb';
 import { isTransparentUtxoSpendable } from '../wallet/coinbaseMaturity';
 import { satoshisToNito } from '../wallet/transparentScan';
-import type { PreparedTransparentConsolidation, PreparedTransparentTx } from '../wallet/transparentSend';
+import type { PreparedTransparentConsolidation, PreparedTransparentSend } from '../wallet/transparentSend';
 import { ActionButton, PasswordField } from './components';
 import {
   BALANCE_DECIMAL_OPTIONS,
@@ -29,6 +29,10 @@ import {
   shortAddress,
   type BalanceDecimals,
 } from './format';
+import {
+  duplicateRecipientAddresses,
+  type SendRecipientDraft,
+} from './sendRecipients';
 import { styles } from './styles';
 import type { BiometricMethod, NetworkState, PendingAction, Wallet } from './types';
 
@@ -59,12 +63,14 @@ export function SendTab({
   actionLocked,
   pendingAction,
   broadcasting,
-  sendAddress,
-  sendAmount,
+  recipients,
+  sendEstimate,
+  sendEstimatePending,
   preparedTx,
   preparedConsolidation,
-  onChangeSendAddress,
-  onChangeSendAmount,
+  onChangeRecipient,
+  onAddRecipient,
+  onRemoveRecipient,
   onOpenQrScanner,
   onFillMax,
   onPrepareSend,
@@ -77,67 +83,139 @@ export function SendTab({
   actionLocked: boolean;
   pendingAction: PendingAction | null;
   broadcasting: boolean;
-  sendAddress: string;
-  sendAmount: string;
-  preparedTx: PreparedTransparentTx | null;
+  recipients: SendRecipientDraft[];
+  sendEstimate: { feeSats: number; totalSats: bigint; fitsAvailable: boolean } | null;
+  sendEstimatePending: boolean;
+  preparedTx: PreparedTransparentSend | null;
   preparedConsolidation: PreparedTransparentConsolidation | null;
-  onChangeSendAddress: (value: string) => void;
-  onChangeSendAmount: (value: string) => void;
-  onOpenQrScanner: () => void;
-  onFillMax: () => void;
+  onChangeRecipient: (recipientId: number, field: 'address' | 'amount', value: string) => void;
+  onAddRecipient: () => void;
+  onRemoveRecipient: (recipientId: number) => void;
+  onOpenQrScanner: (recipientId: number) => void;
+  onFillMax: (recipientId: number) => void;
   onPrepareSend: () => void;
   onBroadcastTx: () => void;
   onBroadcastConsolidation: () => void;
 }) {
   const consolidationT = makeConsolidationTranslator(language);
-  const amountDisabled = actionLocked || !network.snapshot || network.status === 'syncing' || !sendAddress.trim();
+  const duplicateAddresses = duplicateRecipientAddresses(recipients);
+  const recipientsComplete = recipients.every(
+    (recipient) => recipient.address.trim() && recipient.amount.trim(),
+  );
   return (
     <View style={styles.card}>
       <Text style={styles.sectionTitle}>{t('send.title')}</Text>
       <Text style={styles.body}>{t('send.body')}</Text>
-      <View style={styles.destinationRow}>
-        <TextInput
-          value={sendAddress}
-          onChangeText={onChangeSendAddress}
-          placeholder={t('send.destination')}
-          placeholderTextColor="#6d7892"
-          autoCapitalize="none"
-          autoCorrect={false}
-          style={[styles.input, styles.destinationInput]}
-        />
-        <TouchableOpacity disabled={actionLocked} onPress={onOpenQrScanner} style={[styles.scanButton, actionLocked && styles.scanButtonDisabled]}>
-          <Text style={styles.scanButtonText}>{t('actions.scanQr')}</Text>
-        </TouchableOpacity>
-      </View>
-      <View style={styles.amountRow}>
-        <TextInput
-          value={sendAmount}
-          onChangeText={onChangeSendAmount}
-          placeholder={t('send.amount')}
-          placeholderTextColor="#6d7892"
-          keyboardType="decimal-pad"
-          style={[styles.input, styles.amountInput]}
-        />
+      <View style={styles.recipientList}>
+        {recipients.map((recipient, index) => {
+          const maxDisabled = actionLocked
+            || !network.snapshot
+            || network.status === 'syncing'
+            || !recipient.address.trim()
+            || recipients.some((candidate) => (
+              candidate.id !== recipient.id
+              && (!candidate.address.trim() || !candidate.amount.trim())
+            ));
+          return (
+            <View key={recipient.id} style={styles.recipientCard}>
+              <View style={styles.recipientHeader}>
+                <Text style={styles.label}>
+                  {t('send.recipientLabel', { index: index + 1 })}
+                </Text>
+                {recipients.length > 1 ? (
+                  <TouchableOpacity
+                    disabled={actionLocked}
+                    onPress={() => onRemoveRecipient(recipient.id)}
+                    style={styles.recipientRemoveButton}
+                  >
+                    <Text style={styles.recipientRemoveText}>{t('send.removeRecipient')}</Text>
+                  </TouchableOpacity>
+                ) : null}
+              </View>
+              <View style={styles.destinationRow}>
+                <TextInput
+                  value={recipient.address}
+                  onChangeText={(value) => onChangeRecipient(recipient.id, 'address', value)}
+                  placeholder={t('send.destination')}
+                  placeholderTextColor="#6d7892"
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  style={[styles.input, styles.destinationInput]}
+                />
+                <TouchableOpacity
+                  disabled={actionLocked}
+                  onPress={() => onOpenQrScanner(recipient.id)}
+                  style={[styles.scanButton, actionLocked && styles.scanButtonDisabled]}
+                >
+                  <Text style={styles.scanButtonText}>{t('actions.scanQr')}</Text>
+                </TouchableOpacity>
+              </View>
+              <View style={styles.amountRow}>
+                <TextInput
+                  value={recipient.amount}
+                  onChangeText={(value) => onChangeRecipient(recipient.id, 'amount', value)}
+                  placeholder={t('send.amount')}
+                  placeholderTextColor="#6d7892"
+                  keyboardType="decimal-pad"
+                  style={[styles.input, styles.amountInput]}
+                />
+                <TouchableOpacity
+                  disabled={maxDisabled}
+                  onPress={() => onFillMax(recipient.id)}
+                  style={[styles.maxButton, maxDisabled && styles.maxButtonDisabled]}
+                >
+                  <Text style={styles.maxButtonText}>{t('actions.max')}</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          );
+        })}
         <TouchableOpacity
-          disabled={amountDisabled}
-          onPress={onFillMax}
-          style={[styles.maxButton, amountDisabled && styles.maxButtonDisabled]}
+          disabled={actionLocked}
+          onPress={onAddRecipient}
+          style={[styles.addRecipientButton, actionLocked && styles.scanButtonDisabled]}
         >
-          <Text style={styles.maxButtonText}>{t('actions.max')}</Text>
+          <Text style={styles.addRecipientText}>{t('send.addRecipient')}</Text>
         </TouchableOpacity>
       </View>
+      {duplicateAddresses.length > 0 ? (
+        <Text style={styles.settingsWarning}>{t('send.duplicateRecipientWarning')}</Text>
+      ) : null}
       <ActionButton
         label={network.status === 'syncing' ? t('send.updating') : t('actions.prepareSend')}
         loading={pendingAction === 'prepare'}
-        disabled={actionLocked || !network.snapshot || network.status === 'syncing' || !sendAddress.trim() || !sendAmount.trim()}
+        disabled={
+          actionLocked
+          || !network.snapshot
+          || network.status === 'syncing'
+          || !recipientsComplete
+          || sendEstimatePending
+          || sendEstimate?.fitsAvailable === false
+        }
         onPress={onPrepareSend}
       />
+      {sendEstimatePending ? (
+        <Text style={styles.helper}>{t('send.totalChecking')}</Text>
+      ) : sendEstimate ? (
+        <Text style={sendEstimate.fitsAvailable ? styles.helper : styles.settingsWarning}>
+          {t('send.totalWithFees', { amount: satoshisToNito(Number(sendEstimate.totalSats)) })}
+        </Text>
+      ) : null}
       <Text style={styles.helper}>
         {t('send.available', { amount: network.snapshot ? satoshisToNito(network.snapshot.spendableSats) : '0' })}
       </Text>
       {preparedTx ? (
         <View style={styles.txBox}>
           <Text style={styles.label}>{t('send.transactionReady')}</Text>
+          <Text style={styles.label}>{t('send.recipientsReview')}</Text>
+          {preparedTx.recipients.map((recipient, index) => (
+            <View key={`${recipient.address}:${index}`} style={styles.reviewRecipient}>
+              <Text style={styles.previewAddress}>
+                {`${index + 1}. ${satoshisToNito(Number(recipient.amountSats))} NITO`}
+              </Text>
+              <Text selectable style={styles.helper}>{shortAddress(recipient.address)}</Text>
+            </View>
+          ))}
           <Text style={styles.previewAddress}>{t('send.fee', { amount: satoshisToNito(preparedTx.feeSats) })}</Text>
           <Text style={styles.helper}>{t('send.inputsOutputs', { inputs: preparedTx.inputCount, outputs: preparedTx.outputCount })}</Text>
           <Text selectable style={styles.address}>{preparedTx.txid}</Text>

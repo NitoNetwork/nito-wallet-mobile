@@ -3,7 +3,13 @@ import { describe, expect, it } from 'vitest';
 import type { TransparentWalletSnapshot } from './transparentScan';
 import { deriveP2wpkhAddress } from './transparentScan';
 import { createNitoWalletCryptoTestDouble } from '../test/nitoWalletCryptoTestDouble';
-import { buildTransparentSend, calculateMaxTransparentSendAmount, parseNitoAmountToSats } from './transparentSend';
+import {
+  buildTransparentMultiSend,
+  buildTransparentSend,
+  calculateMaxTransparentSendAmount,
+  estimateTransparentMultiSend,
+  parseNitoAmountToSats,
+} from './transparentSend';
 
 const mnemonic = 'abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about';
 const crypto = createNitoWalletCryptoTestDouble();
@@ -152,5 +158,156 @@ describe('transparent send builder', () => {
       amountSats: parseNitoAmountToSats('0.25'),
       crypto,
     })).rejects.toThrow('legacy');
+  });
+
+  it('builds two recipients and applies Max to the second while keeping the first fixed', async () => {
+    const snapshot = await makeSnapshot();
+    const secondRecipient = await deriveP2wpkhAddress(mnemonic, 'external', 1, crypto);
+    const outputs = [
+      {
+        address: 'nito1qcr8te4kr609gcawutmrza0j4xv80jy8z540c02',
+        amountSats: 25_000_000n,
+      },
+      {
+        address: secondRecipient.address,
+        amountSats: 0n,
+      },
+    ];
+    const max = await calculateMaxTransparentSendAmount({
+      mnemonic,
+      snapshot,
+      outputs,
+      targetIndex: 1,
+      crypto,
+    });
+    const tx = await buildTransparentMultiSend({
+      mnemonic,
+      snapshot,
+      outputs: [
+        outputs[0]!,
+        { ...outputs[1]!, amountSats: max.amountSats },
+      ],
+      crypto,
+    });
+
+    expect(tx.recipients.map((recipient) => recipient.amountSats)).toEqual([
+      25_000_000n,
+      max.amountSats,
+    ]);
+    expect(25_000_000n + max.amountSats + BigInt(tx.feeSats)).toBe(100_000_000n);
+    expect(tx.changeUsed).toBe(false);
+  });
+
+  it('charges for N recipient outputs and N plus one outputs when change remains', async () => {
+    const snapshot = await makeSnapshot();
+    const secondRecipient = await deriveP2wpkhAddress(mnemonic, 'external', 1, crypto);
+    const fixed = {
+      address: 'nito1qcr8te4kr609gcawutmrza0j4xv80jy8z540c02',
+      amountSats: 10_000_000n,
+    };
+    const target = {
+      address: secondRecipient.address,
+      amountSats: 0n,
+    };
+    const max = await calculateMaxTransparentSendAmount({
+      mnemonic,
+      snapshot,
+      outputs: [fixed, target],
+      targetIndex: 1,
+      crypto,
+    });
+    const noChange = await buildTransparentMultiSend({
+      mnemonic,
+      snapshot,
+      outputs: [fixed, { ...target, amountSats: max.amountSats }],
+      crypto,
+    });
+    const withChange = await buildTransparentMultiSend({
+      mnemonic,
+      snapshot,
+      outputs: [fixed, { ...target, amountSats: 10_000_000n }],
+      crypto,
+    });
+
+    expect(noChange.outputCount).toBe(2);
+    expect(withChange.outputCount).toBe(3);
+    expect(withChange.feeSats).toBeGreaterThan(noChange.feeSats);
+  });
+
+  it('rejects the whole multi-recipient send when one output is dust', async () => {
+    const secondRecipient = await deriveP2wpkhAddress(mnemonic, 'external', 1, crypto);
+    await expect(buildTransparentMultiSend({
+      mnemonic,
+      snapshot: await makeSnapshot(),
+      outputs: [
+        {
+          address: 'nito1qcr8te4kr609gcawutmrza0j4xv80jy8z540c02',
+          amountSats: 25_000_000n,
+        },
+        {
+          address: secondRecipient.address,
+          amountSats: 545n,
+        },
+      ],
+      crypto,
+    })).rejects.toThrow('dust');
+  });
+
+  it('keeps duplicate recipients as distinct valid outputs', async () => {
+    const address = 'nito1qcr8te4kr609gcawutmrza0j4xv80jy8z540c02';
+    const tx = await buildTransparentMultiSend({
+      mnemonic,
+      snapshot: await makeSnapshot(),
+      outputs: [
+        { address, amountSats: 10_000_000n },
+        { address, amountSats: 20_000_000n },
+      ],
+      crypto,
+    });
+
+    expect(tx.recipients).toEqual([
+      { address, amountSats: 10_000_000n },
+      { address, amountSats: 20_000_000n },
+    ]);
+    expect(tx.outputCount).toBe(3);
+  });
+
+  it('keeps the single-recipient builder strictly equivalent to the multi-recipient path', async () => {
+    const snapshot = await makeSnapshot();
+    const address = 'nito1qcr8te4kr609gcawutmrza0j4xv80jy8z540c02';
+    const amountSats = 25_000_000n;
+    const single = await buildTransparentSend({
+      mnemonic,
+      snapshot,
+      toAddress: address,
+      amountSats,
+      crypto,
+    });
+    const multi = await buildTransparentMultiSend({
+      mnemonic,
+      snapshot,
+      outputs: [{ address, amountSats }],
+      crypto,
+    });
+
+    expect(multi).toEqual(single);
+  });
+
+  it('quotes fees before signing and rejects an entered total equal to the available balance', async () => {
+    const snapshot = await makeSnapshot();
+    const quote = await estimateTransparentMultiSend({
+      mnemonic,
+      snapshot,
+      outputs: [{
+        address: 'nito1qcr8te4kr609gcawutmrza0j4xv80jy8z540c02',
+        amountSats: BigInt(snapshot.spendableSats),
+      }],
+      crypto,
+    });
+
+    expect(quote.feeSats).toBeGreaterThan(0);
+    expect(quote.amountSats).toBe(BigInt(snapshot.spendableSats));
+    expect(quote.totalSats).toBeGreaterThan(BigInt(snapshot.spendableSats));
+    expect(quote.fitsAvailable).toBe(false);
   });
 });

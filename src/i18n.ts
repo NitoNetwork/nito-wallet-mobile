@@ -95,6 +95,13 @@ const en = {
   'send.inputsOutputs': 'Inputs: {inputs} | Outputs: {outputs}',
   'send.sending': 'Sending...',
   'send.available': 'Available: {amount} NITO',
+  'send.recipientLabel': 'Recipient {index}',
+  'send.addRecipient': 'Add recipient',
+  'send.removeRecipient': 'Remove',
+  'send.totalWithFees': 'Total including fees: {amount} NITO',
+  'send.totalChecking': 'Calculating total including fees...',
+  'send.duplicateRecipientWarning': 'Duplicate addresses are valid and will create separate outputs.',
+  'send.recipientsReview': 'Recipients (entered order)',
   'send.scanQrTitle': 'Scan Nito QR code',
   'send.scanQrHint': 'Place the Nito QR code inside the frame.',
   'history.title': 'History NITO',
@@ -1422,16 +1429,109 @@ const FEATURE_TRANSLATIONS: Record<LanguageCode, Partial<TranslationSet>> = {
   },
 };
 
+const MULTI_SEND_TRANSLATIONS: Record<LanguageCode, Pick<
+  TranslationSet,
+  | 'send.recipientLabel'
+  | 'send.addRecipient'
+  | 'send.removeRecipient'
+  | 'send.totalWithFees'
+  | 'send.totalChecking'
+  | 'send.duplicateRecipientWarning'
+  | 'send.recipientsReview'
+>> = {
+  en: {
+    'send.recipientLabel': 'Recipient {index}',
+    'send.addRecipient': 'Add recipient',
+    'send.removeRecipient': 'Remove',
+    'send.totalWithFees': 'Total including fees: {amount} NITO',
+    'send.totalChecking': 'Calculating total including fees...',
+    'send.duplicateRecipientWarning': 'Duplicate addresses are valid and will create separate outputs.',
+    'send.recipientsReview': 'Recipients (entered order)',
+  },
+  zh: {
+    'send.recipientLabel': '收款人 {index}',
+    'send.addRecipient': '添加收款人',
+    'send.removeRecipient': '移除',
+    'send.totalWithFees': '含手续费总额：{amount} NITO',
+    'send.totalChecking': '正在计算含手续费总额...',
+    'send.duplicateRecipientWarning': '重复地址有效，但会创建独立输出。',
+    'send.recipientsReview': '收款人（输入顺序）',
+  },
+  hi: {
+    'send.recipientLabel': 'प्राप्तकर्ता {index}',
+    'send.addRecipient': 'प्राप्तकर्ता जोड़ें',
+    'send.removeRecipient': 'हटाएँ',
+    'send.totalWithFees': 'शुल्क सहित कुल: {amount} NITO',
+    'send.totalChecking': 'शुल्क सहित कुल की गणना हो रही है...',
+    'send.duplicateRecipientWarning': 'दोहराए गए पते मान्य हैं, लेकिन अलग आउटपुट बनाएँगे।',
+    'send.recipientsReview': 'प्राप्तकर्ता (दर्ज क्रम)',
+  },
+  es: {
+    'send.recipientLabel': 'Destinatario {index}',
+    'send.addRecipient': 'Añadir destinatario',
+    'send.removeRecipient': 'Eliminar',
+    'send.totalWithFees': 'Total con comisiones: {amount} NITO',
+    'send.totalChecking': 'Calculando el total con comisiones...',
+    'send.duplicateRecipientWarning': 'Las direcciones duplicadas son válidas, pero crearán salidas separadas.',
+    'send.recipientsReview': 'Destinatarios (orden introducido)',
+  },
+  fr: {
+    'send.recipientLabel': 'Destinataire {index}',
+    'send.addRecipient': 'Ajouter un destinataire',
+    'send.removeRecipient': 'Retirer',
+    'send.totalWithFees': 'Total frais inclus : {amount} NITO',
+    'send.totalChecking': 'Calcul du total frais inclus...',
+    'send.duplicateRecipientWarning': 'Les adresses en double sont valides, mais créeront des sorties distinctes.',
+    'send.recipientsReview': 'Destinataires (ordre saisi)',
+  },
+  ar: {
+    'send.recipientLabel': 'المستلم {index}',
+    'send.addRecipient': 'إضافة مستلم',
+    'send.removeRecipient': 'إزالة',
+    'send.totalWithFees': 'الإجمالي شامل الرسوم: {amount} NITO',
+    'send.totalChecking': 'جارٍ حساب الإجمالي شامل الرسوم...',
+    'send.duplicateRecipientWarning': 'العناوين المكررة صالحة، لكنها ستنشئ مخرجات منفصلة.',
+    'send.recipientsReview': 'المستلمون (ترتيب الإدخال)',
+  },
+  bn: {
+    'send.recipientLabel': 'প্রাপক {index}',
+    'send.addRecipient': 'প্রাপক যোগ করুন',
+    'send.removeRecipient': 'সরান',
+    'send.totalWithFees': 'ফিসহ মোট: {amount} NITO',
+    'send.totalChecking': 'ফিসহ মোট হিসাব করা হচ্ছে...',
+    'send.duplicateRecipientWarning': 'একই ঠিকানা বৈধ, তবে আলাদা আউটপুট তৈরি করবে।',
+    'send.recipientsReview': 'প্রাপক (ইনপুট ক্রম)',
+  },
+  pt: {
+    'send.recipientLabel': 'Destinatário {index}',
+    'send.addRecipient': 'Adicionar destinatário',
+    'send.removeRecipient': 'Remover',
+    'send.totalWithFees': 'Total com taxas: {amount} NITO',
+    'send.totalChecking': 'Calculando o total com taxas...',
+    'send.duplicateRecipientWarning': 'Endereços duplicados são válidos, mas criarão saídas separadas.',
+    'send.recipientsReview': 'Destinatários (ordem inserida)',
+  },
+  ru: {
+    'send.recipientLabel': 'Получатель {index}',
+    'send.addRecipient': 'Добавить получателя',
+    'send.removeRecipient': 'Удалить',
+    'send.totalWithFees': 'Итого с комиссией: {amount} NITO',
+    'send.totalChecking': 'Расчёт итога с комиссией...',
+    'send.duplicateRecipientWarning': 'Повторяющиеся адреса допустимы, но создадут отдельные выходы.',
+    'send.recipientsReview': 'Получатели (порядок ввода)',
+  },
+};
+
 export const TRANSLATIONS: Record<LanguageCode, TranslationSet> = {
-  en: { ...RAW_TRANSLATIONS.en, ...SEED_VALIDATION_TRANSLATIONS.en, ...FEATURE_TRANSLATIONS.en },
-  zh: { ...RAW_TRANSLATIONS.zh, ...REQUIRED_TRANSLATIONS.zh, ...SEED_VALIDATION_TRANSLATIONS.zh, ...FEATURE_TRANSLATIONS.zh, ...COMPLETE_TRANSLATIONS.zh },
-  hi: { ...RAW_TRANSLATIONS.hi, ...REQUIRED_TRANSLATIONS.hi, ...SEED_VALIDATION_TRANSLATIONS.hi, ...FEATURE_TRANSLATIONS.hi, ...COMPLETE_TRANSLATIONS.hi },
-  es: { ...RAW_TRANSLATIONS.es, ...REQUIRED_TRANSLATIONS.es, ...SEED_VALIDATION_TRANSLATIONS.es, ...FEATURE_TRANSLATIONS.es, ...COMPLETE_TRANSLATIONS.es },
-  fr: { ...RAW_TRANSLATIONS.fr, ...REQUIRED_TRANSLATIONS.fr, ...SEED_VALIDATION_TRANSLATIONS.fr, ...FEATURE_TRANSLATIONS.fr, ...COMPLETE_TRANSLATIONS.fr },
-  ar: { ...RAW_TRANSLATIONS.ar, ...REQUIRED_TRANSLATIONS.ar, ...SEED_VALIDATION_TRANSLATIONS.ar, ...FEATURE_TRANSLATIONS.ar, ...COMPLETE_TRANSLATIONS.ar },
-  bn: { ...RAW_TRANSLATIONS.bn, ...REQUIRED_TRANSLATIONS.bn, ...SEED_VALIDATION_TRANSLATIONS.bn, ...FEATURE_TRANSLATIONS.bn, ...COMPLETE_TRANSLATIONS.bn },
-  pt: { ...RAW_TRANSLATIONS.pt, ...REQUIRED_TRANSLATIONS.pt, ...SEED_VALIDATION_TRANSLATIONS.pt, ...FEATURE_TRANSLATIONS.pt, ...COMPLETE_TRANSLATIONS.pt },
-  ru: { ...RAW_TRANSLATIONS.ru, ...REQUIRED_TRANSLATIONS.ru, ...SEED_VALIDATION_TRANSLATIONS.ru, ...FEATURE_TRANSLATIONS.ru, ...COMPLETE_TRANSLATIONS.ru },
+  en: { ...RAW_TRANSLATIONS.en, ...SEED_VALIDATION_TRANSLATIONS.en, ...FEATURE_TRANSLATIONS.en, ...MULTI_SEND_TRANSLATIONS.en },
+  zh: { ...RAW_TRANSLATIONS.zh, ...REQUIRED_TRANSLATIONS.zh, ...SEED_VALIDATION_TRANSLATIONS.zh, ...FEATURE_TRANSLATIONS.zh, ...COMPLETE_TRANSLATIONS.zh, ...MULTI_SEND_TRANSLATIONS.zh },
+  hi: { ...RAW_TRANSLATIONS.hi, ...REQUIRED_TRANSLATIONS.hi, ...SEED_VALIDATION_TRANSLATIONS.hi, ...FEATURE_TRANSLATIONS.hi, ...COMPLETE_TRANSLATIONS.hi, ...MULTI_SEND_TRANSLATIONS.hi },
+  es: { ...RAW_TRANSLATIONS.es, ...REQUIRED_TRANSLATIONS.es, ...SEED_VALIDATION_TRANSLATIONS.es, ...FEATURE_TRANSLATIONS.es, ...COMPLETE_TRANSLATIONS.es, ...MULTI_SEND_TRANSLATIONS.es },
+  fr: { ...RAW_TRANSLATIONS.fr, ...REQUIRED_TRANSLATIONS.fr, ...SEED_VALIDATION_TRANSLATIONS.fr, ...FEATURE_TRANSLATIONS.fr, ...COMPLETE_TRANSLATIONS.fr, ...MULTI_SEND_TRANSLATIONS.fr },
+  ar: { ...RAW_TRANSLATIONS.ar, ...REQUIRED_TRANSLATIONS.ar, ...SEED_VALIDATION_TRANSLATIONS.ar, ...FEATURE_TRANSLATIONS.ar, ...COMPLETE_TRANSLATIONS.ar, ...MULTI_SEND_TRANSLATIONS.ar },
+  bn: { ...RAW_TRANSLATIONS.bn, ...REQUIRED_TRANSLATIONS.bn, ...SEED_VALIDATION_TRANSLATIONS.bn, ...FEATURE_TRANSLATIONS.bn, ...COMPLETE_TRANSLATIONS.bn, ...MULTI_SEND_TRANSLATIONS.bn },
+  pt: { ...RAW_TRANSLATIONS.pt, ...REQUIRED_TRANSLATIONS.pt, ...SEED_VALIDATION_TRANSLATIONS.pt, ...FEATURE_TRANSLATIONS.pt, ...COMPLETE_TRANSLATIONS.pt, ...MULTI_SEND_TRANSLATIONS.pt },
+  ru: { ...RAW_TRANSLATIONS.ru, ...REQUIRED_TRANSLATIONS.ru, ...SEED_VALIDATION_TRANSLATIONS.ru, ...FEATURE_TRANSLATIONS.ru, ...COMPLETE_TRANSLATIONS.ru, ...MULTI_SEND_TRANSLATIONS.ru },
 };
 
 const SHARED_TRANSLATION_KEYS = new Set<TranslationKey>([

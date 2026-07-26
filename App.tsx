@@ -28,6 +28,11 @@ import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import nacl from 'tweetnacl';
 
 import { escapeCsvCell, isValidTransactionId, shortAddress, transactionExplorerUrl } from './src/ui/format';
+import {
+  summarizeRecipientSpend,
+  updateRecipientAddress,
+  type SendRecipientDraft,
+} from './src/ui/sendRecipients';
 import { styles } from './src/ui/styles';
 import {
   Feedback,
@@ -98,11 +103,13 @@ import {
 } from './src/wallet/transparentScan';
 import {
   buildTransparentConsolidation,
-  buildTransparentSend,
+  buildTransparentMultiSend,
   calculateMaxTransparentSendAmount,
+  estimateTransparentMultiSend,
   parseNitoAmountToSats,
   type PreparedTransparentConsolidation,
-  type PreparedTransparentTx,
+  type PreparedTransparentSend,
+  type TransparentSendOutput,
 } from './src/wallet/transparentSend';
 import { makeConsolidationTranslator } from './src/i18n.consolidation';
 import { useAutoLockTimeout } from './src/hooks/useAutoLockTimeout';
@@ -244,6 +251,14 @@ const satoshisToNitoInput = (sats: bigint) => {
   const fraction = (sats % 100_000_000n).toString().padStart(8, '0').replace(/0+$/, '');
   return fraction ? `${whole.toString()},${fraction}` : whole.toString();
 };
+const initialSendRecipients = (): SendRecipientDraft[] => [
+  { id: 1, address: '', amount: '' },
+];
+type SendEstimateState = {
+  feeSats: number;
+  totalSats: bigint;
+  fitsAvailable: boolean;
+};
 
 const generateMnemonic24 = () => entropyToMnemonic(nacl.randomBytes(32), wordlist);
 
@@ -331,9 +346,12 @@ export default function App() {
     useState<ElectrumServerPreference>(getElectrumServerPreference);
   const [importText, setImportText] = useState('');
   const [showImportSeed, setShowImportSeed] = useState(false);
-  const [sendAddress, setSendAddress] = useState('');
-  const [sendAmount, setSendAmount] = useState('');
-  const [preparedTx, setPreparedTx] = useState<PreparedTransparentTx | null>(null);
+  const [sendRecipients, setSendRecipients] = useState<SendRecipientDraft[]>(initialSendRecipients);
+  const nextSendRecipientIdRef = useRef(2);
+  const qrRecipientIdRef = useRef<number | null>(null);
+  const [sendEstimate, setSendEstimate] = useState<SendEstimateState | null>(null);
+  const [sendEstimatePending, setSendEstimatePending] = useState(false);
+  const [preparedTx, setPreparedTx] = useState<PreparedTransparentSend | null>(null);
   const [preparedConsolidation, setPreparedConsolidation] =
     useState<PreparedTransparentConsolidation | null>(null);
   const [broadcasting, setBroadcasting] = useState(false);
@@ -381,6 +399,80 @@ export default function App() {
   }, [t]);
 
   useEffect(() => {
+    let cancelled = false;
+    const canEstimate = Boolean(
+      !wallet
+      || !network.snapshot
+      || network.status === 'syncing'
+      || sendRecipients.some((recipient) => !recipient.address.trim() || !recipient.amount.trim())
+    ) === false;
+    const stateTimer = setTimeout(() => {
+      if (cancelled) return;
+      setSendEstimate(null);
+      setSendEstimatePending(canEstimate);
+    }, 0);
+
+    if (!canEstimate || !wallet || !network.snapshot) {
+      return () => {
+        cancelled = true;
+        clearTimeout(stateTimer);
+      };
+    }
+
+    let outputs: TransparentSendOutput[];
+    try {
+      outputs = sendRecipients.map((recipient) => ({
+        address: recipient.address,
+        amountSats: parseNitoAmountToSats(recipient.amount),
+      }));
+    } catch {
+      clearTimeout(stateTimer);
+      const invalidTimer = setTimeout(() => {
+        if (!cancelled) {
+          setSendEstimate(null);
+          setSendEstimatePending(false);
+        }
+      }, 0);
+      return () => {
+        cancelled = true;
+        clearTimeout(invalidTimer);
+      };
+    }
+
+    const snapshot = network.snapshot;
+    const timer = setTimeout(() => {
+      void estimateTransparentMultiSend({
+        mnemonic: wallet.mnemonic,
+        snapshot,
+        outputs,
+        changeAddress: wallet.address,
+      }).then((estimate) => {
+        if (cancelled) return;
+        const summary = summarizeRecipientSpend(
+          outputs.map((output) => output.amountSats),
+          BigInt(estimate.feeSats),
+          BigInt(snapshot.spendableSats),
+        );
+        setSendEstimate({
+          feeSats: estimate.feeSats,
+          totalSats: summary.totalSats,
+          fitsAvailable: estimate.fitsAvailable && summary.fitsAvailable,
+        });
+      }).catch(() => {
+        if (!cancelled) setSendEstimate(null);
+      }).finally(() => {
+        if (!cancelled) setSendEstimatePending(false);
+      });
+    }, 250);
+
+    return () => {
+      cancelled = true;
+      clearTimeout(stateTimer);
+      clearTimeout(timer);
+    };
+  }, [network.snapshot, network.status, sendRecipients, wallet]);
+
+  useEffect(() => {
     historyPageRef.current = historyPage;
     historyEnrichmentQueueRef.current?.prioritizePage(historyPage);
   }, [historyPage]);
@@ -388,6 +480,14 @@ export default function App() {
   const resetFeedback = useCallback(() => {
     setError('');
     setStatus('');
+  }, []);
+
+  const resetSendDraft = useCallback(() => {
+    nextSendRecipientIdRef.current = 2;
+    qrRecipientIdRef.current = null;
+    setSendRecipients(initialSendRecipients());
+    setSendEstimate(null);
+    setSendEstimatePending(false);
   }, []);
 
   const applyVaultTransition = useCallback((event: VaultSessionEvent) => {
@@ -584,8 +684,7 @@ export default function App() {
     setBroadcasting(false);
     networkRef.current = nextNetwork;
     setNetwork(nextNetwork);
-    setSendAddress('');
-    setSendAmount('');
+    resetSendDraft();
     setPreparedTx(null);
     setPreparedConsolidation(null);
     setScreen('wallet');
@@ -1323,8 +1422,7 @@ export default function App() {
     setHistoryPage(0);
     setImportText('');
     setShowImportSeed(false);
-    setSendAddress('');
-    setSendAmount('');
+    resetSendDraft();
     setPreparedTx(null);
     setPreparedConsolidation(null);
     setQrScannerOpen(false);
@@ -1346,6 +1444,7 @@ export default function App() {
     applyVaultTransition,
     clearAddressSubscriptions,
     resetFeedback,
+    resetSendDraft,
     seedSaved,
     walletNetworkController,
   ]);
@@ -1441,11 +1540,29 @@ export default function App() {
     try {
       setPreparedTx(null);
       setPreparedConsolidation(null);
-      const tx = await buildTransparentSend({
+      const outputs = sendRecipients.map((recipient) => ({
+        address: recipient.address,
+        amountSats: parseNitoAmountToSats(recipient.amount),
+      }));
+      const estimate = await estimateTransparentMultiSend({
         mnemonic: wallet.mnemonic,
         snapshot: network.snapshot,
-        toAddress: sendAddress,
-        amountSats: parseNitoAmountToSats(sendAmount),
+        outputs,
+        changeAddress: wallet.address,
+      });
+      const summary = summarizeRecipientSpend(
+        outputs.map((output) => output.amountSats),
+        BigInt(estimate.feeSats),
+        BigInt(network.snapshot.spendableSats),
+      );
+      if (!estimate.fitsAvailable || !summary.fitsAvailable) {
+        throw new Error('Fonds insuffisants pour le montant total et les frais.');
+      }
+      const tx = await buildTransparentMultiSend({
+        mnemonic: wallet.mnemonic,
+        snapshot: network.snapshot,
+        outputs,
+        changeAddress: wallet.address,
       });
 
       setPreparedConsolidation(null);
@@ -1459,7 +1576,7 @@ export default function App() {
     });
   };
 
-  const fillMaxSendAmount = async () => {
+  const fillMaxSendAmount = async (recipientId: number) => {
     await runExclusiveAction('max', async () => {
       resetFeedback();
 
@@ -1468,20 +1585,31 @@ export default function App() {
         return;
       }
 
-      if (!sendAddress.trim()) {
+      const targetIndex = sendRecipients.findIndex((recipient) => recipient.id === recipientId);
+      const target = sendRecipients[targetIndex];
+      if (!target?.address.trim()) {
         setError(t('send.destination'));
         return;
       }
 
       try {
+        const outputs = sendRecipients.map((recipient, index) => ({
+          address: recipient.address,
+          amountSats: index === targetIndex ? 0n : parseNitoAmountToSats(recipient.amount),
+        }));
         const max = await calculateMaxTransparentSendAmount({
           mnemonic: wallet.mnemonic,
           snapshot: network.snapshot,
-          toAddress: sendAddress,
+          outputs,
+          targetIndex,
           changeAddress: wallet.address,
         });
 
-        setSendAmount(satoshisToNitoInput(max.amountSats));
+        setSendRecipients((current) => current.map((recipient) => (
+          recipient.id === recipientId
+            ? { ...recipient, amount: satoshisToNitoInput(max.amountSats) }
+            : recipient
+        )));
         setPreparedTx(null);
         setPreparedConsolidation(null);
       } catch (caught) {
@@ -1490,6 +1618,36 @@ export default function App() {
         setError(caught instanceof Error ? caught.message : t('errors.txPrepareFailed'));
       }
     });
+  };
+
+  const updateSendRecipient = (
+    recipientId: number,
+    field: 'address' | 'amount',
+    value: string,
+  ) => {
+    setSendRecipients((current) => current.map((recipient) => (
+      recipient.id === recipientId ? { ...recipient, [field]: value } : recipient
+    )));
+    setPreparedTx(null);
+    setPreparedConsolidation(null);
+  };
+
+  const addSendRecipient = () => {
+    const id = nextSendRecipientIdRef.current;
+    nextSendRecipientIdRef.current += 1;
+    setSendRecipients((current) => [...current, { id, address: '', amount: '' }]);
+    setPreparedTx(null);
+    setPreparedConsolidation(null);
+  };
+
+  const removeSendRecipient = (recipientId: number) => {
+    setSendRecipients((current) => (
+      current.length > 1
+        ? current.filter((recipient) => recipient.id !== recipientId)
+        : current
+    ));
+    setPreparedTx(null);
+    setPreparedConsolidation(null);
   };
 
   const broadcastPreparedTx = async () => {
@@ -1533,8 +1691,7 @@ export default function App() {
 
       setPreparedTx(null);
       setPreparedConsolidation(null);
-      setSendAddress('');
-      setSendAmount('');
+      resetSendDraft();
       setStatus(t('status.transactionSent', { txid }));
       Alert.alert(
         t('dialog.sentTitle'),
@@ -2060,8 +2217,9 @@ export default function App() {
     }
   };
 
-  const openQrScanner = async () => {
+  const openQrScanner = async (recipientId: number) => {
     if (pendingActionRef.current) return;
+    qrRecipientIdRef.current = recipientId;
     clearQrRetryTimer();
     resetFeedback();
     let granted = cameraPermission?.granted ?? false;
@@ -2075,6 +2233,7 @@ export default function App() {
       }
     }
     if (!granted) {
+      qrRecipientIdRef.current = null;
       setError(t('errors.cameraPermission'));
       return;
     }
@@ -2085,6 +2244,7 @@ export default function App() {
 
   const closeQrScanner = () => {
     clearQrRetryTimer();
+    qrRecipientIdRef.current = null;
     setQrScannerOpen(false);
     setQrScannerError('');
     setQrScanHandled(false);
@@ -2095,8 +2255,13 @@ export default function App() {
     setQrScanHandled(true);
     try {
       const address = parseNitoQrAddress(value);
-      setSendAddress(address);
+      const recipientId = qrRecipientIdRef.current;
+      if (recipientId === null) {
+        throw new Error('No recipient selected for QR scan.');
+      }
+      setSendRecipients((current) => updateRecipientAddress(current, recipientId, address));
       setPreparedTx(null);
+      setPreparedConsolidation(null);
       closeQrScanner();
       setStatus(t('status.addressScanned'));
     } catch {
@@ -2172,14 +2337,16 @@ export default function App() {
           actionLocked={actionLocked}
           pendingAction={pendingAction}
           broadcasting={broadcasting}
-          sendAddress={sendAddress}
-          sendAmount={sendAmount}
+          recipients={sendRecipients}
+          sendEstimate={sendEstimate}
+          sendEstimatePending={sendEstimatePending}
           preparedTx={preparedTx}
           preparedConsolidation={preparedConsolidation}
-          onChangeSendAddress={(value) => { setSendAddress(value); setPreparedTx(null); setPreparedConsolidation(null); }}
-          onChangeSendAmount={(value) => { setSendAmount(value); setPreparedTx(null); setPreparedConsolidation(null); }}
-          onOpenQrScanner={() => { void openQrScanner(); }}
-          onFillMax={() => { void fillMaxSendAmount(); }}
+          onChangeRecipient={updateSendRecipient}
+          onAddRecipient={addSendRecipient}
+          onRemoveRecipient={removeSendRecipient}
+          onOpenQrScanner={(recipientId) => { void openQrScanner(recipientId); }}
+          onFillMax={(recipientId) => { void fillMaxSendAmount(recipientId); }}
           onPrepareSend={prepareTransparentSend}
           onBroadcastTx={() => { void broadcastPreparedTx(); }}
           onBroadcastConsolidation={() => { void broadcastPreparedConsolidation(); }}

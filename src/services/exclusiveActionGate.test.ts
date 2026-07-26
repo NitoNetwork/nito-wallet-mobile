@@ -29,4 +29,19 @@ describe('ExclusiveActionGate', () => {
     })).rejects.toThrow('failure');
     await expect(gate.run('next', vi.fn())).resolves.toBe(true);
   });
+
+  it('never prepares a consolidation while a multi-recipient send is being prepared', async () => {
+    let releaseSend!: () => void;
+    const sendTask = new Promise<void>((resolve) => {
+      releaseSend = resolve;
+    });
+    const gate = new ExclusiveActionGate<'prepare' | 'consolidate'>();
+    const preparingSend = gate.run('prepare', () => sendTask);
+    const prepareConsolidation = vi.fn();
+
+    await expect(gate.run('consolidate', prepareConsolidation)).resolves.toBe(false);
+    expect(prepareConsolidation).not.toHaveBeenCalled();
+    releaseSend();
+    await expect(preparingSend).resolves.toBe(true);
+  });
 });

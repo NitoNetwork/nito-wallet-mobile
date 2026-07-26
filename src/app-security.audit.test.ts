@@ -145,6 +145,21 @@ describe('mobile wallet UX and security invariants', () => {
     expect(appSource).toContain('applyVaultTransition');
   });
 
+  it('never lets a prepared multi-recipient send coexist with a prepared consolidation', () => {
+    expect(appSource).toMatch(
+      /const prepareTransparentSend = async \(\) => \{\s*await runExclusiveAction\('prepare'/,
+    );
+    expect(appSource).toMatch(
+      /const prepareTransparentConsolidation = async \(\) => \{\s*await runExclusiveAction\('consolidate'/,
+    );
+    expect(appSource).toMatch(
+      /const prepareTransparentSend[\s\S]*?setPreparedConsolidation\(null\);\s*setPreparedTx\(tx\);/,
+    );
+    expect(appSource).toMatch(
+      /const prepareTransparentConsolidation[\s\S]*?setPreparedTx\(null\);\s*setPreparedConsolidation\(plan\);/,
+    );
+  });
+
   it('never recreates or replaces a vault after a stale PBKDF2 upgrade', () => {
     expect(appSource).toContain(
       'const upgradeCommit = prepareVaultUpgradeCommit(upgraded, latest, payload.address);',
