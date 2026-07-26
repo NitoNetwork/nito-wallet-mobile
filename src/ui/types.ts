@@ -18,6 +18,7 @@ export type PendingAction =
   | 'broadcastConsolidation'
   | 'electrumServer'
   | 'history'
+  | 'resynchronizeHistory'
   | 'reveal'
   | 'delete'
   | 'lock';

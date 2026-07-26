@@ -28,6 +28,7 @@ import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import nacl from 'tweetnacl';
 
 import { escapeCsvCell, isValidTransactionId, shortAddress, transactionExplorerUrl } from './src/ui/format';
+import { shouldShowBlockingLoadingOverlay } from './src/ui/loadingPolicy';
 import {
   summarizeRecipientSpend,
   updateRecipientAddress,
@@ -2153,7 +2154,7 @@ export default function App() {
   };
 
   const resynchronizeWalletHistory = async () => {
-    await runExclusiveAction('history', async () => {
+    await runExclusiveAction('resynchronizeHistory', async () => {
       resetFeedback();
       const activeWallet = walletRef.current;
       if (!activeWallet) {
@@ -2171,6 +2172,7 @@ export default function App() {
       }
 
       try {
+        setWalletTab('history');
         clearAddressSubscriptions();
         await clearWalletHistoryCache(activeWallet.address);
         if (!walletNetworkController.isCurrent(session)) return;
@@ -2324,6 +2326,7 @@ export default function App() {
     broadcastConsolidation: makeConsolidationTranslator(language)('loadingSend'),
     electrumServer: t('loading.electrumServer'),
     history: t('loading.history'),
+    resynchronizeHistory: t('loading.history'),
     reveal: t('loading.reveal'),
     delete: t('loading.delete'),
     lock: t('loading.lock'),
@@ -2572,7 +2575,7 @@ export default function App() {
             <Feedback error={error} status={status} />
             {activeScreen()}
           </ScrollView>
-          {pendingAction ? (
+          {shouldShowBlockingLoadingOverlay(pendingAction) ? (
             <LoadingOverlay
               title={t('brand.wallet')}
               message={loadingMessage}

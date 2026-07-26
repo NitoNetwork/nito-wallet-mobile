@@ -182,12 +182,22 @@ describe('mobile wallet UX and security invariants', () => {
 
   it('renders blocking work above the scroll view with a rotating Nito logo', () => {
     const scrollViewEnd = appSource.indexOf('</ScrollView>');
-    const loadingOverlay = appSource.indexOf('{pendingAction ? (', scrollViewEnd);
+    const loadingOverlay = appSource.indexOf(
+      '{shouldShowBlockingLoadingOverlay(pendingAction) ? (',
+      scrollViewEnd,
+    );
     expect(scrollViewEnd).toBeGreaterThan(0);
     expect(loadingOverlay).toBeGreaterThan(scrollViewEnd);
     expect(appSource).toContain('rotation={loadingRotation}');
     expect(stylesSource).toContain('...StyleSheet.absoluteFill');
     expect(screensSource).toMatch(/LoadingOverlay[\s\S]*?transform: \[\{ rotate: rotation \}\]/);
+  });
+
+  it('shows manual history resynchronization in the history tab instead of a blocking overlay', () => {
+    expect(appSource).toMatch(
+      /runExclusiveAction\('resynchronizeHistory',[\s\S]*?setWalletTab\('history'\);[\s\S]*?syncTransparentNetwork\(true, \{ force: true, rescanGap: true \}\)/,
+    );
+    expect(appSource).toContain('shouldShowBlockingLoadingOverlay(pendingAction)');
   });
 
   it('clips the QR background and preserves splash artwork proportions', () => {
