@@ -15,6 +15,7 @@ describe('Nito Electrum helpers', () => {
   const address = 'nito1qcr8te4kr609gcawutmrza0j4xv80jy8z540c02';
 
   afterEach(() => {
+    vi.useRealTimers();
     vi.unstubAllGlobals();
   });
 
@@ -186,6 +187,7 @@ describe('Nito Electrum helpers', () => {
   });
 
   it('applies a configurable global ceiling and starts timeouts only after dispatch', async () => {
+    vi.useFakeTimers();
     class DelayedFakeWebSocket {
       static inFlight = 0;
       static peakInFlight = 0;
@@ -227,10 +229,14 @@ describe('Nito Electrum helpers', () => {
       [{ host: 'benchmark.invalid', port: 50005, protocol: 'wss', priority: 1 }],
       { timeoutMs: 20, maxConcurrentRequests: 2 },
     );
-    await client.connect();
+    const connection = client.connect();
+    await vi.runAllTimersAsync();
+    await connection;
     client.resetRequestMetrics();
 
-    await Promise.all(Array.from({ length: 8 }, () => client.request('benchmark.read')));
+    const reads = Promise.all(Array.from({ length: 8 }, () => client.request('benchmark.read')));
+    await vi.runAllTimersAsync();
+    await reads;
 
     const metrics = client.getRequestMetrics();
     expect(DelayedFakeWebSocket.peakInFlight).toBe(2);
@@ -246,6 +252,7 @@ describe('Nito Electrum helpers', () => {
   });
 
   it('completes a full scan when the server refuses overload, while legacy-equivalent concurrency fails', async () => {
+    vi.useFakeTimers();
     class RefusingOverloadWebSocket {
       static inFlight = 0;
       static peakInFlight = 0;
@@ -307,16 +314,18 @@ describe('Nito Electrum helpers', () => {
       maxConcurrentRequests: 40,
     });
 
-    await expect(scanTransparentWallet({
+    const legacyScan = scanTransparentWallet({
       mnemonic: 'abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about',
       electrum: legacyEquivalentClient,
       gapLimit: 20,
       crypto: createNitoWalletCryptoTestDouble(),
       maxConcurrentNetworkRequests: 40,
-    })).rejects.toThrow('rate limited');
+    });
+    const legacyFailure = expect(legacyScan).rejects.toThrow('rate limited');
+    await vi.runAllTimersAsync();
+    await legacyFailure;
     expect(RefusingOverloadWebSocket.overloaded).toBe(true);
     expect(RefusingOverloadWebSocket.peakInFlight).toBeGreaterThan(6);
-    await new Promise((resolve) => setTimeout(resolve, 50));
     legacyEquivalentClient.disconnect();
 
     RefusingOverloadWebSocket.reset();
@@ -324,12 +333,14 @@ describe('Nito Electrum helpers', () => {
       timeoutMs: 1_000,
       maxConcurrentRequests: 6,
     });
-    const completeSnapshot = await scanTransparentWallet({
+    const limitedScan = scanTransparentWallet({
       mnemonic: 'abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about',
       electrum: limitedClient,
       gapLimit: 20,
       crypto: createNitoWalletCryptoTestDouble(),
     });
+    await vi.runAllTimersAsync();
+    const completeSnapshot = await limitedScan;
 
     expect(completeSnapshot.addresses).toHaveLength(160);
     expect(RefusingOverloadWebSocket.overloaded).toBe(false);

@@ -1,9 +1,23 @@
-import { describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it } from 'vitest';
 
+import { PBKDF2_ROUNDS } from '../constants/nito';
 import { createNitoWalletCryptoTestDouble } from '../test/nitoWalletCryptoTestDouble';
+import type { NitoWalletCryptoApi } from '../native/nitoWalletCryptoContract';
 import { decryptVault, deriveKey, encryptVault, type VaultPayload } from './vaultCrypto';
 
-const crypto = createNitoWalletCryptoTestDouble();
+const TEST_PBKDF2_ROUNDS = 2_000;
+const requestedPbkdf2Rounds: number[] = [];
+const baseCrypto = createNitoWalletCryptoTestDouble();
+const crypto: NitoWalletCryptoApi = {
+  ...baseCrypto,
+  pbkdf2(request) {
+    requestedPbkdf2Rounds.push(request.rounds);
+    return baseCrypto.pbkdf2({
+      ...request,
+      rounds: Math.min(request.rounds, TEST_PBKDF2_ROUNDS),
+    });
+  },
+};
 
 const payload: VaultPayload = {
   version: 1,
@@ -14,11 +28,17 @@ const payload: VaultPayload = {
 };
 
 describe('vault encryption', () => {
+  beforeEach(() => {
+    requestedPbkdf2Rounds.length = 0;
+  });
+
   it('round-trips the payload with the right password', async () => {
     const vault = await encryptVault(payload, 'correct horse battery', false, 'password', crypto);
     const opened = await decryptVault(vault, 'correct horse battery', 'invalid', crypto);
 
     expect(opened).toEqual(payload);
+    expect(vault.rounds).toBe(PBKDF2_ROUNDS);
+    expect(requestedPbkdf2Rounds).toEqual([PBKDF2_ROUNDS, PBKDF2_ROUNDS]);
   });
 
   it('never stores the mnemonic in clear text', async () => {
