@@ -71,13 +71,23 @@ type HistoryAmountOutput = {
   address: string;
 };
 
+type HistoryDirection = 'received' | 'sent' | 'self';
+
+export const signedHistoryAmountLines = (
+  direction: HistoryDirection,
+  amounts: readonly string[],
+): string[] => {
+  const sign = direction === 'sent' ? '−' : '+';
+  return amounts.map((amount) => `${sign}${amount}`);
+};
+
 export const historyAmountBreakdown = ({
   direction,
   totalSats,
   outputs,
   walletAddresses,
 }: {
-  direction: 'received' | 'sent' | 'self';
+  direction: HistoryDirection;
   totalSats: number;
   outputs: readonly HistoryAmountOutput[];
   walletAddresses: readonly string[];

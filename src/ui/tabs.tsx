@@ -19,6 +19,7 @@ import {
   formatHomeBalance,
   historyAmountBreakdown,
   historyPageFromInput,
+  signedHistoryAmountLines,
   shortAddress,
   type BalanceDecimals,
 } from './format';
@@ -333,14 +334,12 @@ export function HistoryTab({
                 outputs: outputsByTxid.get(entry.txid) ?? [],
                 walletAddresses,
               });
-            const sign = entry.direction === 'received'
-              ? '+'
-              : entry.direction === 'sent'
-                ? '−'
-                : '';
-            const amountLines = amountBreakdown?.amountsSats.map(
-              (amountSats, index) => `${index === 0 ? sign : ''}${satoshisToNito(amountSats)}`,
-            ) ?? [];
+            const amountLines = amountBreakdown && entry.direction
+              ? signedHistoryAmountLines(
+                entry.direction,
+                amountBreakdown.amountsSats.map(satoshisToNito),
+              )
+              : [];
             if (amountBreakdown && amountBreakdown.hiddenOutputCount > 0) {
               amountLines.push(t('history.moreOutputs', {
                 count: amountBreakdown.hiddenOutputCount,

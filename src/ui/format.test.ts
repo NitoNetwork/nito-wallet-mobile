@@ -8,6 +8,7 @@ import {
   historyPageFromInput,
   isBalanceDecimals,
   isValidTransactionId,
+  signedHistoryAmountLines,
   shortAddress,
   transactionExplorerUrl,
 } from './format';
@@ -164,5 +165,21 @@ describe('ui format helpers', () => {
       amountsSats: [1_000_000, 2_000_000, 3_000_000, 4_000_000],
       hiddenOutputCount: 1,
     });
+  });
+
+  it('prefixes every displayed history amount according to its direction', () => {
+    expect(signedHistoryAmountLines('received', ['1', '2', '3'])).toEqual([
+      '+1',
+      '+2',
+      '+3',
+    ]);
+    expect(signedHistoryAmountLines('self', ['1', '2'])).toEqual([
+      '+1',
+      '+2',
+    ]);
+    expect(signedHistoryAmountLines('sent', ['1', '2'])).toEqual([
+      '−1',
+      '−2',
+    ]);
   });
 });
