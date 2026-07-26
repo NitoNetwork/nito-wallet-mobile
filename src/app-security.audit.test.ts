@@ -3,6 +3,7 @@
 import { describe, expect, it } from 'vitest';
 
 import appSource from '../App.tsx?raw';
+import appStateSecuritySource from './services/appStateSecurity.ts?raw';
 import amountFormatSource from './i18n.amounts.ts?raw';
 import i18nSource from './i18n.ts?raw';
 import formatSource from './ui/format.ts?raw';
@@ -48,21 +49,32 @@ describe('mobile wallet UX and security invariants', () => {
       /const lockWallet = useCallback\(\(\) => \{\s*if \(walletLockAppliedRef\.current\) return;\s*walletLockAppliedRef\.current = true;\s*lockedDuringSessionRef\.current = true;/,
     );
     expect(appSource).toContain('|| lockedDuringSessionRef.current');
-    expect(appSource).toContain('&& !lockedDuringSessionRef.current');
+    expect(appStateSecuritySource).toContain('&& !lockedDuringSessionRef.current');
   });
 
   it('locks every wallet background transition independently of the previous state and system prompts', () => {
-    expect(appSource).toContain('shouldLockWalletForAppState({');
-    expect(appSource).not.toMatch(
+    expect(appStateSecuritySource).toContain('shouldLockWalletForAppState({');
+    expect(appStateSecuritySource).not.toMatch(
       /previousState === 'active'[\s\S]{0,180}lockWallet\(\);/,
     );
+  });
+
+  it('registers one AppState listener that reads current security state from refs', () => {
+    expect(appSource).toMatch(
+      /const subscription = AppState\.addEventListener\(\s*'change',\s*createWalletAppStateChangeHandler\(\{/,
+    );
+    expect(appSource).toMatch(
+      /createWalletAppStateChangeHandler\(\{[\s\S]*?unlockSavedWalletRef,\s*\}\),\s*\);\s*return \(\) => subscription\.remove\(\);\s*\}, \[\]\);/,
+    );
+    expect(appStateSecuritySource).toContain("walletOpen: screenRef.current === 'wallet'");
+    expect(appStateSecuritySource).not.toContain("walletOpen: screen === 'wallet'");
   });
 
   it('never re-prompts biometrics automatically once the user dismissed it', () => {
     expect(appSource).toContain('biometricDismissedRef.current = true;');
     expect(appSource).toContain('|| biometricDismissedRef.current');
-    expect(appSource).toContain('&& !biometricDismissedRef.current');
-    expect(appSource).toContain('&& biometricInterruptedRef.current');
+    expect(appStateSecuritySource).toContain('&& !biometricDismissedRef.current');
+    expect(appStateSecuritySource).toContain('&& biometricInterruptedRef.current');
     expect(appSource).toMatch(/if \(auto\) \{\s*return;/);
   });
 

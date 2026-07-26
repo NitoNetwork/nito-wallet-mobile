@@ -9,7 +9,14 @@ import * as LocalAuthentication from 'expo-local-authentication';
 import * as SecureStore from 'expo-secure-store';
 import * as FileSystem from 'expo-file-system/legacy';
 import * as Sharing from 'expo-sharing';
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 import {
   Alert,
   Animated,
@@ -70,7 +77,7 @@ import {
 import { readOptionalCache } from './src/services/cachePolicy';
 import { reportNonFinancialFailure } from './src/services/diagnostics';
 import { ExclusiveActionGate } from './src/services/exclusiveActionGate';
-import { shouldLockWalletForAppState } from './src/services/appStateSecurity';
+import { createWalletAppStateChangeHandler } from './src/services/appStateSecurity';
 import {
   CustomElectrumServerValidationError,
   createElectrumClient,
@@ -322,7 +329,12 @@ const requestBiometricGate = async (promptMessage: string) => {
 };
 
 export default function App() {
-  const [screen, setScreen] = useState<AppScreen>('loading');
+  const screenRef = useRef<AppScreen>('loading');
+  const [screen, setScreenState] = useState<AppScreen>('loading');
+  const setScreen = useCallback((nextScreen: AppScreen) => {
+    screenRef.current = nextScreen;
+    setScreenState(nextScreen);
+  }, []);
   const [walletTab, setWalletTab] = useState<WalletTab>('home');
   const [wallet, setWallet] = useState<Wallet | null>(null);
   const [pendingWallet, setPendingWallet] = useState<Wallet | null>(null);
@@ -339,6 +351,7 @@ export default function App() {
   const biometricInterruptedRef = useRef(false);
   const lockedDuringSessionRef = useRef(false);
   const walletLockAppliedRef = useRef(false);
+  const lockWalletRef = useRef<() => void>(() => undefined);
   const enrichAttemptedRef = useRef<Set<string>>(new Set());
   const appStateRef = useRef(AppState.currentState);
   const systemPromptActiveRef = useRef(false);
@@ -362,7 +375,12 @@ export default function App() {
   const [broadcasting, setBroadcasting] = useState(false);
   const [seedSaved, setSeedSaved] = useState(false);
   const [vaultUnlockMode, setVaultUnlockMode] = useState<'password' | 'biometric'>('password');
-  const [vaultBiometricsEnabled, setVaultBiometricsEnabled] = useState(false);
+  const vaultBiometricsEnabledRef = useRef(false);
+  const [vaultBiometricsEnabled, setVaultBiometricsEnabledState] = useState(false);
+  const setVaultBiometricsEnabled = useCallback((enabled: boolean) => {
+    vaultBiometricsEnabledRef.current = enabled;
+    setVaultBiometricsEnabledState(enabled);
+  }, []);
   const [unlockPassword, setUnlockPassword] = useState('');
   const [showUnlockPassword, setShowUnlockPassword] = useState(false);
   const [persistPassword, setPersistPassword] = useState('');
@@ -371,7 +389,12 @@ export default function App() {
   const [showPersistPassword, setShowPersistPassword] = useState(false);
   const [showPersistConfirmPassword, setShowPersistConfirmPassword] = useState(false);
   const [biometricMethod, setBiometricMethod] = useState<BiometricMethod>('biometrics');
-  const [biometricUnavailableReason, setBiometricUnavailableReason] = useState('');
+  const biometricUnavailableReasonRef = useRef('');
+  const [biometricUnavailableReason, setBiometricUnavailableReasonState] = useState('');
+  const setBiometricUnavailableReason = useCallback((reason: string) => {
+    biometricUnavailableReasonRef.current = reason;
+    setBiometricUnavailableReasonState(reason);
+  }, []);
   const [error, setError] = useState('');
   const [status, setStatus] = useState('');
   const [showMnemonic, setShowMnemonic] = useState(false);
@@ -506,7 +529,7 @@ export default function App() {
     setVaultUnlockMode(next.unlockMode);
     setVaultBiometricsEnabled(next.biometricsEnabled);
     return next;
-  }, []);
+  }, [setVaultBiometricsEnabled]);
 
   const clearQrRetryTimer = useCallback(() => {
     if (qrRetryTimerRef.current) {
@@ -626,7 +649,7 @@ export default function App() {
     return () => {
       mounted = false;
     };
-  }, [applyVaultTransition]);
+  }, [applyVaultTransition, setBiometricUnavailableReason, setScreen]);
 
   useEffect(() => {
     if (refreshCooldownUntil <= Date.now()) {
@@ -1486,40 +1509,31 @@ export default function App() {
     resetFeedback,
     resetSendDraft,
     seedSaved,
+    setScreen,
     walletNetworkController,
   ]);
+  useLayoutEffect(() => {
+    lockWalletRef.current = lockWallet;
+  }, [lockWallet]);
 
   useEffect(() => {
-    const subscription = AppState.addEventListener('change', (nextState) => {
-      const previousState = appStateRef.current;
-      appStateRef.current = nextState;
-      if (shouldLockWalletForAppState({
-        nextState,
-        systemPromptActive: systemPromptActiveRef.current,
-        walletOpen: screen === 'wallet',
-      })) {
-        lockWallet();
-      }
-      if (nextState !== 'active' && systemPromptActiveRef.current) {
-        biometricInterruptedRef.current = true;
-      }
-      if (
-        previousState === 'background'
-        && nextState === 'active'
-        && screen === 'unlock'
-        && vaultBiometricsEnabled
-        && !biometricUnavailableReason
-        && !systemPromptActiveRef.current
-        && biometricInterruptedRef.current
-        && !biometricDismissedRef.current
-        && !lockedDuringSessionRef.current
-      ) {
-        biometricInterruptedRef.current = false;
-        void unlockSavedWalletRef.current(true, true);
-      }
-    });
+    const subscription = AppState.addEventListener(
+      'change',
+      createWalletAppStateChangeHandler({
+        appStateRef,
+        screenRef,
+        systemPromptActiveRef,
+        vaultBiometricsEnabledRef,
+        biometricUnavailableReasonRef,
+        biometricInterruptedRef,
+        biometricDismissedRef,
+        lockedDuringSessionRef,
+        lockWalletRef,
+        unlockSavedWalletRef,
+      }),
+    );
     return () => subscription.remove();
-  }, [lockWallet, screen, vaultBiometricsEnabled, biometricUnavailableReason]);
+  }, []);
 
   useEffect(() => {
     if (screen !== 'wallet' || !seedSaved) {
