@@ -12,6 +12,9 @@ import subscriptionsSource from './hooks/useWalletSubscriptions.ts?raw';
 import transparentScanSource from './wallet/transparentScan.ts?raw';
 import coinbaseSource from './wallet/coinbaseMaturity.ts?raw';
 import historyDbSource from './services/walletHistoryDb.ts?raw';
+import networkControllerSource from './services/walletNetworkController.ts?raw';
+import exclusiveActionGateSource from './services/exclusiveActionGate.ts?raw';
+import vaultSessionMachineSource from './services/vaultSessionMachine.ts?raw';
 import expoConfig from '../app.config.js?raw';
 
 describe('mobile wallet UX and security invariants', () => {
@@ -70,11 +73,11 @@ describe('mobile wallet UX and security invariants', () => {
   });
 
   it('binds deferred wallet writes to the active wallet session', () => {
-    expect(appSource).toContain('const walletSessionRef = useRef(new WalletSessionGuard());');
-    expect(appSource).toContain('walletSessionRef.current.begin(nextWallet.address);');
-    expect(appSource).toMatch(/const lockWallet = useCallback\(\(\) => \{[\s\S]*?walletSessionRef\.current\.invalidate\(\);/);
-    expect(appSource).toContain('const session = walletSessionRef.current.capture(activeWallet.address);');
-    expect(appSource.match(/walletSessionRef\.current\.isCurrent\(session\)/g)?.length ?? 0).toBeGreaterThanOrEqual(12);
+    expect(networkControllerSource).toContain('readonly sessions = new WalletSessionGuard();');
+    expect(networkControllerSource).toContain('return this.sessions.begin(walletAddress);');
+    expect(networkControllerSource).toMatch(/cancel\(\): void \{[\s\S]*?this\.sessions\.invalidate\(\);/);
+    expect(appSource).toContain('walletNetworkController.sessions.capture(activeWallet.address)');
+    expect(appSource.match(/walletNetworkController\.isCurrent\(session\)/g)?.length ?? 0).toBeGreaterThanOrEqual(12);
     expect(appSource).toContain('startBroadcastReconciliation([txid], session)');
     expect(appSource).toContain('startBroadcastReconciliation(txids, session)');
     expect(appSource).toMatch(
@@ -83,14 +86,16 @@ describe('mobile wallet UX and security invariants', () => {
   });
 
   it('bounds broadcast reconciliation and exposes transparent scan progress', () => {
-    expect(appSource).toMatch(/mapWithConcurrency\(\s*txids,\s*BROADCAST_RECONCILIATION_CONCURRENCY,/);
-    expect(appSource).toContain('onProgress: onScanProgress');
-    expect(appSource).toContain('setHistoryProgress({ done, total });');
+    expect(networkControllerSource).toMatch(
+      /mapWithConcurrency\(txids, BROADCAST_RECONCILIATION_CONCURRENCY,/,
+    );
+    expect(networkControllerSource).toMatch(/scanWalletNetwork\(\{[\s\S]*?onProgress,/);
+    expect(networkControllerSource).toContain('ports.setHistoryProgress({ done, total });');
   });
 
   it('never disguises a failed financial read or write as complete data', () => {
-    expect(appSource).not.toMatch(/options\.silent[\s\S]{0,300}status: 'connected'/);
-    expect(appSource).not.toContain('client.connect().catch(() => undefined)');
+    expect(networkControllerSource).not.toMatch(/options\.silent[\s\S]{0,300}status: 'connected'/);
+    expect(networkControllerSource).not.toContain('client.connect().catch(() => undefined)');
     expect(appSource).not.toMatch(/saveEnrichedHistoryRecords\([\s\S]{0,700}\.catch\(\(\) => undefined\)/);
     expect(transparentScanSource).not.toContain('.catch(() => undefined)');
     expect(coinbaseSource).not.toMatch(/catch\s*\{\s*return utxo;/);
@@ -98,11 +103,11 @@ describe('mobile wallet UX and security invariants', () => {
       /ALTER TABLE wallet_transactions ADD COLUMN \$\{column\};`\)\.catch\(\(\) => undefined\)/,
     );
     expect(historyDbSource).toContain('retrySqliteWrite');
-    expect(appSource).toMatch(/cacheReadFailed[\s\S]*?scanTransparentWallet/);
-    expect(appSource).toMatch(
-      /caught instanceof ElectrumSessionUnhealthyError[\s\S]*?await client\.connect\(\)[\s\S]*?snapshot = await scanNetwork\(\)/,
+    expect(networkControllerSource).toMatch(/cacheReadFailed[\s\S]*?scanTransparentWallet/);
+    expect(networkControllerSource).toMatch(
+      /caught instanceof ElectrumSessionUnhealthyError[\s\S]*?await client\.connect\(\)[\s\S]*?return scan\(\)/,
     );
-    expect(appSource).toMatch(/const nextNetwork: NetworkState = preloaded \? \{\s*status: 'syncing'/);
+    expect(networkControllerSource).toMatch(/network: preloaded \? \{\s*status: 'syncing'/);
   });
 
   it('keeps confirmed transactions visible when enrichment is unavailable', () => {
@@ -115,19 +120,29 @@ describe('mobile wallet UX and security invariants', () => {
   });
 
   it('queues Electrum events received during synchronization and serializes subscription refreshes', () => {
-    expect(subscriptionsSource).toContain('dirtySyncQueueRef');
+    expect(networkControllerSource).toContain('private readonly dirty = new DirtySyncQueue()');
+    expect(networkControllerSource).toContain('this.dirty.request(options, this.syncing, requestSync)');
     expect(subscriptionsSource).toContain('flushPendingSync');
+    expect(subscriptionsSource).toContain('synchronization: { controller, request: requestSync }');
     expect(subscriptionsSource).toMatch(/const activeRefresh = refreshPromiseRef\.current;[\s\S]*?await activeRefresh;/);
     expect(appSource).toContain('subscriptionSyncFlushRef.current();');
   });
 
   it('honors forced gap rescans, implements pending-only refresh and clears the QR retry timer', () => {
-    expect(appSource).toMatch(
+    expect(networkControllerSource).toMatch(
       /!options\.force[\s\S]{0,100}!options\.rescanGap[\s\S]{0,200}cacheAlreadyFresh/,
     );
-    expect(appSource).toContain('pendingRefreshAddresses');
+    expect(networkControllerSource).toContain('pendingRefreshAddresses');
     expect(appSource).toContain('qrRetryTimerRef');
     expect(appSource).toContain('clearTimeout(qrRetryTimerRef.current)');
+  });
+
+  it('keeps exclusive actions and vault transitions in testable state machines', () => {
+    expect(exclusiveActionGateSource).toContain('if (this.current !== null)');
+    expect(exclusiveActionGateSource).toMatch(/finally \{[\s\S]*?this\.current = null;/);
+    expect(vaultSessionMachineSource).toContain("status: 'absent' | 'locked' | 'unlocked'");
+    expect(vaultSessionMachineSource).toContain('requirePersistedVault(state)');
+    expect(appSource).toContain('applyVaultTransition');
   });
 
   it('never recreates or replaces a vault after a stale PBKDF2 upgrade', () => {

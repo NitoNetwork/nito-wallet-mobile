@@ -61,28 +61,23 @@ import {
   historyExportCsvRows,
   historyRecordsFromEntries,
 } from './src/services/historyExport';
-import { mapWithConcurrency } from './src/services/concurrency';
 import { readOptionalCache } from './src/services/cachePolicy';
 import { reportNonFinancialFailure } from './src/services/diagnostics';
+import { ExclusiveActionGate } from './src/services/exclusiveActionGate';
 import { type Translator } from './src/i18n';
 import { nitoWalletCrypto } from './src/native/nitoWalletCrypto';
 import {
   clearWalletHistoryCache,
   loadWalletHistoryCache,
   loadWalletSnapshotCache,
-  normalizeWalletHistory,
   saveEnrichedHistoryRecords,
   saveWalletHistoryCache,
   saveWalletSnapshotCache,
 } from './src/services/walletHistoryDb';
 import {
   satoshisToNito,
-  refreshKnownUsedAddresses,
-  scanTransparentWallet,
-  TransparentScanIncompleteError,
   type TransparentWalletSnapshot,
 } from './src/wallet/transparentScan';
-import { pendingRefreshAddresses } from './src/wallet/pendingRefresh';
 import {
   buildTransparentConsolidation,
   buildTransparentSend,
@@ -97,6 +92,11 @@ import { useWalletSubscriptions } from './src/hooks/useWalletSubscriptions';
 import { AutoLock } from './src/services/session';
 import { prepareVaultUpgradeCommit } from './src/services/vaultMigration';
 import {
+  initialVaultSession,
+  transitionVaultSession,
+  type VaultSessionEvent,
+} from './src/services/vaultSessionMachine';
+import {
   decryptVault,
   deleteBiometricSecret,
   deleteVault,
@@ -106,7 +106,19 @@ import {
   saveBiometricSecret,
   saveVault,
 } from './src/services/vault';
-import { WalletSessionGuard, type WalletSessionToken } from './src/services/walletSession';
+import type { WalletSessionToken } from './src/services/walletSession';
+import {
+  WalletNetworkController,
+  createEmptyNetworkState,
+  enrichHistorySnapshot,
+  mergeHistoryEnrichment,
+  prefetchWalletSnapshot,
+  prepareWalletEntry,
+  reconcileBroadcastTransactions,
+  synchronizeWalletNetwork,
+  toQuickWalletSnapshot,
+  type WalletSyncOptions,
+} from './src/services/walletNetworkController';
 import { applyOptimisticWalletBroadcast } from './src/wallet/optimisticConsolidation';
 
 const PRIMARY_DERIVATION_PATH = "m/84'/0'/0'/0/0";
@@ -115,7 +127,6 @@ const BALANCE_REFRESH_COOLDOWN_MS = 120_000;
 const HISTORY_AUTO_IMPORT = true;
 const MNEMONIC_REVEAL_MS = 60_000;
 const ADDRESS_CLIPBOARD_MS = 60_000;
-const BROADCAST_RECONCILIATION_CONCURRENCY = 6;
 const BIP39_WORDS = new Set<string>(wordlist);
 
 const BASE_WALLET_TABS: { key: WalletTab; labelKey: Parameters<Translator>[0] }[] = [
@@ -197,46 +208,6 @@ const openTransactionExplorer = async (txid: string): Promise<void> => {
   if (!isValidTransactionId(txid)) return;
   await Linking.openURL(transactionExplorerUrl(txid));
 };
-const createEmptyNetworkState = (): NetworkState => ({
-  status: 'idle',
-  snapshot: null,
-  error: '',
-  serverUrl: '',
-  height: 0,
-  fullHistoryEnabled: false,
-});
-
-const toQuickWalletSnapshot = (snapshot: TransparentWalletSnapshot): TransparentWalletSnapshot => {
-  const spendableUtxos = snapshot.utxos.filter((utxo) => (
-    utxo.confirmations >= 101 || (utxo.confirmations > 0 && utxo.isCoinbase === false)
-  ));
-  const currentUtxoTxids = new Set(
-    spendableUtxos.map((utxo) => utxo.txid),
-  );
-  const immatureCoinbaseUtxos = snapshot.utxos.filter((utxo) => (
-    utxo.isCoinbase === true && utxo.confirmations > 0 && utxo.confirmations < 101
-  ));
-  const keepCurrentUtxoHistory = (history: TransparentWalletSnapshot['history']) =>
-    normalizeWalletHistory(history.filter((entry) => currentUtxoTxids.has(entry.txid)));
-  const stripAddressHistory = (address: TransparentWalletSnapshot['addresses'][number]) => ({
-    ...address,
-    history: keepCurrentUtxoHistory(address.history),
-  });
-
-  return {
-    ...snapshot,
-    spendableSats: spendableUtxos.reduce((total, utxo) => total + utxo.valueSats, 0),
-    immatureCoinbaseSats: immatureCoinbaseUtxos.reduce((total, utxo) => total + utxo.valueSats, 0),
-    immatureCoinbaseBlocksRemaining: immatureCoinbaseUtxos.length === 0
-      ? 0
-      : Math.min(...immatureCoinbaseUtxos.map((utxo) => 101 - utxo.confirmations)),
-    history: keepCurrentUtxoHistory(snapshot.history),
-    addresses: snapshot.addresses.map(stripAddressHistory),
-    usedAddresses: snapshot.usedAddresses.map(stripAddressHistory),
-    spendableAddresses: snapshot.spendableAddresses.map(stripAddressHistory),
-  };
-};
-
 const satoshisToNitoInput = (sats: bigint) => {
   const whole = sats / 100_000_000n;
   const fraction = (sats % 100_000_000n).toString().padStart(8, '0').replace(/0+$/, '');
@@ -306,16 +277,13 @@ export default function App() {
   const [walletTab, setWalletTab] = useState<WalletTab>('home');
   const [wallet, setWallet] = useState<Wallet | null>(null);
   const [pendingWallet, setPendingWallet] = useState<Wallet | null>(null);
+  const [walletNetworkController] = useState(() => new WalletNetworkController());
   const electrumClientRef = useRef<NitoElectrumClient | null>(null);
   const pendingNetworkRef = useRef<{ address: string; snapshot: TransparentWalletSnapshot; height: number } | null>(null);
-  const prefetchGenerationRef = useRef(0);
   const walletRef = useRef<Wallet | null>(null);
-  const walletSessionRef = useRef(new WalletSessionGuard());
   const networkRef = useRef<NetworkState>(createEmptyNetworkState());
   const silentNextAutoSyncRef = useRef(false);
-  const syncInFlightRef = useRef(false);
   const subscriptionSyncFlushRef = useRef<() => void>(() => undefined);
-  const enrichInFlightRef = useRef(false);
   const autoBiometricAttemptedRef = useRef(false);
   const unlockSavedWalletRef = useRef<(useBiometrics?: boolean, auto?: boolean) => Promise<void>>(async () => undefined);
   const biometricDismissedRef = useRef(false);
@@ -356,6 +324,8 @@ export default function App() {
   const [sensitiveAction, setSensitiveAction] = useState<'reveal' | 'delete' | 'enableBiometrics' | 'disableBiometrics' | null>(null);
   const [sensitiveBusy, setSensitiveBusy] = useState(false);
   const [pendingAction, setPendingAction] = useState<PendingAction | null>(null);
+  const [exclusiveActionGate] = useState(() => new ExclusiveActionGate<PendingAction>());
+  const vaultSessionStateRef = useRef(initialVaultSession);
   const [historyPage, setHistoryPage] = useState(0);
   const [historyProgress, setHistoryProgress] = useState<{ done: number; total: number } | null>(null);
   const [historySyncing, setHistorySyncing] = useState(false);
@@ -376,6 +346,15 @@ export default function App() {
   const resetFeedback = useCallback(() => {
     setError('');
     setStatus('');
+  }, []);
+
+  const applyVaultTransition = useCallback((event: VaultSessionEvent) => {
+    const next = transitionVaultSession(vaultSessionStateRef.current, event);
+    vaultSessionStateRef.current = next;
+    setSeedSaved(next.status !== 'absent');
+    setVaultUnlockMode(next.unlockMode);
+    setVaultBiometricsEnabled(next.biometricsEnabled);
+    return next;
   }, []);
 
   const clearQrRetryTimer = useCallback(() => {
@@ -422,21 +401,19 @@ export default function App() {
   }, [loadingSpin, pendingAction, screen]);
 
   const runExclusiveAction = useCallback(async (action: PendingAction, task: () => Promise<void> | void) => {
-    if (pendingActionRef.current) {
-      return;
-    }
-
+    if (exclusiveActionGate.active !== null) return;
     pendingActionRef.current = action;
     setPendingAction(action);
-    await yieldToUi();
-
     try {
-      await task();
+      await exclusiveActionGate.run(action, async () => {
+        await yieldToUi();
+        await task();
+      });
     } finally {
       pendingActionRef.current = null;
       setPendingAction(null);
     }
-  }, []);
+  }, [exclusiveActionGate]);
 
   useEffect(() => {
     let mounted = true;
@@ -459,9 +436,7 @@ export default function App() {
         }
 
         setBiometricMethod(method);
-        setSeedSaved(Boolean(vault));
-        setVaultUnlockMode(vault?.unlockMode === 'biometric' ? 'biometric' : 'password');
-        setVaultBiometricsEnabled(Boolean(vault?.biometricsEnabled || vault?.unlockMode === 'biometric'));
+        applyVaultTransition({ type: 'load', vault });
 
 
         const savedCooldown = Number(savedRefreshUntil);
@@ -491,7 +466,7 @@ export default function App() {
     return () => {
       mounted = false;
     };
-  }, []);
+  }, [applyVaultTransition]);
 
   useEffect(() => {
     if (refreshCooldownUntil <= Date.now()) {
@@ -527,49 +502,28 @@ export default function App() {
     cachedNetwork?: { snapshot: TransparentWalletSnapshot; height: number } | null,
     cachedHistory?: Awaited<ReturnType<typeof loadWalletHistoryCache>> | null,
   ) => {
-    const pendingPreload = pendingNetworkRef.current?.address === nextWallet.address ? pendingNetworkRef.current : null;
-    walletSessionRef.current.begin(nextWallet.address);
-    prefetchGenerationRef.current += 1;
+    const entry = prepareWalletEntry({
+      pendingNetwork: pendingNetworkRef.current,
+      wallet: nextWallet,
+      cachedNetwork,
+      cachedHistory,
+    });
+    const { pendingPreload, network: nextNetwork } = entry;
+    walletNetworkController.beginWalletSession(nextWallet.address);
     walletRef.current = nextWallet;
-    syncInFlightRef.current = false;
-    enrichInFlightRef.current = false;
-    const fullHistoryEnabled = (cachedHistory?.fullHistoryHeight ?? 0) > 0;
-    const cachedQuickNetwork = cachedNetwork
-      ? {
-          ...cachedNetwork,
-          snapshot: fullHistoryEnabled
-            ? {
-                ...toQuickWalletSnapshot(cachedNetwork.snapshot),
-                history: normalizeWalletHistory([
-                  ...(cachedHistory?.history ?? []),
-                  ...toQuickWalletSnapshot(cachedNetwork.snapshot).history,
-                ]),
-              }
-            : toQuickWalletSnapshot(cachedNetwork.snapshot),
-        }
-      : null;
-    const preloaded = pendingPreload
-      ? { ...pendingPreload, snapshot: toQuickWalletSnapshot(pendingPreload.snapshot) }
-      : cachedQuickNetwork;
-    const nextNetwork: NetworkState = preloaded ? {
-      status: 'syncing',
-      snapshot: preloaded.snapshot,
-      error: '',
-      serverUrl: '',
-      height: preloaded.height,
-      fullHistoryEnabled,
-    } : { ...createEmptyNetworkState(), status: 'syncing' };
 
     if (pendingPreload) {
       pendingNetworkRef.current = null;
       silentNextAutoSyncRef.current = true;
-    } else if (cachedQuickNetwork) {
+    } else if (entry.usedPreload) {
       silentNextAutoSyncRef.current = true;
     }
 
     setPendingWallet(null);
     setWallet(nextWallet);
-    setSeedSaved(saved);
+    if (saved && vaultSessionStateRef.current.status === 'locked') {
+      applyVaultTransition({ type: 'unlock' });
+    }
     setWalletTab('home');
     setHistoryPage(0);
     enrichAttemptedRef.current.clear();
@@ -588,73 +542,62 @@ export default function App() {
   };
 
   const prefetchWalletNetwork = useCallback(async (nextWallet: Wallet) => {
-    const generation = prefetchGenerationRef.current + 1;
-    prefetchGenerationRef.current = generation;
+    const generation = walletNetworkController.beginPrefetch();
     pendingNetworkRef.current = null;
 
     try {
       const client = electrumClientRef.current || new NitoElectrumClient();
       electrumClientRef.current = client;
-      await client.connect();
-      const snapshot = await scanTransparentWallet({
-        mnemonic: nextWallet.mnemonic,
-        electrum: client,
-        gapLimit: 20,
-        includeHistory: false,
-      });
-      if (!client.connected) {
-        throw new ElectrumSessionUnhealthyError(
-          new Error('ElectrumX connection closed before scan completion.'),
-        );
-      }
-      if (prefetchGenerationRef.current !== generation) {
+      const prefetched = await prefetchWalletSnapshot(nextWallet, client);
+      if (!walletNetworkController.isCurrentPrefetch(generation)) {
         return;
       }
-      pendingNetworkRef.current = { address: nextWallet.address, snapshot, height: client.blockHeight };
+      pendingNetworkRef.current = { address: nextWallet.address, ...prefetched };
     } catch (caught) {
-      if (prefetchGenerationRef.current === generation) {
+      if (walletNetworkController.isCurrentPrefetch(generation)) {
         pendingNetworkRef.current = null;
         setError(caught instanceof Error ? caught.message : t('errors.networkUnavailable'));
       }
     }
-  }, [t]);
+  }, [t, walletNetworkController]);
 
   const enrichWalletHistory = useCallback(async () => {
-    if (enrichInFlightRef.current) return;
+    if (!walletNetworkController.startEnrichment()) return;
     const activeWallet = walletRef.current;
     const snapshot = networkRef.current.snapshot;
-    if (!activeWallet || !snapshot) return;
-    const session = walletSessionRef.current.capture(activeWallet.address);
-    if (!session) return;
+    if (!activeWallet || !snapshot) {
+      walletNetworkController.finishEnrichment();
+      return;
+    }
+    const session = walletNetworkController.sessions.capture(activeWallet.address);
+    if (!session) {
+      walletNetworkController.finishEnrichment();
+      return;
+    }
     const pending = snapshot.history.filter((entry) =>
       entry.direction === undefined && !enrichAttemptedRef.current.has(enrichKey(entry)),
     );
-    if (pending.length === 0) return;
+    if (pending.length === 0) {
+      walletNetworkController.finishEnrichment();
+      return;
+    }
 
-    enrichInFlightRef.current = true;
     pending.forEach((entry) => enrichAttemptedRef.current.add(enrichKey(entry)));
     setHistoryProgress({ done: 0, total: pending.length });
     try {
       const client = electrumClientRef.current || new NitoElectrumClient();
       electrumClientRef.current = client;
-      await client.connect();
-      if (!walletSessionRef.current.isCurrent(session)) return;
-      const records = await buildHistoryExportRecords({
-        history: pending,
-        walletAddresses: snapshot.addresses.map((address) => address.address),
-        reader: client,
+      const { records } = await enrichHistorySnapshot({
+        snapshot,
+        pending,
+        client,
         onProgress: (done, total) => {
-          if (walletSessionRef.current.isCurrent(session)) {
+          if (walletNetworkController.isCurrent(session)) {
             setHistoryProgress({ done, total });
           }
         },
       });
-      if (!client.connected) {
-        throw new ElectrumSessionUnhealthyError(
-          new Error('ElectrumX connection closed before history enrichment completed.'),
-        );
-      }
-      if (!walletSessionRef.current.isCurrent(session)) return;
+      if (!walletNetworkController.isCurrent(session)) return;
       await saveEnrichedHistoryRecords(
         activeWallet.address,
         records
@@ -674,34 +617,18 @@ export default function App() {
           new Error('ElectrumX connection closed before history enrichment commit.'),
         );
       }
-      if (!walletSessionRef.current.isCurrent(session)) return;
-
-      const byTxid = new Map(records.map((record) => [record.txid, record]));
+      if (!walletNetworkController.isCurrent(session)) return;
       const current = networkRef.current;
-      if (!current.snapshot || !walletSessionRef.current.isCurrent(session)) return;
-      const enrichedHistory = current.snapshot.history.map((entry) => {
-        const record = byTxid.get(entry.txid);
-        if (!record || entry.direction !== undefined || record.blockHeight !== entry.height) {
-          return entry;
-        }
-        return {
-          ...entry,
-          direction: record.direction,
-          amountSats: record.amountSats,
-          feeSats: record.feeSats,
-          counterparty: record.counterparty,
-          blockTime: record.blockTime ?? undefined,
-        };
-      });
+      if (!current.snapshot || !walletNetworkController.isCurrent(session)) return;
       const nextNetwork: NetworkState = {
         ...current,
-        snapshot: { ...current.snapshot, history: enrichedHistory },
+        snapshot: mergeHistoryEnrichment(current.snapshot, records),
       };
-      if (!walletSessionRef.current.isCurrent(session)) return;
+      if (!walletNetworkController.isCurrent(session)) return;
       networkRef.current = nextNetwork;
       setNetwork(nextNetwork);
     } catch (caught) {
-      if (walletSessionRef.current.isCurrent(session)) {
+      if (walletNetworkController.isCurrent(session)) {
         pending.forEach((entry) => enrichAttemptedRef.current.delete(enrichKey(entry)));
         const message = caught instanceof Error ? caught.message : t('errors.networkUnavailable');
         const current = networkRef.current;
@@ -715,255 +642,51 @@ export default function App() {
         setError(message);
       }
     } finally {
-      if (walletSessionRef.current.isCurrent(session)) {
-        enrichInFlightRef.current = false;
+      if (walletNetworkController.isCurrent(session)) {
+        walletNetworkController.finishEnrichment();
         setHistoryProgress(null);
       }
     }
-  }, [t]);
+  }, [t, walletNetworkController]);
 
   const syncTransparentNetwork = useCallback(async (
     includeHistory = false,
-    options: {
-      force?: boolean;
-      silent?: boolean;
-      pendingOnly?: boolean;
-      onlyAddresses?: readonly string[];
-      rescanGap?: boolean;
-    } = {},
+    options: WalletSyncOptions = {},
   ) => {
-    const activeWallet = walletRef.current;
-    const currentNetwork = networkRef.current;
-
-    if (!activeWallet) {
-      setError(t('errors.noActiveWallet'));
-      return;
-    }
-    const session = walletSessionRef.current.capture(activeWallet.address);
-    if (!session) {
-      return;
-    }
-
-    if (syncInFlightRef.current || (pendingActionRef.current && !options.force)) {
-      return;
-    }
-
-    syncInFlightRef.current = true;
-
-    if (!includeHistory) {
-      setBalanceRefreshing(true);
-    }
-
-    try {
-      const client = electrumClientRef.current || new NitoElectrumClient();
-      electrumClientRef.current = client;
-      await client.connect();
-      const requireConnectedSession = () => {
-        if (!client.connected) {
-          throw new ElectrumSessionUnhealthyError(
-            new Error('ElectrumX connection closed before synchronization completed.'),
-          );
-        }
-      };
-      if (!walletSessionRef.current.isCurrent(session)) return;
-      const knownHeight = client.blockHeight || currentNetwork.height;
-      const cacheRead = await readOptionalCache(() => loadWalletHistoryCache(activeWallet.address));
-      const cacheReadFailed = cacheRead.status === 'failed';
-      const cache = cacheRead.status === 'hit'
-        ? cacheRead.value
-        : { history: [], fullHistoryHeight: 0 };
-      if (!walletSessionRef.current.isCurrent(session)) return;
-      const wantsFullHistory = HISTORY_AUTO_IMPORT || includeHistory || cache.fullHistoryHeight > 0;
-      if (wantsFullHistory) {
-        setHistorySyncing(true);
-      }
-      const cacheAlreadyFresh =
-        !cacheReadFailed &&
-        wantsFullHistory &&
-        knownHeight > 0 &&
-        cache.fullHistoryHeight >= knownHeight;
-      const heightUnchanged =
-        knownHeight > 0 &&
-        currentNetwork.height >= knownHeight &&
-        Boolean(currentNetwork.snapshot);
-
-      if (
-        !cacheReadFailed
-        && !options.force
-        && !options.rescanGap
-        && !wantsFullHistory
-        && heightUnchanged
-      ) {
-        requireConnectedSession();
-        if (!walletSessionRef.current.isCurrent(session)) return;
-        const nextNetwork: NetworkState = {
-          ...currentNetwork,
-          status: 'connected',
-          error: '',
-          height: Math.max(currentNetwork.height, knownHeight),
-          fullHistoryEnabled: currentNetwork.fullHistoryEnabled || cache.fullHistoryHeight > 0,
-        };
+    await synchronizeWalletNetwork({
+      controller: walletNetworkController,
+      getWallet: () => walletRef.current,
+      getNetwork: () => networkRef.current,
+      getClient: () => electrumClientRef.current,
+      setClient: (client) => {
+        electrumClientRef.current = client;
+      },
+      actionPending: () => pendingActionRef.current !== null,
+      fullHistoryByDefault: HISTORY_AUTO_IMPORT,
+      readHistoryCache: (address) => readOptionalCache(() => loadWalletHistoryCache(address)),
+      saveHistory: saveWalletHistoryCache,
+      saveSnapshot: saveWalletSnapshotCache,
+      publishNetwork: (nextNetwork) => {
         networkRef.current = nextNetwork;
         setNetwork(nextNetwork);
-        if (!options.silent) {
-          setStatus(t('status.walletSynced'));
-        }
-        return;
-      }
-
-      if (
-        !cacheReadFailed
-        && !options.force
-        && !options.rescanGap
-        && wantsFullHistory
-        && cacheAlreadyFresh
-        && currentNetwork.snapshot
-        && heightUnchanged
-      ) {
-        requireConnectedSession();
-        if (!walletSessionRef.current.isCurrent(session)) return;
-        const snapshot = {
-          ...currentNetwork.snapshot,
-          history: normalizeWalletHistory([...cache.history, ...currentNetwork.snapshot.history]),
-        };
-        const nextNetwork: NetworkState = {
-          ...currentNetwork,
-          status: 'connected',
-          snapshot,
-          error: '',
-          height: knownHeight,
-          fullHistoryEnabled: true,
-        };
-        if (!walletSessionRef.current.isCurrent(session)) return;
-        await saveWalletSnapshotCache(activeWallet.address, toQuickWalletSnapshot(snapshot), knownHeight);
-        if (!walletSessionRef.current.isCurrent(session)) return;
-        requireConnectedSession();
-        networkRef.current = nextNetwork;
-        setNetwork(nextNetwork);
-        if (!options.silent) {
-          setStatus(t('status.walletSynced'));
-        }
-        return;
-      }
-
-      if (!walletSessionRef.current.isCurrent(session)) return;
-      if (!options.silent) {
-        setStatus(wantsFullHistory ? t('status.syncingHistory') : t('status.syncing'));
-        const syncingNetwork: NetworkState = {
-          ...networkRef.current,
-          status: 'syncing',
-          error: '',
-          height: Math.max(networkRef.current.height, knownHeight),
-          fullHistoryEnabled: wantsFullHistory || networkRef.current.fullHistoryEnabled,
-        };
-        networkRef.current = syncingNetwork;
-        setNetwork(syncingNetwork);
-      }
-
-      const onScanProgress = (done: number, total: number) => {
-        if (walletSessionRef.current.isCurrent(session)) {
-          setHistoryProgress({ done, total });
-        }
-      };
-      const onlyAddresses = options.pendingOnly && currentNetwork.snapshot
-        ? [...new Set([
-            ...(options.onlyAddresses ?? []),
-            ...pendingRefreshAddresses(currentNetwork.snapshot),
-          ])]
-        : options.onlyAddresses;
-      const scanNetwork = () => currentNetwork.snapshot && !options.rescanGap && !cacheReadFailed
-        ? refreshKnownUsedAddresses({
-            snapshot: currentNetwork.snapshot,
-            electrum: client,
-            includeHistory: wantsFullHistory,
-            onlyAddresses,
-            onProgress: onScanProgress,
-          })
-        : scanTransparentWallet({
-            mnemonic: activeWallet.mnemonic,
-            electrum: client,
-            gapLimit: 20,
-            includeHistory: wantsFullHistory && (
-              !cacheAlreadyFresh || Boolean(options.force) || Boolean(options.rescanGap)
-            ),
-            previousSnapshot: currentNetwork.snapshot,
-            onProgress: onScanProgress,
-          });
-      let snapshot: TransparentWalletSnapshot;
-      try {
-        snapshot = await scanNetwork();
-      } catch (caught) {
-        if (!(caught instanceof ElectrumSessionUnhealthyError)) {
-          throw caught;
-        }
-        await client.connect();
-        if (!walletSessionRef.current.isCurrent(session)) return;
-        snapshot = await scanNetwork();
-      }
-      if (!walletSessionRef.current.isCurrent(session)) return;
-      requireConnectedSession();
-      const mergedHistory = normalizeWalletHistory([...cache.history, ...snapshot.history]);
-
-      if (wantsFullHistory) {
-        snapshot = { ...snapshot, history: mergedHistory };
-
-        if (!cacheAlreadyFresh || options.force || options.rescanGap) {
-          if (!walletSessionRef.current.isCurrent(session)) return;
-          requireConnectedSession();
-          await saveWalletHistoryCache(activeWallet.address, mergedHistory, knownHeight);
-          if (!walletSessionRef.current.isCurrent(session)) return;
-        }
-      }
-
-      if (!walletSessionRef.current.isCurrent(session)) return;
-      requireConnectedSession();
-      const nextNetwork: NetworkState = {
-        status: 'connected',
-        snapshot,
-        error: '',
-        serverUrl: '',
-        height: knownHeight,
-        fullHistoryEnabled: wantsFullHistory,
-      };
-      if (!walletSessionRef.current.isCurrent(session)) return;
-      await saveWalletSnapshotCache(activeWallet.address, toQuickWalletSnapshot(snapshot), knownHeight);
-      if (!walletSessionRef.current.isCurrent(session)) return;
-      requireConnectedSession();
-      networkRef.current = nextNetwork;
-      setNetwork(nextNetwork);
-      if (!options.silent) {
-        setStatus(t('status.walletSynced'));
-      }
-    } catch (caught) {
-      if (!walletSessionRef.current.isCurrent(session)) return;
-      const fallbackNetwork = networkRef.current;
-      if (caught instanceof TransparentScanIncompleteError && electrumClientRef.current?.connected) {
-        electrumClientRef.current.disconnect(new ElectrumSessionUnhealthyError(caught));
-      }
-      const message = caught instanceof Error ? caught.message : t('errors.networkUnavailable');
-      const nextNetwork: NetworkState = {
-        status: 'error',
-        snapshot: fallbackNetwork.snapshot,
-        error: message,
-        serverUrl: '',
-        height: electrumClientRef.current?.blockHeight || fallbackNetwork.height || 0,
-        fullHistoryEnabled: fallbackNetwork.fullHistoryEnabled,
-      };
-      networkRef.current = nextNetwork;
-      setNetwork(nextNetwork);
-      setError(message);
-    } finally {
-      if (walletSessionRef.current.isCurrent(session)) {
-        syncInFlightRef.current = false;
+      },
+      setError,
+      setStatus,
+      setHistorySyncing,
+      setHistoryProgress,
+      setBalanceRefreshing,
+      finishSync: () => {
         subscriptionSyncFlushRef.current();
-        setHistorySyncing(false);
-        setHistoryProgress(null);
-        if (!includeHistory) {
-          setBalanceRefreshing(false);
-        }
-      }
-    }
-  }, [t]);
+      },
+      messages: {
+        noActiveWallet: t('errors.noActiveWallet'),
+        networkUnavailable: t('errors.networkUnavailable'),
+        syncing: t('status.syncing'),
+        syncingHistory: t('status.syncingHistory'),
+        walletSynced: t('status.walletSynced'),
+      },
+    }, includeHistory, options);
+  }, [t, walletNetworkController]);
 
   useEffect(() => {
     if (screen !== 'wallet' || !network.snapshot) return;
@@ -979,35 +702,27 @@ export default function App() {
     txids: readonly string[],
     session: WalletSessionToken,
   ) => {
-    if (txids.length === 0 || !walletSessionRef.current.isCurrent(session)) return;
     const client = electrumClientRef.current ?? new NitoElectrumClient();
     electrumClientRef.current = client;
-    for (const delayMs of [250, 750, 1_500, 3_000]) {
-      await new Promise<void>((resolve) => setTimeout(resolve, delayMs));
-      if (!walletSessionRef.current.isCurrent(session)) return;
-      await mapWithConcurrency(
-        txids,
-        BROADCAST_RECONCILIATION_CONCURRENCY,
-        async (txid) => {
-          await client.getTransactionHex(txid);
-        },
-      );
-      if (!walletSessionRef.current.isCurrent(session)) return;
-      break;
+    const found = await reconcileBroadcastTransactions({
+      txids,
+      client,
+      isCurrent: () => walletNetworkController.isCurrent(session),
+    });
+    if (found) {
+      await syncTransparentNetwork(false, { force: true, silent: true, pendingOnly: true });
     }
-    if (!walletSessionRef.current.isCurrent(session)) return;
-    await syncTransparentNetwork(false, { force: true, silent: true, pendingOnly: true });
-  }, [syncTransparentNetwork]);
+  }, [syncTransparentNetwork, walletNetworkController]);
 
   const advanceBlockHeight = useCallback((height: number) => {
     const activeWallet = walletRef.current;
     if (!activeWallet) return;
-    const session = walletSessionRef.current.capture(activeWallet.address);
-    if (!walletSessionRef.current.isCurrent(session)) return;
+    const session = walletNetworkController.sessions.capture(activeWallet.address);
+    if (!walletNetworkController.isCurrent(session)) return;
     const nextNetwork = { ...networkRef.current, height };
     networkRef.current = nextNetwork;
     setNetwork(nextNetwork);
-  }, []);
+  }, [walletNetworkController]);
 
   const requestSync = useCallback((options: Parameters<typeof syncTransparentNetwork>[1]) => {
     void syncTransparentNetwork(false, options);
@@ -1038,13 +753,19 @@ export default function App() {
     flushPendingSync,
   } = useWalletSubscriptions({
     enabled: screen === 'wallet' && Boolean(wallet),
-    walletAddress: wallet?.address,
-    snapshot: network.snapshot,
-    clientRef: electrumClientRef,
-    networkRef,
-    syncInFlightRef,
+    wallet: {
+      address: wallet?.address,
+      snapshot: network.snapshot,
+    },
+    electrum: {
+      clientRef: electrumClientRef,
+      networkRef,
+    },
+    synchronization: {
+      controller: walletNetworkController,
+      request: requestSync,
+    },
     onHeightAdvance: advanceBlockHeight,
-    requestSync,
     onConnectionError: reportNetworkFailure,
   });
 
@@ -1126,7 +847,7 @@ export default function App() {
     try {
       const vault = await loadVault();
       if (!vault) {
-        setSeedSaved(false);
+        applyVaultTransition({ type: 'load', vault: null });
         setScreen('landing');
         throw new Error(t('errors.noVault'));
       }
@@ -1179,21 +900,21 @@ export default function App() {
         : await readOptionalCache(() => loadWalletHistoryCache(payload.address)).then(
             (result) => result.status === 'hit' ? result.value : null,
           );
-      setVaultUnlockMode(vault.unlockMode === 'biometric' ? 'biometric' : 'password');
-      setVaultBiometricsEnabled(Boolean(vault.biometricsEnabled || vault.unlockMode === 'biometric'));
+      applyVaultTransition({ type: 'load', vault });
+      applyVaultTransition({ type: 'unlock' });
       setUnlockPassword('');
       enterWallet(unlockedWallet, true, t('status.walletUnlocked'), cachedNetwork, cachedHistory);
-      const unlockedSession = walletSessionRef.current.capture(unlockedWallet.address);
+      const unlockedSession = walletNetworkController.sessions.capture(unlockedWallet.address);
       if (cachedNetwork && unlockedSession) {
         void (async () => {
-          if (!walletSessionRef.current.isCurrent(unlockedSession)) return;
+          if (!walletNetworkController.isCurrent(unlockedSession)) return;
           await saveWalletSnapshotCache(
             unlockedWallet.address,
             toQuickWalletSnapshot(cachedNetwork.snapshot),
             cachedNetwork.height,
           );
         })().catch((caught) => {
-          if (walletSessionRef.current.isCurrent(unlockedSession)) {
+          if (walletNetworkController.isCurrent(unlockedSession)) {
             setError(caught instanceof Error ? caught.message : t('errors.networkUnavailable'));
           }
         });
@@ -1305,9 +1026,7 @@ export default function App() {
       );
 
       await saveVault(encrypted);
-      setSeedSaved(true);
-      setVaultUnlockMode('password');
-      setVaultBiometricsEnabled(false);
+      applyVaultTransition({ type: 'persist' });
 
       let biometricNotice = '';
       if (!biometricUnavailableReason && await askBiometricOptIn()) {
@@ -1350,15 +1069,10 @@ export default function App() {
                 }
                 await deleteBiometricSecret();
                 await deleteVault();
-                walletSessionRef.current.invalidate();
-                prefetchGenerationRef.current += 1;
+                walletNetworkController.cancel();
                 pendingNetworkRef.current = null;
                 walletRef.current = null;
-                syncInFlightRef.current = false;
-                enrichInFlightRef.current = false;
-                setSeedSaved(false);
-                setVaultUnlockMode('password');
-                setVaultBiometricsEnabled(false);
+                applyVaultTransition({ type: 'delete' });
                 setWallet(null);
                 setPendingWallet(null);
                 setShowMnemonic(false);
@@ -1385,12 +1099,10 @@ export default function App() {
 
   const lockWallet = useCallback(() => {
     lockedDuringSessionRef.current = true;
-    walletSessionRef.current.invalidate();
-    prefetchGenerationRef.current += 1;
+    applyVaultTransition({ type: 'lock' });
+    walletNetworkController.cancel();
     pendingNetworkRef.current = null;
     walletRef.current = null;
-    syncInFlightRef.current = false;
-    enrichInFlightRef.current = false;
     resetFeedback();
     clearAddressSubscriptions();
     setWallet(null);
@@ -1419,7 +1131,13 @@ export default function App() {
     networkRef.current = emptyNetwork;
     setNetwork(emptyNetwork);
     setScreen(seedSaved ? 'unlock' : 'landing');
-  }, [clearAddressSubscriptions, resetFeedback, seedSaved]);
+  }, [
+    applyVaultTransition,
+    clearAddressSubscriptions,
+    resetFeedback,
+    seedSaved,
+    walletNetworkController,
+  ]);
 
   useEffect(() => {
     const subscription = AppState.addEventListener('change', (nextState) => {
@@ -1573,7 +1291,7 @@ export default function App() {
     }
     const activeWallet = walletRef.current;
     const session = activeWallet
-      ? walletSessionRef.current.capture(activeWallet.address)
+      ? walletNetworkController.sessions.capture(activeWallet.address)
       : null;
     if (!session) {
       setError(t('errors.noActiveWallet'));
@@ -1586,7 +1304,7 @@ export default function App() {
       electrumClientRef.current = client;
       const transaction = preparedTx;
       const txid = await client.broadcastTransaction(transaction.hex);
-      if (!walletSessionRef.current.isCurrent(session)) return;
+      if (!walletNetworkController.isCurrent(session)) return;
 
       const currentNetwork = networkRef.current;
       if (currentNetwork.snapshot) {
@@ -1622,11 +1340,11 @@ export default function App() {
       );
       startBroadcastReconciliation([txid], session);
     } catch (caught) {
-      if (walletSessionRef.current.isCurrent(session)) {
+      if (walletNetworkController.isCurrent(session)) {
         setError(caught instanceof Error ? caught.message : t('errors.sendFailed'));
       }
     } finally {
-      if (walletSessionRef.current.isCurrent(session)) {
+      if (walletNetworkController.isCurrent(session)) {
         setBroadcasting(false);
       }
     }
@@ -1677,7 +1395,7 @@ export default function App() {
       }
       const activeWallet = walletRef.current;
       const session = activeWallet
-        ? walletSessionRef.current.capture(activeWallet.address)
+        ? walletNetworkController.sessions.capture(activeWallet.address)
         : null;
       if (!session) {
         setError(t('errors.noActiveWallet'));
@@ -1691,9 +1409,9 @@ export default function App() {
       let sentCount = 0;
       try {
         for (const transaction of preparedConsolidation.transactions) {
-          if (!walletSessionRef.current.isCurrent(session)) return;
+          if (!walletNetworkController.isCurrent(session)) return;
           const txid = await client.broadcastTransaction(transaction.hex);
-          if (!walletSessionRef.current.isCurrent(session)) return;
+          if (!walletNetworkController.isCurrent(session)) return;
           txids.push(txid);
           sentCount += 1;
           const currentNetwork = networkRef.current;
@@ -1713,7 +1431,7 @@ export default function App() {
           { text: t('actions.ok'), style: 'cancel' },
         ]);
       } catch {
-        if (!walletSessionRef.current.isCurrent(session)) return;
+        if (!walletNetworkController.isCurrent(session)) return;
         const remaining = preparedConsolidation.transactions.slice(sentCount);
         setPreparedConsolidation(remaining.length > 0 ? {
           transactions: remaining,
@@ -1724,7 +1442,7 @@ export default function App() {
         Alert.alert(consolidationT('partialTitle'), consolidationT('partialBody'));
         setError(consolidationT('partialBody'));
       } finally {
-        if (walletSessionRef.current.isCurrent(session)) {
+        if (walletNetworkController.isCurrent(session)) {
           setBroadcasting(false);
         }
         if (txids.length > 0) startBroadcastReconciliation(txids, session);
@@ -1789,7 +1507,7 @@ export default function App() {
     if (vault) {
       await saveVault({ ...vault, biometricsEnabled: true });
     }
-    setVaultBiometricsEnabled(true);
+    applyVaultTransition({ type: 'enable-biometrics' });
   };
 
   const disableBiometricUnlock = async () => {
@@ -1798,8 +1516,7 @@ export default function App() {
     if (vault) {
       await saveVault({ ...vault, biometricsEnabled: false, unlockMode: 'password' });
     }
-    setVaultBiometricsEnabled(false);
-    setVaultUnlockMode('password');
+    applyVaultTransition({ type: 'disable-biometrics' });
   };
 
   const askDisableBiometrics = () => {
@@ -1903,7 +1620,7 @@ export default function App() {
       resetFeedback();
       const activeWallet = walletRef.current;
       const session = activeWallet
-        ? walletSessionRef.current.capture(activeWallet.address)
+        ? walletNetworkController.sessions.capture(activeWallet.address)
         : null;
       try {
         if (!activeWallet || !session) {
@@ -1915,34 +1632,34 @@ export default function App() {
         if (!(await Sharing.isAvailableAsync())) {
           throw new Error(t('errors.historyExportUnavailable'));
         }
-        if (!walletSessionRef.current.isCurrent(session)) return;
+        if (!walletNetworkController.isCurrent(session)) return;
 
         const rootDirectory = FileSystem.cacheDirectory ?? FileSystem.documentDirectory;
         if (!rootDirectory) {
           throw new Error(t('errors.historyExportUnavailable'));
         }
 
-        while (enrichInFlightRef.current) {
+        while (walletNetworkController.enrichmentInFlight) {
           await new Promise((resolve) => setTimeout(resolve, 150));
-          if (!walletSessionRef.current.isCurrent(session)) return;
+          if (!walletNetworkController.isCurrent(session)) return;
         }
-        enrichInFlightRef.current = true;
+        if (!walletNetworkController.startEnrichment()) return;
         try {
           const snapshot = networkRef.current.snapshot;
-          if (!snapshot || !walletSessionRef.current.isCurrent(session)) return;
+          if (!snapshot || !walletNetworkController.isCurrent(session)) return;
           const missing = snapshot.history.filter((entry) => entry.direction === undefined);
 
           if (missing.length > 0) {
             const client = electrumClientRef.current || new NitoElectrumClient();
             electrumClientRef.current = client;
             await client.connect();
-            if (!walletSessionRef.current.isCurrent(session)) return;
+            if (!walletNetworkController.isCurrent(session)) return;
             const fresh = await buildHistoryExportRecords({
               history: missing,
               walletAddresses: snapshot.addresses.map((address) => address.address),
               reader: client,
               onProgress: (done, total) => {
-                if (walletSessionRef.current.isCurrent(session)) {
+                if (walletNetworkController.isCurrent(session)) {
                   setStatus(t('status.historyExporting', { done, total }));
                 }
               },
@@ -1952,7 +1669,7 @@ export default function App() {
                 new Error('ElectrumX connection closed before history export enrichment completed.'),
               );
             }
-            if (!walletSessionRef.current.isCurrent(session)) return;
+            if (!walletNetworkController.isCurrent(session)) return;
             await saveEnrichedHistoryRecords(
               activeWallet.address,
               fresh
@@ -1972,10 +1689,10 @@ export default function App() {
                 new Error('ElectrumX connection closed before history export commit.'),
               );
             }
-            if (!walletSessionRef.current.isCurrent(session)) return;
+            if (!walletNetworkController.isCurrent(session)) return;
             const byTxid = new Map(fresh.map((record) => [record.txid, record]));
             const current = networkRef.current;
-            if (current.snapshot && walletSessionRef.current.isCurrent(session)) {
+            if (current.snapshot && walletNetworkController.isCurrent(session)) {
               const merged = current.snapshot.history.map((entry) => {
                 const record = byTxid.get(entry.txid);
                 if (!record || entry.direction !== undefined || record.blockHeight !== entry.height) {
@@ -1997,32 +1714,32 @@ export default function App() {
               networkRef.current = nextNetwork;
               setNetwork(nextNetwork);
             }
-            if (!walletSessionRef.current.isCurrent(session)) return;
+            if (!walletNetworkController.isCurrent(session)) return;
             missing.forEach((entry) => enrichAttemptedRef.current.add(enrichKey(entry)));
           }
         } finally {
-          if (walletSessionRef.current.isCurrent(session)) {
-            enrichInFlightRef.current = false;
+          if (walletNetworkController.isCurrent(session)) {
+            walletNetworkController.finishEnrichment();
           }
         }
 
-        if (!walletSessionRef.current.isCurrent(session)) return;
+        if (!walletNetworkController.isCurrent(session)) return;
         const records = historyRecordsFromEntries(networkRef.current.snapshot?.history ?? []);
         const rows = historyExportCsvRows(records);
         const csv = `\uFEFF${rows.map((row) => row.map(escapeCsvCell).join(',')).join('\r\n')}`;
         const date = new Date().toISOString().slice(0, 10);
         const uri = `${rootDirectory}nito-wallet-history-${date}.csv`;
         await FileSystem.writeAsStringAsync(uri, csv, { encoding: FileSystem.EncodingType.UTF8 });
-        if (!walletSessionRef.current.isCurrent(session)) return;
+        if (!walletNetworkController.isCurrent(session)) return;
         await Sharing.shareAsync(uri, {
           dialogTitle: t('history.exportTitle'),
           mimeType: 'text/csv',
           UTI: 'public.comma-separated-values-text',
         });
-        if (!walletSessionRef.current.isCurrent(session)) return;
+        if (!walletNetworkController.isCurrent(session)) return;
         setStatus(t('status.historyExported'));
       } catch (caught) {
-        if (!session || walletSessionRef.current.isCurrent(session)) {
+        if (!session || walletNetworkController.isCurrent(session)) {
           setError(caught instanceof Error ? caught.message : t('errors.historyExportFailed'));
         }
       }
@@ -2032,8 +1749,8 @@ export default function App() {
   const refreshBalance = async () => {
     const now = Date.now();
     const activeWallet = walletRef.current;
-    if (balanceRefreshing || syncInFlightRef.current || pendingActionRef.current || !activeWallet) return;
-    const session = walletSessionRef.current.capture(activeWallet.address);
+    if (balanceRefreshing || walletNetworkController.syncInFlight || pendingActionRef.current || !activeWallet) return;
+    const session = walletNetworkController.sessions.capture(activeWallet.address);
     if (!session) return;
     if (now < refreshCooldownUntil) {
       Alert.alert(
@@ -2049,9 +1766,9 @@ export default function App() {
     await SecureStore.setItemAsync(BALANCE_REFRESH_COOLDOWN_KEY, String(cooldownUntil)).catch((caught) => {
       reportNonFinancialFailure('balance refresh cooldown write', caught);
     });
-    if (!walletSessionRef.current.isCurrent(session)) return;
+    if (!walletNetworkController.isCurrent(session)) return;
     await syncTransparentNetwork(false, { force: true, silent: true });
-    if (walletSessionRef.current.isCurrent(session) && networkRef.current.status === 'connected') {
+    if (walletNetworkController.isCurrent(session) && networkRef.current.status === 'connected') {
       setStatus(t('status.walletSynced'));
     }
   };

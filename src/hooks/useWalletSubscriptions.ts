@@ -1,7 +1,10 @@
 import { useCallback, useEffect, useRef, type MutableRefObject } from 'react';
 
 import type { NitoElectrumClient } from '../network/electrum';
-import { DirtySyncQueue, type DirtySyncOptions } from '../services/syncDirtyQueue';
+import {
+  type WalletNetworkController,
+  type WalletSyncOptions,
+} from '../services/walletNetworkController';
 import type { TransparentWalletSnapshot } from '../wallet/transparentScan';
 import { hasPendingWork, pendingRefreshAddresses } from '../wallet/pendingRefresh';
 import type { NetworkState } from '../ui/types';
@@ -13,45 +16,47 @@ import type { NetworkState } from '../ui/types';
  */
 export const useWalletSubscriptions = ({
   enabled,
-  walletAddress,
-  snapshot,
-  clientRef,
-  networkRef,
-  syncInFlightRef,
+  wallet: { address: walletAddress, snapshot },
+  electrum: { clientRef, networkRef },
+  synchronization: { controller, request: requestSync },
   onHeightAdvance,
-  requestSync,
   onConnectionError,
 }: {
   enabled: boolean;
-  walletAddress: string | undefined;
-  snapshot: TransparentWalletSnapshot | null;
-  clientRef: MutableRefObject<NitoElectrumClient | null>;
-  networkRef: MutableRefObject<NetworkState>;
-  syncInFlightRef: MutableRefObject<boolean>;
+  wallet: {
+    address: string | undefined;
+    snapshot: TransparentWalletSnapshot | null;
+  };
+  electrum: {
+    clientRef: MutableRefObject<NitoElectrumClient | null>;
+    networkRef: MutableRefObject<NetworkState>;
+  };
+  synchronization: {
+    controller: WalletNetworkController;
+    request: (options: WalletSyncOptions) => void;
+  };
   onHeightAdvance: (height: number) => void;
-  requestSync: (options: DirtySyncOptions) => void;
   onConnectionError: (error: unknown) => void;
 }) => {
   const statusRef = useRef<Map<string, string | null>>(new Map());
   const unsubscribeRef = useRef<Map<string, () => void>>(new Map());
   const blockHeightUnsubscribeRef = useRef<(() => void) | null>(null);
-  const dirtySyncQueueRef = useRef(new DirtySyncQueue());
   const refreshPromiseRef = useRef<Promise<void> | null>(null);
 
-  const requestOrQueueSync = useCallback((options: DirtySyncOptions) => {
-    dirtySyncQueueRef.current.request(options, syncInFlightRef.current, requestSync);
-  }, [requestSync, syncInFlightRef]);
+  const requestOrQueueSync = useCallback((options: WalletSyncOptions) => {
+    controller.requestOrQueueSync(options, requestSync);
+  }, [controller, requestSync]);
 
   const flushPendingSync = useCallback(() => {
-    dirtySyncQueueRef.current.flush(syncInFlightRef.current, requestSync);
-  }, [requestSync, syncInFlightRef]);
+    controller.finishSync(requestSync);
+  }, [controller, requestSync]);
 
   const clearSubscriptions = useCallback(() => {
     unsubscribeRef.current.forEach((unsubscribe) => unsubscribe());
     unsubscribeRef.current.clear();
     statusRef.current.clear();
-    dirtySyncQueueRef.current.clear();
-  }, []);
+    controller.clearPendingSync();
+  }, [controller]);
 
   useEffect(() => {
     blockHeightUnsubscribeRef.current?.();
