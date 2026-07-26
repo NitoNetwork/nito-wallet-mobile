@@ -345,6 +345,7 @@ export default function App() {
   const systemPromptActiveRef = useRef(false);
   const autoLockRef = useRef<AutoLock | null>(null);
   const pendingActionRef = useRef<PendingAction | null>(null);
+  const walletScrollRef = useRef<ScrollView | null>(null);
   const [loadingSpin] = useState(() => new Animated.Value(0));
   const [network, setNetwork] = useState<NetworkState>(createEmptyNetworkState);
   const [electrumServerPreference, setElectrumServerPreference] =
@@ -485,6 +486,10 @@ export default function App() {
   const resetFeedback = useCallback(() => {
     setError('');
     setStatus('');
+  }, []);
+
+  const scrollToPreparedReview = useCallback(() => {
+    walletScrollRef.current?.scrollToEnd({ animated: true });
   }, []);
 
   const resetSendDraft = useCallback(() => {
@@ -2383,6 +2388,7 @@ export default function App() {
           onPrepareSend={prepareTransparentSend}
           onBroadcastTx={() => { void broadcastPreparedTx(); }}
           onBroadcastConsolidation={() => { void broadcastPreparedConsolidation(); }}
+          onPreparedReviewLayout={scrollToPreparedReview}
         />
       );
     }
@@ -2570,7 +2576,11 @@ export default function App() {
         onStartShouldSetResponderCapture={() => { registerActivity(); return false; }}
       >
         <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={styles.keyboard}>
-          <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={styles.screen}>
+          <ScrollView
+            ref={walletScrollRef}
+            keyboardShouldPersistTaps="handled"
+            contentContainerStyle={styles.screen}
+          >
             {screen !== 'loading' ? <Hero t={t} /> : null}
             <Feedback error={error} status={status} />
             {activeScreen()}

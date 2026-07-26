@@ -76,6 +76,7 @@ export function SendTab({
   onPrepareSend,
   onBroadcastTx,
   onBroadcastConsolidation,
+  onPreparedReviewLayout,
 }: {
   t: Translator;
   language: LanguageCode;
@@ -96,6 +97,7 @@ export function SendTab({
   onPrepareSend: () => void;
   onBroadcastTx: () => void;
   onBroadcastConsolidation: () => void;
+  onPreparedReviewLayout: () => void;
 }) {
   const consolidationT = makeConsolidationTranslator(language);
   const duplicateAddresses = duplicateRecipientAddresses(recipients);
@@ -205,7 +207,7 @@ export function SendTab({
         {t('send.available', { amount: network.snapshot ? satoshisToNito(network.snapshot.spendableSats, language) : '0' })}
       </Text>
       {preparedTx ? (
-        <View style={styles.txBox}>
+        <View style={styles.txBox} onLayout={onPreparedReviewLayout}>
           <Text style={styles.label}>{t('send.transactionReady')}</Text>
           <Text style={styles.label}>{t('send.recipientsReview')}</Text>
           {preparedTx.recipients.map((recipient, index) => (
@@ -228,7 +230,7 @@ export function SendTab({
         </View>
       ) : null}
       {preparedConsolidation ? (
-        <View style={styles.txBox}>
+        <View style={styles.txBox} onLayout={onPreparedReviewLayout}>
           <Text style={styles.label}>{consolidationT('review')}</Text>
           <Text style={styles.previewAddress}>
             {`${consolidationT('transactions')}: ${preparedConsolidation.transactions.length}`}

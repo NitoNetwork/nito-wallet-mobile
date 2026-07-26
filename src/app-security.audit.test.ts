@@ -200,6 +200,13 @@ describe('mobile wallet UX and security invariants', () => {
     expect(appSource).toContain('shouldShowBlockingLoadingOverlay(pendingAction)');
   });
 
+  it('scrolls both prepared transaction reviews into view after layout', () => {
+    expect(appSource).toContain('const walletScrollRef = useRef<ScrollView | null>(null);');
+    expect(appSource).toContain('walletScrollRef.current?.scrollToEnd({ animated: true });');
+    expect(appSource).toContain('onPreparedReviewLayout={scrollToPreparedReview}');
+    expect(tabsSource.match(/onLayout=\{onPreparedReviewLayout\}/g)).toHaveLength(2);
+  });
+
   it('clips the QR background and preserves splash artwork proportions', () => {
     expect(tabsSource).toContain('quietZone={12}');
     expect(stylesSource).toMatch(/qrPlaceholder:[\s\S]*?overflow: 'hidden'/);
