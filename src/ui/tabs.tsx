@@ -30,6 +30,7 @@ import {
 import {
   duplicateRecipientAddresses,
   type SendRecipientDraft,
+  type SendRecipientFieldErrors,
 } from './sendRecipients';
 import { styles } from './styles';
 import type { BiometricMethod, NetworkState, PendingAction, Wallet } from './types';
@@ -62,6 +63,7 @@ export function SendTab({
   pendingAction,
   broadcasting,
   recipients,
+  recipientErrors,
   sendEstimate,
   sendEstimatePending,
   preparedTx,
@@ -83,6 +85,7 @@ export function SendTab({
   pendingAction: PendingAction | null;
   broadcasting: boolean;
   recipients: SendRecipientDraft[];
+  recipientErrors: SendRecipientFieldErrors;
   sendEstimate: { feeSats: number; totalSats: bigint; fitsAvailable: boolean } | null;
   sendEstimatePending: boolean;
   preparedTx: PreparedTransparentSend | null;
@@ -150,6 +153,11 @@ export function SendTab({
                   <Text style={styles.scanButtonText}>{t('actions.scanQr')}</Text>
                 </TouchableOpacity>
               </View>
+              {recipientErrors[recipient.id]?.address ? (
+                <Text accessibilityLiveRegion="polite" style={styles.fieldError}>
+                  {recipientErrors[recipient.id]?.address}
+                </Text>
+              ) : null}
               <View style={styles.amountRow}>
                 <TextInput
                   value={recipient.amount}
@@ -167,6 +175,11 @@ export function SendTab({
                   <Text style={styles.maxButtonText}>{t('actions.max')}</Text>
                 </TouchableOpacity>
               </View>
+              {recipientErrors[recipient.id]?.amount ? (
+                <Text accessibilityLiveRegion="polite" style={styles.fieldError}>
+                  {recipientErrors[recipient.id]?.amount}
+                </Text>
+              ) : null}
             </View>
           );
         })}
@@ -211,7 +224,7 @@ export function SendTab({
           {preparedTx.recipients.map((recipient, index) => (
             <View key={`${recipient.address}:${index}`} style={styles.reviewRecipient}>
               <Text style={styles.previewAddress}>
-                {`${index + 1}. ${satoshisToNito(recipient.amountSats, language)} NITO`}
+                {`${satoshisToNito(recipient.amountSats, language)} NITO`}
               </Text>
               <Text selectable style={styles.helper}>{shortAddress(recipient.address)}</Text>
             </View>
@@ -532,6 +545,7 @@ type SensitiveConfirmationControls = {
   vaultUnlockMode: 'password' | 'biometric';
   sensitiveAction: SensitiveAction;
   sensitivePassword: string;
+  sensitivePasswordError: string;
   onChangeSensitivePassword: (value: string) => void;
   showSensitivePassword: boolean;
   onToggleSensitivePassword: () => void;
@@ -546,7 +560,6 @@ const SOURCE_URL = 'https://github.com/NitoNetwork/nito-wallet-mobile';
 const LICENSE_URL = `${SOURCE_URL}/blob/main/LICENSE`;
 const PRIVACY_URL = `${SOURCE_URL}/blob/main/PRIVACY.md`;
 const AUTO_LOCK_LABEL_KEYS = {
-  0: 'settings.autoLockImmediate',
   60_000: 'settings.autoLockOneMinute',
   300_000: 'settings.autoLockFiveMinutes',
   900_000: 'settings.autoLockFifteenMinutes',
@@ -652,6 +665,7 @@ function SensitiveConfirmation({
           onToggleVisible={controls.onToggleSensitivePassword}
           showLabel={t('actions.show')}
           hideLabel={t('actions.hide')}
+          error={controls.sensitivePasswordError}
         />
       ) : (
         <Text style={styles.noticeText}>{t('security.biometricRequested', { method: biometricMethod })}</Text>
@@ -823,7 +837,10 @@ function NetworkSettingsSection({
   network: NetworkState;
   electrumServerPreference: ElectrumServerPreference;
   historyBusy: boolean;
-  onUseCustomElectrumServer: (input: string) => void;
+  onUseCustomElectrumServer: (
+    input: string,
+    onValidationError: (message: string) => void,
+  ) => string | null;
   onUseOfficialElectrumServers: () => void;
   onResynchronizeHistory: () => void;
   onBack: () => void;
@@ -833,6 +850,7 @@ function NetworkSettingsSection({
   const [customServerInput, setCustomServerInput] = useState(
     electrumServerPreference.customServerUrl ?? '',
   );
+  const [customServerError, setCustomServerError] = useState('');
 
   return (
     <View style={styles.card}>
@@ -849,13 +867,21 @@ function NetworkSettingsSection({
         <Text style={styles.settingsWarning}>{t('settings.customElectrumRisk')}</Text>
         <TextInput
           value={customServerInput}
-          onChangeText={setCustomServerInput}
+          onChangeText={(value) => {
+            setCustomServerInput(value);
+            setCustomServerError('');
+          }}
           placeholder="wss://host:port"
           placeholderTextColor="#6d7892"
           autoCapitalize="none"
           autoCorrect={false}
           style={styles.input}
         />
+        {customServerError ? (
+          <Text accessibilityLiveRegion="polite" style={styles.fieldError}>
+            {customServerError}
+          </Text>
+        ) : null}
         <Text style={styles.settingsWarning}>
           {t('settings.customElectrumCertificateWarning')}
         </Text>
@@ -864,7 +890,12 @@ function NetworkSettingsSection({
           label={t('actions.useCustomElectrum')}
           loading={pendingAction === 'electrumServer'}
           disabled={actionLocked || !customServerInput.trim()}
-          onPress={() => onUseCustomElectrumServer(customServerInput)}
+          onPress={() => {
+            setCustomServerError(onUseCustomElectrumServer(
+              customServerInput,
+              setCustomServerError,
+            ) ?? '');
+          }}
         />
         {electrumServerPreference.mode !== 'official' ? (
           <>
@@ -1015,7 +1046,10 @@ export function SecurityTab({
     pendingAction: PendingAction | null;
     electrumServerPreference: ElectrumServerPreference;
     historyBusy: boolean;
-    onUseCustomElectrumServer: (input: string) => void;
+    onUseCustomElectrumServer: (
+      input: string,
+      onValidationError: (message: string) => void,
+    ) => string | null;
     onUseOfficialElectrumServers: () => void;
     onResynchronizeHistory: () => void;
   };

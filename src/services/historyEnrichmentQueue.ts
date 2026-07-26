@@ -133,12 +133,33 @@ export type HistoryEnrichmentBatchOutcome = 'published' | 'failed' | 'interrupte
 
 export const recordHistoryEnrichmentBatchOutcome = (
   attempted: Set<string>,
+  failed: Set<string>,
   keys: readonly string[],
   outcome: HistoryEnrichmentBatchOutcome,
 ): void => {
   if (outcome === 'interrupted') {
-    keys.forEach((key) => attempted.delete(key));
+    keys.forEach((key) => {
+      attempted.delete(key);
+      failed.delete(key);
+    });
     return;
   }
-  keys.forEach((key) => attempted.add(key));
+  keys.forEach((key) => {
+    attempted.add(key);
+    if (outcome === 'failed') {
+      failed.add(key);
+    } else {
+      failed.delete(key);
+    }
+  });
+};
+
+export const releaseFailedHistoryEnrichmentAttempts = (
+  attempted: Set<string>,
+  failed: Set<string>,
+): number => {
+  const released = failed.size;
+  failed.forEach((key) => attempted.delete(key));
+  failed.clear();
+  return released;
 };

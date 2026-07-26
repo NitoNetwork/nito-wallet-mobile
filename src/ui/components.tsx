@@ -56,6 +56,7 @@ export function PasswordField({
   onToggleVisible,
   showLabel,
   hideLabel,
+  error,
 }: {
   value: string;
   onChangeText: (value: string) => void;
@@ -64,20 +65,26 @@ export function PasswordField({
   onToggleVisible: () => void;
   showLabel: string;
   hideLabel: string;
+  error?: string;
 }) {
   return (
-    <View style={styles.passwordField}>
-      <TextInput
-        value={value}
-        onChangeText={onChangeText}
-        placeholder={placeholder}
-        placeholderTextColor="#6d7892"
-        secureTextEntry={!visible}
-        style={styles.passwordInput}
-      />
-      <TouchableOpacity onPress={onToggleVisible} style={styles.passwordToggle}>
-        <Text style={styles.passwordToggleText}>{visible ? hideLabel : showLabel}</Text>
-      </TouchableOpacity>
+    <View style={styles.passwordFieldShell}>
+      <View style={styles.passwordField}>
+        <TextInput
+          value={value}
+          onChangeText={onChangeText}
+          placeholder={placeholder}
+          placeholderTextColor="#6d7892"
+          secureTextEntry={!visible}
+          style={styles.passwordInput}
+        />
+        <TouchableOpacity onPress={onToggleVisible} style={styles.passwordToggle}>
+          <Text style={styles.passwordToggleText}>{visible ? hideLabel : showLabel}</Text>
+        </TouchableOpacity>
+      </View>
+      {error ? (
+        <Text accessibilityLiveRegion="polite" style={styles.fieldError}>{error}</Text>
+      ) : null}
     </View>
   );
 }

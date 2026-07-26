@@ -5,7 +5,6 @@ export const DEFAULT_WORD_COUNT = 24;
 export const ALLOWED_WORD_COUNTS = [12, 24] as const;
 export const AUTO_LOCK_TIMEOUT_MS = 300_000;
 export const AUTO_LOCK_TIMEOUT_OPTIONS_MS = [
-  0,
   60_000,
   AUTO_LOCK_TIMEOUT_MS,
   900_000,

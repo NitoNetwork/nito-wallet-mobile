@@ -24,7 +24,7 @@ describe('auto-lock timeout preference', () => {
   });
 
   it('accepts only supported persisted values', () => {
-    expect(isAutoLockTimeoutMs('0')).toBe(true);
+    expect(isAutoLockTimeoutMs('0')).toBe(false);
     expect(isAutoLockTimeoutMs('60000')).toBe(true);
     expect(isAutoLockTimeoutMs('300000')).toBe(true);
     expect(isAutoLockTimeoutMs('900000')).toBe(true);
@@ -37,6 +37,9 @@ describe('auto-lock timeout preference', () => {
     await expect(loadAutoLockTimeoutPreference()).resolves.toBe(60_000);
 
     secureStore.getItemAsync.mockResolvedValueOnce('invalid');
+    await expect(loadAutoLockTimeoutPreference()).resolves.toBe(AUTO_LOCK_TIMEOUT_MS);
+
+    secureStore.getItemAsync.mockResolvedValueOnce('0');
     await expect(loadAutoLockTimeoutPreference()).resolves.toBe(AUTO_LOCK_TIMEOUT_MS);
     expect(diagnostics.reportNonFinancialFailure).not.toHaveBeenCalled();
   });

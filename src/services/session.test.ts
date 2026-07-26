@@ -29,17 +29,4 @@ describe('AutoLock', () => {
     locker.stop();
     vi.useRealTimers();
   });
-
-  test('leaves immediate background locking to the app-state boundary', async () => {
-    vi.useFakeTimers();
-    const onLock = vi.fn();
-    const locker = new AutoLock(onLock, 0);
-
-    locker.resetTimer();
-    await vi.runAllTimersAsync();
-    expect(onLock).not.toHaveBeenCalled();
-
-    locker.stop();
-    vi.useRealTimers();
-  });
 });

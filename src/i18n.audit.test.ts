@@ -52,6 +52,25 @@ describe('i18n coverage', () => {
     }
   });
 
+  it('names the BIP39 phrase explicitly in every language', () => {
+    const expected = {
+      en: ['Show BIP39 phrase', 'Hide BIP39 phrase'],
+      zh: ['显示 BIP39 助记词', '隐藏 BIP39 助记词'],
+      hi: ['BIP39 वाक्यांश दिखाएँ', 'BIP39 वाक्यांश छिपाएँ'],
+      es: ['Mostrar frase BIP39', 'Ocultar frase BIP39'],
+      fr: ['Afficher la phrase BIP39', 'Masquer la phrase BIP39'],
+      ar: ['عرض عبارة BIP39', 'إخفاء عبارة BIP39'],
+      bn: ['BIP39 বাক্যাংশ দেখান', 'BIP39 বাক্যাংশ লুকান'],
+      pt: ['Mostrar frase BIP39', 'Ocultar frase BIP39'],
+      ru: ['Показать фразу BIP39', 'Скрыть фразу BIP39'],
+    } satisfies Record<LanguageCode, [string, string]>;
+
+    for (const code of Object.keys(expected) as LanguageCode[]) {
+      const t = makeTranslator(code);
+      expect([t('actions.showSeed'), t('actions.hideSeed')]).toEqual(expected[code]);
+    }
+  });
+
   it('resolves the multi-recipient controls in every language', () => {
     const expected = {
       en: 'Add recipient',

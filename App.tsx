@@ -37,9 +37,13 @@ import nacl from 'tweetnacl';
 import { escapeCsvCell, isValidTransactionId, shortAddress, transactionExplorerUrl } from './src/ui/format';
 import { shouldShowBlockingLoadingOverlay } from './src/ui/loadingPolicy';
 import {
+  clearSendRecipientFieldError,
   summarizeRecipientSpend,
   updateRecipientAddress,
+  validateSendRecipientDrafts,
   type SendRecipientDraft,
+  type SendRecipientField,
+  type SendRecipientFieldErrors,
 } from './src/ui/sendRecipients';
 import { styles } from './src/ui/styles';
 import {
@@ -96,6 +100,7 @@ import {
   processHistoryEnrichmentQueue,
   processHistoryEnrichmentPasses,
   recordHistoryEnrichmentBatchOutcome,
+  releaseFailedHistoryEnrichmentAttempts,
 } from './src/services/historyEnrichmentQueue';
 import { type Translator } from './src/i18n';
 import { nitoWalletCrypto } from './src/native/nitoWalletCrypto';
@@ -329,13 +334,32 @@ const requestBiometricGate = async (promptMessage: string) => {
 };
 
 export default function App() {
+  const [importFieldError, setImportFieldError] = useState('');
+  const [sendRecipientErrors, setSendRecipientErrors] = useState<SendRecipientFieldErrors>({});
+  const [unlockPasswordError, setUnlockPasswordError] = useState('');
+  const [persistPasswordError, setPersistPasswordError] = useState('');
+  const [persistConfirmPasswordError, setPersistConfirmPasswordError] = useState('');
+  const [sensitivePasswordError, setSensitivePasswordError] = useState('');
+  const clearFieldErrors = useCallback(() => {
+    setImportFieldError('');
+    setUnlockPasswordError('');
+    setPersistPasswordError('');
+    setPersistConfirmPasswordError('');
+    setSensitivePasswordError('');
+    setSendRecipientErrors({});
+  }, []);
   const screenRef = useRef<AppScreen>('loading');
   const [screen, setScreenState] = useState<AppScreen>('loading');
   const setScreen = useCallback((nextScreen: AppScreen) => {
+    clearFieldErrors();
     screenRef.current = nextScreen;
     setScreenState(nextScreen);
-  }, []);
-  const [walletTab, setWalletTab] = useState<WalletTab>('home');
+  }, [clearFieldErrors]);
+  const [walletTab, setWalletTabState] = useState<WalletTab>('home');
+  const setWalletTab = useCallback((nextTab: WalletTab) => {
+    clearFieldErrors();
+    setWalletTabState(nextTab);
+  }, [clearFieldErrors]);
   const [wallet, setWallet] = useState<Wallet | null>(null);
   const [pendingWallet, setPendingWallet] = useState<Wallet | null>(null);
   const [walletNetworkController] = useState(() => new WalletNetworkController());
@@ -353,6 +377,7 @@ export default function App() {
   const walletLockAppliedRef = useRef(false);
   const lockWalletRef = useRef<() => void>(() => undefined);
   const enrichAttemptedRef = useRef<Set<string>>(new Set());
+  const enrichFailedRef = useRef<Set<string>>(new Set());
   const appStateRef = useRef(AppState.currentState);
   const systemPromptActiveRef = useRef(false);
   const autoLockRef = useRef<AutoLock | null>(null);
@@ -508,7 +533,8 @@ export default function App() {
   const resetFeedback = useCallback(() => {
     setError('');
     setStatus('');
-  }, []);
+    clearFieldErrors();
+  }, [clearFieldErrors]);
 
   const scrollToPreparedReview = useCallback(() => {
     walletScrollRef.current?.scrollToEnd({ animated: true });
@@ -518,6 +544,7 @@ export default function App() {
     nextSendRecipientIdRef.current = 2;
     qrRecipientIdRef.current = null;
     setSendRecipients(initialSendRecipients());
+    setSendRecipientErrors({});
     setSendEstimate(null);
     setSendEstimatePending(false);
   }, []);
@@ -711,6 +738,7 @@ export default function App() {
     setWalletTab('home');
     setHistoryPage(0);
     enrichAttemptedRef.current.clear();
+    enrichFailedRef.current.clear();
     setBalanceRefreshing(!pendingPreload);
     setHistoryProgress(null);
     setHistorySyncing(false);
@@ -848,6 +876,7 @@ export default function App() {
             onBatchPublished: () => {
               recordHistoryEnrichmentBatchOutcome(
                 enrichAttemptedRef.current,
+                enrichFailedRef.current,
                 activeBatchKeys,
                 'published',
               );
@@ -865,6 +894,7 @@ export default function App() {
       const sessionCurrent = walletNetworkController.isCurrent(session);
       recordHistoryEnrichmentBatchOutcome(
         enrichAttemptedRef.current,
+        enrichFailedRef.current,
         activeBatchKeys,
         sessionCurrent ? 'failed' : 'interrupted',
       );
@@ -918,6 +948,15 @@ export default function App() {
       publishNetwork: (nextNetwork) => {
         networkRef.current = nextNetwork;
         setNetwork(nextNetwork);
+        if (
+          nextNetwork.status === 'connected'
+          && releaseFailedHistoryEnrichmentAttempts(
+            enrichAttemptedRef.current,
+            enrichFailedRef.current,
+          ) > 0
+        ) {
+          walletNetworkController.requestOrQueueEnrichment(enrichWalletHistoryRef.current);
+        }
       },
       setError,
       setStatus,
@@ -1065,7 +1104,10 @@ export default function App() {
     }
   }, [syncTransparentNetwork]);
 
-  const configureCustomElectrumServer = async (input: string) => {
+  const configureCustomElectrumServer = async (
+    input: string,
+    onValidationError: (message: string) => void,
+  ) => {
     await runExclusiveAction('electrumServer', async () => {
       resetFeedback();
       try {
@@ -1078,18 +1120,24 @@ export default function App() {
           t('status.customElectrumSaved'),
         );
       } catch (caught) {
-        setError(customElectrumValidationMessage(caught, t));
+        if (caught instanceof CustomElectrumServerValidationError) {
+          onValidationError(customElectrumValidationMessage(caught, t));
+        } else {
+          setError(caught instanceof Error ? caught.message : t('errors.networkUnavailable'));
+        }
       }
     });
   };
 
-  const askUseCustomElectrumServer = (input: string) => {
+  const askUseCustomElectrumServer = (
+    input: string,
+    onValidationError: (message: string) => void,
+  ): string | null => {
     resetFeedback();
     try {
       parseCustomElectrumServerUrl(input);
     } catch (caught) {
-      setError(customElectrumValidationMessage(caught, t));
-      return;
+      return customElectrumValidationMessage(caught, t);
     }
 
     Alert.alert(
@@ -1100,11 +1148,12 @@ export default function App() {
         {
           text: t('dialog.customElectrumConfirm'),
           onPress: () => {
-            void configureCustomElectrumServer(input);
+            void configureCustomElectrumServer(input, onValidationError);
           },
         },
       ],
     );
+    return null;
   };
 
   const restoreOfficialElectrumServerSelection = async () => {
@@ -1191,8 +1240,15 @@ export default function App() {
     await runExclusiveAction('import', async () => {
     resetFeedback();
 
+    let mnemonic: string;
     try {
-      const mnemonic = validateImportMnemonic(importText, t);
+      mnemonic = validateImportMnemonic(importText, t);
+    } catch (caught) {
+      setImportFieldError(caught instanceof Error ? caught.message : t('errors.importFailed'));
+      return;
+    }
+
+    try {
       const nextWallet = await derivePrimaryAddress(mnemonic);
       setPendingWallet(nextWallet);
       void prefetchWalletNetwork(nextWallet);
@@ -1214,6 +1270,11 @@ export default function App() {
   const unlockSavedWallet = async (useBiometrics = false, auto = false) => {
     await runExclusiveAction('unlock', async () => {
     resetFeedback();
+
+    if (!useBiometrics && unlockPassword.length < 8) {
+      setUnlockPasswordError(t('errors.enterVaultPassword'));
+      return;
+    }
 
     try {
       const vault = await loadVault();
@@ -1239,8 +1300,6 @@ export default function App() {
           throw new Error(t('errors.biometricReimport'));
         }
         vaultSecret = secret;
-      } else if (unlockPassword.length < 8) {
-        throw new Error(t('errors.enterVaultPassword'));
       }
 
       const cachedNetworkPromise = readOptionalCache(() => loadWalletSnapshotCache(vault.address));
@@ -1319,11 +1378,16 @@ export default function App() {
       if (auto) {
         return;
       }
-      setError(
-        useBiometrics
-          ? t('errors.biometricCancelled', { method: biometricMethod })
-          : caught instanceof Error ? caught.message : t('errors.unlockFailed'),
-      );
+      if (useBiometrics) {
+        setError(t('errors.biometricCancelled', { method: biometricMethod }));
+      } else if (
+        caught instanceof Error
+        && caught.message === t('errors.invalidPasswordOrVault')
+      ) {
+        setUnlockPasswordError(caught.message);
+      } else {
+        setError(caught instanceof Error ? caught.message : t('errors.unlockFailed'));
+      }
     }
 
     });
@@ -1368,12 +1432,12 @@ export default function App() {
     }
 
     if (persistPassword.length < 10) {
-      setError(t('errors.passwordMin10'));
+      setPersistPasswordError(t('errors.passwordMin10'));
       return;
     }
 
     if (persistPassword !== persistConfirmPassword) {
-      setError(t('errors.passwordMismatch'));
+      setPersistConfirmPasswordError(t('errors.passwordMismatch'));
       return;
     }
 
@@ -1499,6 +1563,7 @@ export default function App() {
     setSensitivePassword('');
     setShowSensitivePassword(false);
     enrichAttemptedRef.current.clear();
+    enrichFailedRef.current.clear();
     const emptyNetwork = createEmptyNetworkState();
     networkRef.current = emptyNetwork;
     setNetwork(emptyNetwork);
@@ -1510,6 +1575,7 @@ export default function App() {
     resetSendDraft,
     seedSaved,
     setScreen,
+    setWalletTab,
     walletNetworkController,
   ]);
   useLayoutEffect(() => {
@@ -1586,12 +1652,35 @@ export default function App() {
     });
   };
 
+  const validateSendFields = (skipAmountRecipientId?: number) => {
+    const fieldErrors = validateSendRecipientDrafts({
+      recipients: sendRecipients,
+      validateAddress: (address) => {
+        scriptPubKeyForNitoAddress(address);
+      },
+      validateAmount: (amount) => {
+        parseNitoAmountToSats(amount);
+      },
+      addressError: t('errors.invalidDestination'),
+      amountError: t('errors.invalidAmount'),
+      skipAmountRecipientId,
+    });
+    setSendRecipientErrors(fieldErrors);
+    return Object.keys(fieldErrors).length === 0;
+  };
+
   const prepareTransparentSend = async () => {
     await runExclusiveAction('prepare', async () => {
     resetFeedback();
 
     if (!wallet || !network.snapshot) {
       setError(t('errors.walletSyncing'));
+      return;
+    }
+
+    if (!validateSendFields()) {
+      setPreparedTx(null);
+      setPreparedConsolidation(null);
       return;
     }
 
@@ -1644,9 +1733,9 @@ export default function App() {
       }
 
       const targetIndex = sendRecipients.findIndex((recipient) => recipient.id === recipientId);
-      const target = sendRecipients[targetIndex];
-      if (!target?.address.trim()) {
-        setError(t('send.destination'));
+      if (targetIndex < 0 || !validateSendFields(recipientId)) {
+        setPreparedTx(null);
+        setPreparedConsolidation(null);
         return;
       }
 
@@ -1680,12 +1769,15 @@ export default function App() {
 
   const updateSendRecipient = (
     recipientId: number,
-    field: 'address' | 'amount',
+    field: SendRecipientField,
     value: string,
   ) => {
     setSendRecipients((current) => current.map((recipient) => (
       recipient.id === recipientId ? { ...recipient, [field]: value } : recipient
     )));
+    setSendRecipientErrors((current) => (
+      clearSendRecipientFieldError(current, recipientId, field)
+    ));
     setPreparedTx(null);
     setPreparedConsolidation(null);
   };
@@ -1704,6 +1796,12 @@ export default function App() {
         ? current.filter((recipient) => recipient.id !== recipientId)
         : current
     ));
+    setSendRecipientErrors((current) => {
+      if (!current[recipientId]) return current;
+      const next = { ...current };
+      delete next[recipientId];
+      return next;
+    });
     setPreparedTx(null);
     setPreparedConsolidation(null);
   };
@@ -2009,7 +2107,21 @@ export default function App() {
       setSensitiveAction(null);
       setSensitivePassword('');
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : t('errors.validationFailed'));
+      const message = caught instanceof Error ? caught.message : t('errors.validationFailed');
+      const passwordFieldVisible = vaultUnlockMode === 'password'
+        || sensitiveAction === 'disableBiometrics';
+      if (
+        passwordFieldVisible
+        && [
+          t('errors.enterVaultPassword'),
+          t('errors.invalidPasswordOrVault'),
+          t('errors.passwordDoesNotMatchWallet'),
+        ].includes(message)
+      ) {
+        setSensitivePasswordError(message);
+      } else {
+        setError(message);
+      }
     } finally {
       setSensitiveBusy(false);
     }
@@ -2149,7 +2261,12 @@ export default function App() {
               setNetwork(nextNetwork);
             }
             if (!walletNetworkController.isCurrent(session)) return;
-            missing.forEach((entry) => enrichAttemptedRef.current.add(enrichKey(entry)));
+            recordHistoryEnrichmentBatchOutcome(
+              enrichAttemptedRef.current,
+              enrichFailedRef.current,
+              missing.map(enrichKey),
+              'published',
+            );
           }
         } finally {
           if (walletNetworkController.isCurrent(session)) {
@@ -2204,6 +2321,7 @@ export default function App() {
         await clearWalletHistoryCache(activeWallet.address);
         if (!walletNetworkController.isCurrent(session)) return;
         enrichAttemptedRef.current.clear();
+        enrichFailedRef.current.clear();
         setHistoryPage(0);
         await syncTransparentNetwork(true, { force: true, rescanGap: true });
         if (!walletNetworkController.isCurrent(session)) return;
@@ -2319,6 +2437,9 @@ export default function App() {
         throw new Error('No recipient selected for QR scan.');
       }
       setSendRecipients((current) => updateRecipientAddress(current, recipientId, address));
+      setSendRecipientErrors((current) => (
+        clearSendRecipientFieldError(current, recipientId, 'address')
+      ));
       setPreparedTx(null);
       setPreparedConsolidation(null);
       closeQrScanner();
@@ -2398,6 +2519,7 @@ export default function App() {
           pendingAction={pendingAction}
           broadcasting={broadcasting}
           recipients={sendRecipients}
+          recipientErrors={sendRecipientErrors}
           sendEstimate={sendEstimate}
           sendEstimatePending={sendEstimatePending}
           preparedTx={preparedTx}
@@ -2458,12 +2580,20 @@ export default function App() {
             vaultUnlockMode,
             sensitiveAction,
             sensitivePassword,
-            onChangeSensitivePassword: setSensitivePassword,
+            sensitivePasswordError,
+            onChangeSensitivePassword: (value) => {
+              setSensitivePassword(value);
+              setSensitivePasswordError('');
+            },
             showSensitivePassword,
             onToggleSensitivePassword: () => setShowSensitivePassword((current) => !current),
             sensitiveBusy,
             onConfirmSensitive: () => { void confirmSensitiveAction(); },
-            onCancelSensitive: () => { setSensitiveAction(null); setSensitivePassword(''); },
+            onCancelSensitive: () => {
+              setSensitiveAction(null);
+              setSensitivePassword('');
+              setSensitivePasswordError('');
+            },
           }}
           display={{
             languageSettings,
@@ -2513,7 +2643,11 @@ export default function App() {
           pendingAction={pendingAction}
           actionLocked={actionLocked}
           importText={importText}
-          onChangeImportText={setImportText}
+          importFieldError={importFieldError}
+          onChangeImportText={(value) => {
+            setImportText(value);
+            setImportFieldError('');
+          }}
           showSeed={showImportSeed}
           onToggleSeed={() => setShowImportSeed((current) => !current)}
           invalidWords={invalidImportWords}
@@ -2534,7 +2668,11 @@ export default function App() {
           biometricsEnabled={vaultBiometricsEnabled}
           biometricMethod={biometricMethod}
           password={unlockPassword}
-          onChangePassword={setUnlockPassword}
+          passwordError={unlockPasswordError}
+          onChangePassword={(value) => {
+            setUnlockPassword(value);
+            setUnlockPasswordError('');
+          }}
           showPassword={showUnlockPassword}
           onToggleShowPassword={() => setShowUnlockPassword((current) => !current)}
           onUnlockWithBiometrics={() => { void unlockSavedWallet(true); }}
@@ -2553,11 +2691,20 @@ export default function App() {
           pendingWallet={pendingWallet}
           showMnemonic={showMnemonic}
           password={persistPassword}
-          onChangePassword={setPersistPassword}
+          passwordError={persistPasswordError}
+          onChangePassword={(value) => {
+            setPersistPassword(value);
+            setPersistPasswordError('');
+            setPersistConfirmPasswordError('');
+          }}
           showPassword={showPersistPassword}
           onToggleShowPassword={() => setShowPersistPassword((current) => !current)}
           confirmPassword={persistConfirmPassword}
-          onChangeConfirmPassword={setPersistConfirmPassword}
+          confirmPasswordError={persistConfirmPasswordError}
+          onChangeConfirmPassword={(value) => {
+            setPersistConfirmPassword(value);
+            setPersistConfirmPasswordError('');
+          }}
           showConfirmPassword={showPersistConfirmPassword}
           onToggleShowConfirmPassword={() => setShowPersistConfirmPassword((current) => !current)}
           onSubmit={() => { void persistWallet(); }}

@@ -148,6 +148,7 @@ export function ImportScreen({
   pendingAction,
   actionLocked,
   importText,
+  importFieldError,
   onChangeImportText,
   showSeed,
   onToggleSeed,
@@ -161,6 +162,7 @@ export function ImportScreen({
   pendingAction: PendingAction | null;
   actionLocked: boolean;
   importText: string;
+  importFieldError: string;
   onChangeImportText: (value: string) => void;
   showSeed: boolean;
   onToggleSeed: () => void;
@@ -201,6 +203,11 @@ export function ImportScreen({
           </Text>
         </TouchableOpacity>
       </View>
+      {importFieldError ? (
+        <Text accessibilityLiveRegion="polite" style={styles.fieldError}>
+          {importFieldError}
+        </Text>
+      ) : null}
       {invalidWords.length > 0 ? (
         <View style={styles.seedWordErrors} accessibilityLiveRegion="polite">
           {invalidWords.map((entry) => (
@@ -224,6 +231,7 @@ export function UnlockScreen({
   biometricsEnabled,
   biometricMethod,
   password,
+  passwordError,
   onChangePassword,
   showPassword,
   onToggleShowPassword,
@@ -236,6 +244,7 @@ export function UnlockScreen({
   biometricsEnabled: boolean;
   biometricMethod: BiometricMethod;
   password: string;
+  passwordError: string;
   onChangePassword: (value: string) => void;
   showPassword: boolean;
   onToggleShowPassword: () => void;
@@ -261,6 +270,7 @@ export function UnlockScreen({
         onToggleVisible={onToggleShowPassword}
         showLabel={t('actions.show')}
         hideLabel={t('actions.hide')}
+        error={passwordError}
       />
       <ActionButton
         label={t('unlock.title')}
@@ -281,10 +291,12 @@ export function PersistScreen({
   pendingWallet,
   showMnemonic,
   password,
+  passwordError,
   onChangePassword,
   showPassword,
   onToggleShowPassword,
   confirmPassword,
+  confirmPasswordError,
   onChangeConfirmPassword,
   showConfirmPassword,
   onToggleShowConfirmPassword,
@@ -297,10 +309,12 @@ export function PersistScreen({
   pendingWallet: Wallet | null;
   showMnemonic: boolean;
   password: string;
+  passwordError: string;
   onChangePassword: (value: string) => void;
   showPassword: boolean;
   onToggleShowPassword: () => void;
   confirmPassword: string;
+  confirmPasswordError: string;
   onChangeConfirmPassword: (value: string) => void;
   showConfirmPassword: boolean;
   onToggleShowConfirmPassword: () => void;
@@ -318,6 +332,7 @@ export function PersistScreen({
         onToggleVisible={onToggleShowPassword}
         showLabel={t('actions.show')}
         hideLabel={t('actions.hide')}
+        error={passwordError}
       />
       <PasswordField
         value={confirmPassword}
@@ -327,6 +342,7 @@ export function PersistScreen({
         onToggleVisible={onToggleShowConfirmPassword}
         showLabel={t('actions.show')}
         hideLabel={t('actions.hide')}
+        error={confirmPasswordError}
       />
       <ActionButton
         label={busy ? t('persist.protecting') : t('persist.protectOpen')}

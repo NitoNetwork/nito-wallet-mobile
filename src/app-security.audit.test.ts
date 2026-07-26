@@ -5,10 +5,13 @@ import { describe, expect, it } from 'vitest';
 import appSource from '../App.tsx?raw';
 import appStateSecuritySource from './services/appStateSecurity.ts?raw';
 import amountFormatSource from './i18n.amounts.ts?raw';
+import constantsSource from './constants/nito.ts?raw';
 import i18nSource from './i18n.ts?raw';
+import completeI18nSource from './i18n.complete.ts?raw';
 import formatSource from './ui/format.ts?raw';
 import stylesSource from './ui/styles.ts?raw';
 import tabsSource from './ui/tabs.tsx?raw';
+import sessionSource from './services/session.ts?raw';
 import vaultSource from './services/vault.ts?raw';
 import vaultCryptoSource from './services/vaultCrypto.ts?raw';
 import screensSource from './ui/screens.tsx?raw';
@@ -116,6 +119,9 @@ describe('mobile wallet UX and security invariants', () => {
     expect(appSource).toContain(
       'walletNetworkController.finishEnrichment(enrichWalletHistoryRef.current);',
     );
+    expect(appSource).toMatch(
+      /nextNetwork\.status === 'connected'[\s\S]{0,240}releaseFailedHistoryEnrichmentAttempts\([\s\S]{0,240}requestOrQueueEnrichment\(enrichWalletHistoryRef\.current\)/,
+    );
   });
 
   it('bounds broadcast reconciliation and exposes transparent scan progress', () => {
@@ -176,6 +182,24 @@ describe('mobile wallet UX and security invariants', () => {
     expect(vaultSessionMachineSource).toContain("status: 'absent' | 'locked' | 'unlocked'");
     expect(vaultSessionMachineSource).toContain('requirePersistedVault(state)');
     expect(appSource).toContain('applyVaultTransition');
+  });
+
+  it('keeps field validation beside the edited value and removes recipient review numbering', () => {
+    expect(tabsSource).toContain('recipientErrors[recipient.id]?.address');
+    expect(tabsSource).toContain('recipientErrors[recipient.id]?.amount');
+    expect(tabsSource).toContain('customServerError');
+    expect(tabsSource).not.toContain('`${index + 1}. ${satoshisToNito');
+    expect(appSource).toContain('setUnlockPasswordError');
+    expect(appSource).toContain('setPersistPasswordError');
+    expect(appSource).toContain('setImportFieldError');
+    expect(appSource).toContain('setSensitivePasswordError');
+  });
+
+  it('always arms an inactivity timer with one of the supported non-zero durations', () => {
+    expect(constantsSource).not.toMatch(/AUTO_LOCK_TIMEOUT_OPTIONS_MS\s*=\s*\[\s*0,/);
+    expect(sessionSource).not.toContain('this.timeoutMs === 0');
+    expect(i18nSource).not.toContain('settings.autoLockImmediate');
+    expect(completeI18nSource).not.toContain('settings.autoLockImmediate');
   });
 
   it('never lets a prepared multi-recipient send coexist with a prepared consolidation', () => {

@@ -4,6 +4,66 @@ export type SendRecipientDraft = {
   amount: string;
 };
 
+export type SendRecipientField = 'address' | 'amount';
+export type SendRecipientFieldErrors = Record<
+  number,
+  Partial<Record<SendRecipientField, string>>
+>;
+
+export const clearSendRecipientFieldError = (
+  errors: SendRecipientFieldErrors,
+  recipientId: number,
+  field: SendRecipientField,
+): SendRecipientFieldErrors => {
+  const recipientErrors = errors[recipientId];
+  if (!recipientErrors?.[field]) return errors;
+
+  const nextRecipientErrors = { ...recipientErrors };
+  delete nextRecipientErrors[field];
+  const next = { ...errors };
+  if (Object.keys(nextRecipientErrors).length === 0) {
+    delete next[recipientId];
+  } else {
+    next[recipientId] = nextRecipientErrors;
+  }
+  return next;
+};
+
+export const validateSendRecipientDrafts = ({
+  recipients,
+  validateAddress,
+  validateAmount,
+  addressError,
+  amountError,
+  skipAmountRecipientId,
+}: {
+  recipients: readonly SendRecipientDraft[];
+  validateAddress: (address: string) => void;
+  validateAmount: (amount: string) => void;
+  addressError: string;
+  amountError: string;
+  skipAmountRecipientId?: number;
+}): SendRecipientFieldErrors => {
+  const errors: SendRecipientFieldErrors = {};
+
+  for (const recipient of recipients) {
+    try {
+      validateAddress(recipient.address);
+    } catch {
+      errors[recipient.id] = { address: addressError };
+    }
+
+    if (recipient.id === skipAmountRecipientId) continue;
+    try {
+      validateAmount(recipient.amount);
+    } catch {
+      errors[recipient.id] = { ...errors[recipient.id], amount: amountError };
+    }
+  }
+
+  return errors;
+};
+
 export const updateRecipientAddress = (
   recipients: SendRecipientDraft[],
   recipientId: number,

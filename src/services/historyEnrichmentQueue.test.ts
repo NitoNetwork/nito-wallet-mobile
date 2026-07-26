@@ -7,6 +7,7 @@ import {
   processHistoryEnrichmentQueue,
   processHistoryEnrichmentPasses,
   recordHistoryEnrichmentBatchOutcome,
+  releaseFailedHistoryEnrichmentAttempts,
 } from './historyEnrichmentQueue';
 
 const history = Array.from({ length: 48 }, (_, index): ElectrumHistoryEntry => ({
@@ -134,6 +135,7 @@ describe('HistoryEnrichmentQueue', () => {
             enriched.push(...batch.map((entry) => entry.txid));
             recordHistoryEnrichmentBatchOutcome(
               attempted,
+              new Set<string>(),
               batch.map((entry) => `${entry.txid}:${entry.height}`),
               'published',
             );
@@ -151,18 +153,60 @@ describe('HistoryEnrichmentQueue', () => {
 
   it('releases interrupted session keys while retaining genuine failed attempts', () => {
     const interrupted = new Set(['tx-0:10000']);
+    const interruptedFailures = new Set(['tx-0:10000']);
     recordHistoryEnrichmentBatchOutcome(
       interrupted,
+      interruptedFailures,
       ['tx-0:10000'],
       'interrupted',
     );
     expect(interrupted).not.toContain('tx-0:10000');
+    expect(interruptedFailures).not.toContain('tx-0:10000');
 
     const failed = new Set<string>();
-    recordHistoryEnrichmentBatchOutcome(failed, ['tx-1:9999'], 'failed');
+    const failedKeys = new Set<string>();
+    recordHistoryEnrichmentBatchOutcome(failed, failedKeys, ['tx-1:9999'], 'failed');
     expect(failed).toContain('tx-1:9999');
+    expect(failedKeys).toContain('tx-1:9999');
     expect(new HistoryEnrichmentQueue([history[1]!], {
       attempted: failed,
     }).remainingCount).toBe(0);
+  });
+
+  it('releases only failed entries after a successful Electrum reconnection', () => {
+    const attempted = new Set<string>();
+    const failed = new Set<string>();
+
+    recordHistoryEnrichmentBatchOutcome(attempted, failed, ['tx-failed:100'], 'failed');
+    recordHistoryEnrichmentBatchOutcome(attempted, failed, ['tx-published:99'], 'published');
+
+    expect(releaseFailedHistoryEnrichmentAttempts(attempted, failed)).toBe(1);
+    expect(attempted).not.toContain('tx-failed:100');
+    expect(attempted).toContain('tx-published:99');
+    expect(failed).toEqual(new Set());
+  });
+
+  it('retries a permanent failure once per reconnection without looping', () => {
+    const attempted = new Set<string>();
+    const failed = new Set<string>();
+    const key = 'tx-permanent:98';
+    let retryCount = 0;
+
+    recordHistoryEnrichmentBatchOutcome(attempted, failed, [key], 'failed');
+
+    for (let reconnection = 0; reconnection < 2; reconnection += 1) {
+      const released = releaseFailedHistoryEnrichmentAttempts(attempted, failed);
+      expect(released).toBe(1);
+      if (released > 0) {
+        retryCount += 1;
+        recordHistoryEnrichmentBatchOutcome(attempted, failed, [key], 'failed');
+      }
+      expect(attempted).toContain(key);
+      expect(failed).toContain(key);
+    }
+
+    expect(retryCount).toBe(2);
+    expect(attempted).toContain(key);
+    expect(failed).toContain(key);
   });
 });

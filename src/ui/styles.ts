@@ -185,6 +185,11 @@ export const styles = StyleSheet.create({
     fontSize: 13,
     lineHeight: 19,
   },
+  fieldError: {
+    color: '#ff97a7',
+    fontSize: 13,
+    lineHeight: 19,
+  },
   label: {
     color: '#8ea0bd',
     fontSize: 12,
@@ -348,6 +353,9 @@ export const styles = StyleSheet.create({
     textAlignVertical: 'center',
     backgroundColor: 'transparent',
     includeFontPadding: false,
+  },
+  passwordFieldShell: {
+    gap: 6,
   },
   passwordField: {
     minHeight: 54,
