@@ -1,3 +1,6 @@
+import type { LanguageCode } from '../i18n';
+import { formatNitoAmount } from '../i18n.amounts';
+
 export const escapeCsvCell = (value: string | number) => `"${String(value).replace(/"/g, '""')}"`;
 
 export const shortAddress = (address: string) => `${address.slice(0, 13)}...${address.slice(-8)}`;
@@ -50,19 +53,16 @@ export const historyPageFromInput = (value: string, pageCount: number): number |
 export const formatHomeBalance = (
   satoshis: number,
   decimals: BalanceDecimals,
+  language: LanguageCode,
 ): { text: string } => {
-  const normalizedSatoshis = Math.trunc(satoshis);
-  const sign = normalizedSatoshis < 0 ? '−' : '';
-  const absoluteSatoshis = Math.abs(normalizedSatoshis);
-  const whole = Math.floor(absoluteSatoshis / 100_000_000);
-  const formattedWhole = whole.toLocaleString('fr-FR');
-  const allDecimals = String(absoluteSatoshis % 100_000_000).padStart(8, '0');
-  const visibleDecimals = allDecimals.slice(0, decimals);
-  const hiddenSignificantDecimals = allDecimals.slice(decimals).includes('1')
-    || /[2-9]/.test(allDecimals.slice(decimals));
-  const suffix = hiddenSignificantDecimals ? '…' : '';
-
-  return { text: `${sign}${formattedWhole},${visibleDecimals}${suffix}` };
+  return {
+    text: formatNitoAmount(satoshis, language, {
+      minimumFractionDigits: decimals,
+      maximumFractionDigits: decimals,
+      markTruncated: true,
+      minusSign: '−',
+    }),
+  };
 };
 
 type HistoryAmountOutput = {

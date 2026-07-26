@@ -12,6 +12,8 @@ import {
   shortAddress,
   transactionExplorerUrl,
 } from './format';
+import type { LanguageCode } from '../i18n';
+import { satoshisToNito } from '../wallet/transparentScan';
 
 describe('ui format helpers', () => {
   it('escapes CSV cells by doubling quotes and wrapping', () => {
@@ -75,22 +77,41 @@ describe('ui format helpers', () => {
   });
 
   it('truncates the home balance and marks significant hidden decimals', () => {
-    expect(formatHomeBalance(112_345_678, 2)).toEqual({
+    expect(formatHomeBalance(112_345_678, 2, 'fr')).toEqual({
       text: '1,12…',
     });
-    expect(formatHomeBalance(112_345_678, 8)).toEqual({
+    expect(formatHomeBalance(112_345_678, 8, 'fr')).toEqual({
       text: '1,12345678',
     });
-    expect(formatHomeBalance(112_000_000, 2)).toEqual({
+    expect(formatHomeBalance(112_000_000, 2, 'fr')).toEqual({
       text: '1,12',
     });
-    expect(formatHomeBalance(199_999_999, 2).text).toBe('1,99…');
-    expect(formatHomeBalance(998_380_428_123_426, 2)).toEqual({
-      text: '9 983 804,28…',
+    expect(formatHomeBalance(199_999_999, 2, 'fr').text).toBe('1,99…');
+    expect(formatHomeBalance(998_380_428_123_426, 2, 'fr')).toEqual({
+      text: '9\u202f983\u202f804,28…',
     });
-    expect(formatHomeBalance(998_380_428_123_426, 8)).toEqual({
-      text: '9 983 804,28123426',
+    expect(formatHomeBalance(998_380_428_123_426, 8, 'fr')).toEqual({
+      text: '9\u202f983\u202f804,28123426',
     });
+  });
+
+  it('formats the same reference amount deterministically in all nine languages', () => {
+    const expected = {
+      en: ['9,983,804.28…', '9,983,804.28123426'],
+      zh: ['9,983,804.28…', '9,983,804.28123426'],
+      hi: ['99,83,804.28…', '99,83,804.28123426'],
+      es: ['9.983.804,28…', '9.983.804,28123426'],
+      fr: ['9\u202f983\u202f804,28…', '9\u202f983\u202f804,28123426'],
+      ar: ['9,983,804.28…', '9,983,804.28123426'],
+      bn: ['9,983,804.28…', '9,983,804.28123426'],
+      pt: ['9.983.804,28…', '9.983.804,28123426'],
+      ru: ['9\u202f983\u202f804,28…', '9\u202f983\u202f804,28123426'],
+    } satisfies Record<LanguageCode, [string, string]>;
+
+    for (const code of Object.keys(expected) as LanguageCode[]) {
+      expect(formatHomeBalance(998_380_428_123_426, 2, code).text).toBe(expected[code][0]);
+      expect(satoshisToNito(998_380_428_123_426, code)).toBe(expected[code][1]);
+    }
   });
 
   it('splits a self transaction with two owned outputs in output-index order', () => {

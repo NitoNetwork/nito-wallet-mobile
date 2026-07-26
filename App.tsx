@@ -1567,7 +1567,7 @@ export default function App() {
 
       setPreparedConsolidation(null);
       setPreparedTx(tx);
-      setStatus(t('status.transactionReady', { fee: satoshisToNito(tx.feeSats) }));
+      setStatus(t('status.transactionReady', { fee: satoshisToNito(tx.feeSats, language) }));
     } catch (caught) {
       setPreparedTx(null);
       setError(caught instanceof Error ? caught.message : t('errors.txPrepareFailed'));
@@ -2358,6 +2358,7 @@ export default function App() {
       return (
         <HistoryTab
           t={t}
+          language={language}
           walletId={wallet.address}
           network={network}
           actionLocked={actionLocked}

@@ -3,6 +3,8 @@
 import { describe, expect, it } from 'vitest';
 
 import appSource from '../App.tsx?raw';
+import amountFormatSource from './i18n.amounts.ts?raw';
+import formatSource from './ui/format.ts?raw';
 import stylesSource from './ui/styles.ts?raw';
 import tabsSource from './ui/tabs.tsx?raw';
 import vaultSource from './services/vault.ts?raw';
@@ -182,5 +184,13 @@ describe('mobile wallet UX and security invariants', () => {
     expect(stylesSource).toMatch(/qrPlaceholder:[\s\S]*?overflow: 'hidden'/);
     expect(expoConfig).toContain('"expo-splash-screen"');
     expect(expoConfig).toContain('resizeMode: "contain"');
+  });
+
+  it('formats wallet amounts without relying on device Intl or a hard-coded locale', () => {
+    expect(amountFormatSource).not.toContain('toLocaleString');
+    expect(formatSource).not.toContain("toLocaleString('fr-FR')");
+    expect(transparentScanSource).not.toContain("toLocaleString('fr-FR')");
+    expect(amountFormatSource).toContain("hi: { groupSeparator: ',', decimalSeparator: '.', grouping: 'indian' }");
+    expect(amountFormatSource).toContain("fr: { groupSeparator: '\\u202f'");
   });
 });

@@ -198,11 +198,11 @@ export function SendTab({
         <Text style={styles.helper}>{t('send.totalChecking')}</Text>
       ) : sendEstimate ? (
         <Text style={sendEstimate.fitsAvailable ? styles.helper : styles.settingsWarning}>
-          {t('send.totalWithFees', { amount: satoshisToNito(Number(sendEstimate.totalSats)) })}
+          {t('send.totalWithFees', { amount: satoshisToNito(sendEstimate.totalSats, language) })}
         </Text>
       ) : null}
       <Text style={styles.helper}>
-        {t('send.available', { amount: network.snapshot ? satoshisToNito(network.snapshot.spendableSats) : '0' })}
+        {t('send.available', { amount: network.snapshot ? satoshisToNito(network.snapshot.spendableSats, language) : '0' })}
       </Text>
       {preparedTx ? (
         <View style={styles.txBox}>
@@ -211,12 +211,12 @@ export function SendTab({
           {preparedTx.recipients.map((recipient, index) => (
             <View key={`${recipient.address}:${index}`} style={styles.reviewRecipient}>
               <Text style={styles.previewAddress}>
-                {`${index + 1}. ${satoshisToNito(Number(recipient.amountSats))} NITO`}
+                {`${index + 1}. ${satoshisToNito(recipient.amountSats, language)} NITO`}
               </Text>
               <Text selectable style={styles.helper}>{shortAddress(recipient.address)}</Text>
             </View>
           ))}
-          <Text style={styles.previewAddress}>{t('send.fee', { amount: satoshisToNito(preparedTx.feeSats) })}</Text>
+          <Text style={styles.previewAddress}>{t('send.fee', { amount: satoshisToNito(preparedTx.feeSats, language) })}</Text>
           <Text style={styles.helper}>{t('send.inputsOutputs', { inputs: preparedTx.inputCount, outputs: preparedTx.outputCount })}</Text>
           <Text selectable style={styles.address}>{preparedTx.txid}</Text>
           <ActionButton
@@ -240,7 +240,7 @@ export function SendTab({
             {`${consolidationT('outputs')}: ${preparedConsolidation.outputCount}`}
           </Text>
           <Text style={styles.helper}>
-            {`${consolidationT('fees')}: ${satoshisToNito(preparedConsolidation.totalFeeSats)} NITO`}
+            {`${consolidationT('fees')}: ${satoshisToNito(preparedConsolidation.totalFeeSats, language)} NITO`}
           </Text>
           <ActionButton
             label={consolidationT('send')}
@@ -285,6 +285,7 @@ function HistoryLoadingStatus({
 
 export function HistoryTab({
   t,
+  language,
   walletId,
   network,
   actionLocked,
@@ -297,6 +298,7 @@ export function HistoryTab({
   onOpenTx,
 }: {
   t: Translator;
+  language: LanguageCode;
   walletId: string;
   network: NetworkState;
   actionLocked: boolean;
@@ -421,7 +423,9 @@ export function HistoryTab({
             const amountLines = amountBreakdown && entry.direction
               ? signedHistoryAmountLines(
                 entry.direction,
-                amountBreakdown.amountsSats.map(satoshisToNito),
+                amountBreakdown.amountsSats.map((amountSats) => (
+                  satoshisToNito(amountSats, language)
+                )),
               )
               : [];
             if (amountBreakdown && amountBreakdown.hiddenOutputCount > 0) {
@@ -1188,7 +1192,7 @@ export function HomeTab({
   );
   const refreshDisabled = actionLocked || balanceRefreshing || network.status === 'syncing';
   const balanceDisplay = network.snapshot
-    ? formatHomeBalance(network.snapshot.spendableSats, balanceDecimals)
+    ? formatHomeBalance(network.snapshot.spendableSats, balanceDecimals, language)
     : { text: '--' };
 
   return (
@@ -1215,13 +1219,13 @@ export function HomeTab({
         </Text>
         {network.snapshot && network.snapshot.unconfirmedSats > 0 ? (
           <Text style={styles.pendingBalance}>
-            {t('home.pendingBalance', { amount: satoshisToNito(network.snapshot.unconfirmedSats) })}
+            {t('home.pendingBalance', { amount: satoshisToNito(network.snapshot.unconfirmedSats, language) })}
           </Text>
         ) : null}
         {network.snapshot && (network.snapshot.immatureCoinbaseSats ?? 0) > 0 ? (
           <Text style={styles.immatureCoinbaseBalance}>
             {t('home.immatureMiningRewards', {
-              amount: satoshisToNito(network.snapshot.immatureCoinbaseSats ?? 0),
+              amount: satoshisToNito(network.snapshot.immatureCoinbaseSats ?? 0, language),
             })}
             {'\n'}
             {t('home.coinbaseBlocksRemaining', {

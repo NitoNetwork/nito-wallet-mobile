@@ -6,6 +6,8 @@ import type {
   NitoWalletCryptoApi,
   TransparentScriptType as NativeTransparentScriptType,
 } from '../native/nitoWalletCryptoContract';
+import type { LanguageCode } from '../i18n';
+import { formatNitoAmount } from '../i18n.amounts';
 import {
   annotateCoinbaseMaturity,
   getImmatureCoinbaseSummary,
@@ -632,8 +634,7 @@ export const refreshKnownUsedAddresses = async ({
 
 export const scanP2wpkhAccount = scanTransparentWallet;
 
-export const satoshisToNito = (sats: number) =>
-  (sats / 100_000_000).toLocaleString('fr-FR', {
-    minimumFractionDigits: 0,
-    maximumFractionDigits: 8,
-  });
+export const satoshisToNito = (
+  sats: number | bigint,
+  language: LanguageCode,
+) => formatNitoAmount(sats, language);
