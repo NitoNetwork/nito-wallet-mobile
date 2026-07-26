@@ -61,15 +61,20 @@ describe('WalletNetworkController', () => {
     const session = controller.beginWalletSession('wallet-a');
     const prefetch = controller.beginPrefetch();
     const requestSync = vi.fn();
+    const requestEnrichment = vi.fn();
 
     controller.startSync();
+    controller.startEnrichment();
     controller.requestOrQueueSync({ force: true, silent: true }, requestSync);
+    controller.requestOrQueueEnrichment(requestEnrichment);
     controller.cancel();
 
     expect(controller.isCurrent(session)).toBe(false);
     expect(controller.isCurrentPrefetch(prefetch)).toBe(false);
     expect(controller.finishSync(requestSync)).toBe(false);
+    expect(controller.finishEnrichment(requestEnrichment)).toBe(false);
     expect(requestSync).not.toHaveBeenCalled();
+    expect(requestEnrichment).not.toHaveBeenCalled();
   });
 
   it('guarantees a trailing synchronization for a current session', () => {
@@ -82,6 +87,21 @@ describe('WalletNetworkController', () => {
 
     expect(controller.finishSync(requestSync)).toBe(true);
     expect(requestSync).toHaveBeenCalledWith({ force: true, rescanGap: true });
+  });
+
+  it('replays one enrichment request received while enrichment is active', () => {
+    const controller = new WalletNetworkController();
+    const requestEnrichment = vi.fn();
+
+    controller.beginWalletSession('wallet-a');
+    controller.startEnrichment();
+    controller.requestOrQueueEnrichment(requestEnrichment);
+    controller.requestOrQueueEnrichment(requestEnrichment);
+
+    expect(requestEnrichment).not.toHaveBeenCalled();
+    expect(controller.finishEnrichment(requestEnrichment)).toBe(true);
+    expect(requestEnrichment).toHaveBeenCalledTimes(1);
+    expect(controller.finishEnrichment(requestEnrichment)).toBe(false);
   });
 
   it('does not write or publish after the active wallet changes during a cache read', async () => {

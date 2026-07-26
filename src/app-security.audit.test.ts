@@ -97,6 +97,13 @@ describe('mobile wallet UX and security invariants', () => {
     );
     expect(appSource).toContain('processHistoryEnrichmentPasses({');
     expect(appSource).toContain("sessionCurrent ? 'failed' : 'interrupted'");
+    expect(networkControllerSource).toContain('requestOrQueueEnrichment(');
+    expect(appSource).toContain(
+      'walletNetworkController.requestOrQueueEnrichment(enrichWalletHistoryRef.current);',
+    );
+    expect(appSource).toContain(
+      'walletNetworkController.finishEnrichment(enrichWalletHistoryRef.current);',
+    );
   });
 
   it('bounds broadcast reconciliation and exposes transparent scan progress', () => {

@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { DirtySyncQueue } from './syncDirtyQueue';
+import { DirtyRequestQueue, DirtySyncQueue } from './syncDirtyQueue';
 
 describe('dirty synchronization queue', () => {
   it('guarantees one trailing sync for events received while a sync is active', () => {
@@ -49,5 +49,31 @@ describe('dirty synchronization queue', () => {
       rescanGap: true,
       onlyAddresses: undefined,
     });
+  });
+});
+
+describe('dirty request queue', () => {
+  it('guarantees exactly one trailing request while work is active', () => {
+    const queue = new DirtyRequestQueue();
+    const request = vi.fn();
+
+    expect(queue.request(true, request)).toBe('deferred');
+    expect(queue.request(true, request)).toBe('deferred');
+    expect(request).not.toHaveBeenCalled();
+
+    expect(queue.flush(false, request)).toBe(true);
+    expect(request).toHaveBeenCalledTimes(1);
+    expect(queue.flush(false, request)).toBe(false);
+  });
+
+  it('drops a deferred request when the active session is cleared', () => {
+    const queue = new DirtyRequestQueue();
+    const request = vi.fn();
+
+    queue.request(true, request);
+    queue.clear();
+
+    expect(queue.flush(false, request)).toBe(false);
+    expect(request).not.toHaveBeenCalled();
   });
 });

@@ -385,6 +385,7 @@ export default function App() {
   const [historyPage, setHistoryPage] = useState(0);
   const historyPageRef = useRef(historyPage);
   const historyEnrichmentQueueRef = useRef<HistoryEnrichmentQueue | null>(null);
+  const enrichWalletHistoryRef = useRef<() => void>(() => undefined);
   const [historyProgress, setHistoryProgress] = useState<{ done: number; total: number } | null>(null);
   const [historySyncing, setHistorySyncing] = useState(false);
   const { language, t, selected: selectedLanguage, pickerOpen: languagePickerOpen, togglePicker: toggleLanguagePicker, select: selectLanguage } = useLanguage();
@@ -721,15 +722,18 @@ export default function App() {
   }, [t, walletNetworkController]);
 
   const enrichWalletHistory = useCallback(async () => {
-    if (!walletNetworkController.startEnrichment()) return;
+    if (!walletNetworkController.startEnrichment()) {
+      walletNetworkController.requestOrQueueEnrichment(enrichWalletHistoryRef.current);
+      return;
+    }
     const activeWallet = walletRef.current;
     if (!activeWallet || !networkRef.current.snapshot) {
-      walletNetworkController.finishEnrichment();
+      walletNetworkController.finishEnrichment(enrichWalletHistoryRef.current);
       return;
     }
     const session = walletNetworkController.sessions.capture(activeWallet.address);
     if (!session) {
-      walletNetworkController.finishEnrichment();
+      walletNetworkController.finishEnrichment(enrichWalletHistoryRef.current);
       return;
     }
     let ownedQueue: HistoryEnrichmentQueue | null = null;
@@ -859,11 +863,17 @@ export default function App() {
         historyEnrichmentQueueRef.current = null;
       }
       if (walletNetworkController.isCurrent(session)) {
-        walletNetworkController.finishEnrichment();
         setHistoryProgress(null);
+        walletNetworkController.finishEnrichment(enrichWalletHistoryRef.current);
       }
     }
   }, [t, walletNetworkController]);
+
+  useEffect(() => {
+    enrichWalletHistoryRef.current = () => {
+      void enrichWalletHistory();
+    };
+  }, [enrichWalletHistory]);
 
   const syncTransparentNetwork = useCallback(async (
     includeHistory = false,
@@ -910,9 +920,9 @@ export default function App() {
       (entry) => entry.direction === undefined && !enrichAttemptedRef.current.has(enrichKey(entry)),
     );
     if (hasPending) {
-      void enrichWalletHistory();
+      walletNetworkController.requestOrQueueEnrichment(enrichWalletHistoryRef.current);
     }
-  }, [screen, network.snapshot, enrichWalletHistory]);
+  }, [screen, network.snapshot, walletNetworkController]);
 
   const reconcileBroadcasts = useCallback(async (
     txids: readonly string[],
@@ -2129,7 +2139,7 @@ export default function App() {
           }
         } finally {
           if (walletNetworkController.isCurrent(session)) {
-            walletNetworkController.finishEnrichment();
+            walletNetworkController.finishEnrichment(enrichWalletHistoryRef.current);
           }
         }
 

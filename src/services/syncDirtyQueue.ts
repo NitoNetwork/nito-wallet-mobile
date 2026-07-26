@@ -7,6 +7,7 @@ export type DirtySyncOptions = {
 };
 
 type RequestSync = (options: DirtySyncOptions) => void;
+type RequestWork = () => void;
 
 const mergeOptions = (
   current: DirtySyncOptions,
@@ -51,5 +52,36 @@ export class DirtySyncQueue {
 
   clear(): void {
     this.pending = null;
+  }
+}
+
+export class DirtyRequestQueue {
+  private pending = false;
+
+  request(
+    workInFlight: boolean,
+    requestWork: RequestWork,
+  ): 'requested' | 'deferred' {
+    if (!workInFlight) {
+      requestWork();
+      return 'requested';
+    }
+
+    this.pending = true;
+    return 'deferred';
+  }
+
+  flush(workInFlight: boolean, requestWork: RequestWork): boolean {
+    if (workInFlight || !this.pending) {
+      return false;
+    }
+
+    this.pending = false;
+    requestWork();
+    return true;
+  }
+
+  clear(): void {
+    this.pending = false;
   }
 }

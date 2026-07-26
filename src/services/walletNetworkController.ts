@@ -18,7 +18,11 @@ import {
 import type { OptionalCacheRead } from './cachePolicy';
 import { mapWithConcurrency } from './concurrency';
 import { createElectrumClient } from './electrumClientFactory';
-import { DirtySyncQueue, type DirtySyncOptions } from './syncDirtyQueue';
+import {
+  DirtyRequestQueue,
+  DirtySyncQueue,
+  type DirtySyncOptions,
+} from './syncDirtyQueue';
 import { normalizeWalletHistory } from './walletHistory';
 import {
   WalletSessionGuard,
@@ -537,6 +541,7 @@ export const reconcileBroadcastTransactions = async ({
 export class WalletNetworkController {
   readonly sessions = new WalletSessionGuard();
   private readonly dirty = new DirtySyncQueue();
+  private readonly dirtyEnrichment = new DirtyRequestQueue();
   private prefetchGeneration = 0;
   private syncing = false;
   private enriching = false;
@@ -546,6 +551,7 @@ export class WalletNetworkController {
     this.syncing = false;
     this.enriching = false;
     this.dirty.clear();
+    this.dirtyEnrichment.clear();
     return this.sessions.begin(walletAddress);
   }
 
@@ -554,6 +560,7 @@ export class WalletNetworkController {
     this.syncing = false;
     this.enriching = false;
     this.dirty.clear();
+    this.dirtyEnrichment.clear();
     this.sessions.invalidate();
   }
 
@@ -590,8 +597,16 @@ export class WalletNetworkController {
     return true;
   }
 
-  finishEnrichment(): void {
+  requestOrQueueEnrichment(requestEnrichment: () => void): void {
+    this.dirtyEnrichment.request(
+      this.enriching,
+      requestEnrichment,
+    );
+  }
+
+  finishEnrichment(requestEnrichment: () => void): boolean {
     this.enriching = false;
+    return this.dirtyEnrichment.flush(false, requestEnrichment);
   }
 
   requestOrQueueSync(

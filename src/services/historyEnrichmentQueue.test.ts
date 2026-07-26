@@ -161,5 +161,8 @@ describe('HistoryEnrichmentQueue', () => {
     const failed = new Set<string>();
     recordHistoryEnrichmentBatchOutcome(failed, ['tx-1:9999'], 'failed');
     expect(failed).toContain('tx-1:9999');
+    expect(new HistoryEnrichmentQueue([history[1]!], {
+      attempted: failed,
+    }).remainingCount).toBe(0);
   });
 });
