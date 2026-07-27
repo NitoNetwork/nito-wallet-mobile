@@ -349,3 +349,35 @@ describe('password policy is declared once', () => {
     expect(vaultCryptoSource).not.toContain('nacl.randomBytes(16)');
   });
 });
+
+describe('QR scanner does not fight the auto lock', () => {
+  it('treats the open camera as a system prompt without weakening background locking', () => {
+    // Some Android builds report the app as inactive while the camera is up.
+    // Without this the wallet locked under the open scanner, wiped the send
+    // draft, and every scan then failed as "invalid address".
+    expect(appSource).toMatch(
+      /systemPromptActiveRef\.current = true;\s*setQrScannerOpen\(true\);/,
+    );
+    // Background stays unconditional: the flag only exempts the transient state.
+    expect(appStateSecuritySource).toMatch(
+      /nextState === 'background'[\s\S]{0,120}nextState === 'inactive' && !systemPromptActive/,
+    );
+  });
+
+  it('clears the flag on every scanner exit path', () => {
+    expect(appSource).toMatch(/const closeQrScanner = \(\) => \{[\s\S]*?systemPromptActiveRef\.current = false;/);
+    expect(appSource).toMatch(/const lockWallet = useCallback\(\(\) => \{[\s\S]*?systemPromptActiveRef\.current = false;/);
+  });
+
+  it('stops retrying instead of blinking forever', () => {
+    expect(appSource).toContain('if (qrScanAttemptsRef.current >= QR_SCAN_MAX_ATTEMPTS) return;');
+    expect(appSource).toContain('qrScanAttemptsRef.current = 0;');
+  });
+
+  it('closes the scanner when the target row was lost rather than blaming the code', () => {
+    expect(appSource).toMatch(
+      /if \(recipientId === null\) \{[\s\S]{0,400}?closeQrScanner\(\);\s*return;/,
+    );
+    expect(appSource).not.toContain("throw new Error('No recipient selected for QR scan.')");
+  });
+});

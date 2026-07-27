@@ -181,6 +181,7 @@ const BALANCE_REFRESH_COOLDOWN_MS = 120_000;
 const HISTORY_AUTO_IMPORT = true;
 const MNEMONIC_REVEAL_MS = 60_000;
 const ADDRESS_CLIPBOARD_MS = 60_000;
+const QR_SCAN_MAX_ATTEMPTS = 3;
 const BIP39_WORDS = new Set<string>(wordlist);
 
 const BASE_WALLET_TABS: { key: WalletTab; labelKey: Parameters<Translator>[0] }[] = [
@@ -484,6 +485,7 @@ function WalletApp({ theme, onSelectTheme }: {
   const [qrScanHandled, setQrScanHandled] = useState(false);
   const [qrScannerError, setQrScannerError] = useState('');
   const qrRetryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const qrScanAttemptsRef = useRef(0);
   const [cameraPermission, requestCameraPermission] = useCameraPermissions();
   const tRef = useRef(t);
 
@@ -1583,6 +1585,7 @@ function WalletApp({ theme, onSelectTheme }: {
     resetSendDraft();
     setPreparedTx(null);
     setPreparedConsolidation(null);
+    systemPromptActiveRef.current = false;
     setQrScannerOpen(false);
     setQrScanHandled(false);
     setQrScannerError('');
@@ -2428,12 +2431,19 @@ function WalletApp({ theme, onSelectTheme }: {
     }
     setQrScannerError('');
     setQrScanHandled(false);
+    qrScanAttemptsRef.current = 0;
+    // Opening the camera makes some Android builds report the app as inactive.
+    // Treated as a system prompt, that transient state no longer locks the
+    // wallet under the open scanner. A real background departure still does:
+    // shouldLockWalletForAppState ignores this flag for 'background'.
+    systemPromptActiveRef.current = true;
     setQrScannerOpen(true);
   };
 
   const closeQrScanner = () => {
     clearQrRetryTimer();
     qrRecipientIdRef.current = null;
+    systemPromptActiveRef.current = false;
     setQrScannerOpen(false);
     setQrScannerError('');
     setQrScanHandled(false);
@@ -2443,11 +2453,15 @@ function WalletApp({ theme, onSelectTheme }: {
     if (qrScanHandled) return;
     setQrScanHandled(true);
     try {
-      const address = parseNitoQrAddress(value);
       const recipientId = qrRecipientIdRef.current;
       if (recipientId === null) {
-        throw new Error('No recipient selected for QR scan.');
+        // Losing the target row is an internal fault, not an unreadable code.
+        // Retrying would report "invalid address" forever on a perfectly good
+        // QR, so the scanner closes instead of looping.
+        closeQrScanner();
+        return;
       }
+      const address = parseNitoQrAddress(value);
       setSendRecipients((current) => updateRecipientAddress(current, recipientId, address));
       setSendRecipientErrors((current) => (
         clearSendRecipientFieldError(current, recipientId, 'address')
@@ -2459,6 +2473,10 @@ function WalletApp({ theme, onSelectTheme }: {
     } catch {
       setQrScannerError(t('errors.invalidQr'));
       clearQrRetryTimer();
+      qrScanAttemptsRef.current += 1;
+      // A genuinely unreadable code would otherwise blink forever. After a few
+      // tries the error stays on screen and the camera stops re-firing.
+      if (qrScanAttemptsRef.current >= QR_SCAN_MAX_ATTEMPTS) return;
       qrRetryTimerRef.current = setTimeout(() => {
         qrRetryTimerRef.current = null;
         setQrScanHandled(false);
