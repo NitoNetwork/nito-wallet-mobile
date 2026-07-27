@@ -135,6 +135,17 @@ export const LIGHT_COLOR_MAP: Readonly<Record<string, string>> = {
 };
 
 /**
+ * The QR code cannot go through LIGHT_COLOR_MAP: its foreground shares a literal
+ * with a card surface, and surfaces invert between themes. A code whose modules
+ * inverted with the background would stop scanning, so the pair is explicit.
+ * The dark values are exactly the ones the wallet has always drawn.
+ */
+export const QR_COLORS: Readonly<Record<ThemeName, { foreground: string; background: string }>> = {
+  dark: { foreground: '#071326', background: '#f8fbff' },
+  light: { foreground: '#1c1a17', background: '#fbf9f4' },
+};
+
+/**
  * The dark theme returns its input untouched, which is what makes the
  * no-regression guarantee structural rather than merely tested.
  */

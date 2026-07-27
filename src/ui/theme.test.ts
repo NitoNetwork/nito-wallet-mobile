@@ -8,7 +8,11 @@ import {
   mapStyleColors,
   themeColor,
   DEFAULT_THEME,
+  QR_COLORS,
 } from './theme';
+import tabsSource from './tabs.tsx?raw';
+import screensSource from './screens.tsx?raw';
+import componentsSource from './components.tsx?raw';
 
 describe('theme', () => {
   it('defaults to dark', () => {
@@ -92,5 +96,36 @@ describe('theme', () => {
 
   it('keeps the same style keys in both themes', () => {
     expect(Object.keys(createStyles('light'))).toEqual(Object.keys(RAW_STYLES));
+  });
+});
+
+describe('inline theme colours', () => {
+  // Colours passed as props rather than through the stylesheet escape the
+  // coverage check above. Scanning the sources keeps them under the same rule:
+  // an unmapped literal would silently stay dark on paper.
+  const sources = [tabsSource, screensSource, componentsSource].join('\n');
+
+  it('maps every colour passed through themeColor()', () => {
+    const literals = [...sources.matchAll(/themeColor\('(#[0-9a-fA-F]{3,8})'\)/g)]
+      .map((match) => match[1]!);
+
+    expect(literals.length).toBeGreaterThan(0);
+    expect(literals.filter((color) => LIGHT_COLOR_MAP[color] === undefined)).toEqual([]);
+  });
+
+  it('leaves no raw colour literal outside themeColor() or an explicit pair', () => {
+    const raw = [...sources.matchAll(/(?<!themeColor\(')(?<![0-9a-fA-F])#[0-9a-fA-F]{6}\b/g)]
+      .map((match) => match[0]);
+    const allowed = new Set(Object.values(QR_COLORS).flatMap(
+      ({ foreground, background }) => [foreground, background],
+    ));
+
+    expect(raw.filter((color) => !allowed.has(color))).toEqual([]);
+  });
+
+  it('keeps the QR code dark-on-light in both themes so it stays scannable', () => {
+    expect(QR_COLORS.dark.foreground).toBe('#071326');
+    expect(QR_COLORS.dark.background).toBe('#f8fbff');
+    expect(QR_COLORS.light.foreground).not.toBe(QR_COLORS.light.background);
   });
 });

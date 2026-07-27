@@ -43,8 +43,8 @@ import {
   type SendRecipientFieldErrors,
 } from './sendRecipients';
 import type { WalletStyles } from './styles';
-import { THEME_NAMES, type ThemeName } from './theme';
-import { useStyles, useThemeColor } from './themeContext';
+import { QR_COLORS, THEME_NAMES, type ThemeName } from './theme';
+import { useStyles, useThemeColor, useThemeName } from './themeContext';
 import type { BiometricMethod, NetworkState, PendingAction, Wallet } from './types';
 
 export function ReceiveTab({ wallet, t, pendingAction, actionLocked, onCopyAddress }: {
@@ -55,12 +55,12 @@ export function ReceiveTab({ wallet, t, pendingAction, actionLocked, onCopyAddre
   onCopyAddress: () => void;
 }) {
   const styles = useStyles();
-  const themeColor = useThemeColor();
+  const qrColors = QR_COLORS[useThemeName()];
   return (
     <View style={styles.card}>
       <Text style={styles.sectionTitle}>{t('receive.title')}</Text>
       <View style={styles.qrPlaceholder}>
-        <QRCode value={wallet.address} size={204} quietZone={12} color={themeColor('#0b101d')} backgroundColor={themeColor('#f8fbff')} />
+        <QRCode value={wallet.address} size={204} quietZone={12} color={qrColors.foreground} backgroundColor={qrColors.background} />
       </View>
       <Text style={styles.label}>{t('receive.bech32Address')}</Text>
       <Text selectable style={styles.address}>{wallet.address}</Text>
