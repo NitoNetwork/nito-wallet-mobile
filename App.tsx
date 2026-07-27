@@ -133,6 +133,7 @@ import { useLanguage } from './src/hooks/useLanguage';
 import { useWalletSubscriptions } from './src/hooks/useWalletSubscriptions';
 import { AutoLock } from './src/services/session';
 import { prepareVaultUpgradeCommit } from './src/services/vaultMigration';
+import { userFacingErrorMessage } from './src/services/walletStorageError';
 import {
   initialVaultSession,
   transitionVaultSession,
@@ -213,6 +214,15 @@ const customElectrumValidationMessage = (caught: unknown, t: Translator): string
   } as const;
   return t(keys[caught.code]);
 };
+const translatedErrorMessage = (
+  caught: unknown,
+  t: Translator,
+  fallback: string,
+): string => userFacingErrorMessage(
+  caught,
+  fallback,
+  t('errors.walletStorageUnavailable'),
+);
 type ImportWordCheck = {
   index: number;
   word: string;
@@ -900,7 +910,7 @@ export default function App() {
       );
       activeBatchKeys = [];
       if (sessionCurrent) {
-        const message = caught instanceof Error ? caught.message : t('errors.networkUnavailable');
+        const message = translatedErrorMessage(caught, t, t('errors.networkUnavailable'));
         const current = networkRef.current;
         const nextNetwork: NetworkState = {
           ...current,
@@ -969,6 +979,7 @@ export default function App() {
       messages: {
         noActiveWallet: t('errors.noActiveWallet'),
         networkUnavailable: t('errors.networkUnavailable'),
+        walletStorageUnavailable: t('errors.walletStorageUnavailable'),
         syncing: t('status.syncing'),
         syncingHistory: t('status.syncingHistory'),
         walletSynced: t('status.walletSynced'),
@@ -1345,7 +1356,7 @@ export default function App() {
           );
         })().catch((caught) => {
           if (walletNetworkController.isCurrent(unlockedSession)) {
-            setError(caught instanceof Error ? caught.message : t('errors.networkUnavailable'));
+            setError(translatedErrorMessage(caught, t, t('errors.networkUnavailable')));
           }
         });
       }
@@ -1523,7 +1534,7 @@ export default function App() {
                 setScreen('landing');
                 setStatus(t('status.walletDeleted'));
               } catch (caught) {
-                setError(caught instanceof Error ? caught.message : t('errors.deleteFailed'));
+                setError(translatedErrorMessage(caught, t, t('errors.deleteFailed')));
               }
             })();
           },
@@ -2291,7 +2302,7 @@ export default function App() {
         setStatus(t('status.historyExported'));
       } catch (caught) {
         if (!session || walletNetworkController.isCurrent(session)) {
-          setError(caught instanceof Error ? caught.message : t('errors.historyExportFailed'));
+          setError(translatedErrorMessage(caught, t, t('errors.historyExportFailed')));
         }
       }
     });
@@ -2345,7 +2356,7 @@ export default function App() {
         }
       } catch (caught) {
         if (walletNetworkController.isCurrent(session)) {
-          setError(caught instanceof Error ? caught.message : t('errors.networkUnavailable'));
+          setError(translatedErrorMessage(caught, t, t('errors.networkUnavailable')));
         }
       }
     });

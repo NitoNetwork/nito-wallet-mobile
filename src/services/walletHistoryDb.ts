@@ -4,6 +4,7 @@ import type { ElectrumHistoryEntry } from '../network/electrum';
 import type { TransparentWalletSnapshot } from '../wallet/transparentScan';
 import type { CachedTransactionOutput } from './historyExport';
 import { isDuplicateColumnError, retrySqliteWrite } from './sqliteReliability';
+import { runWalletStorageOperation } from './walletStorageError';
 import { normalizeWalletHistory } from './walletHistory';
 import type { EnrichedHistoryRecord } from './walletHistory';
 
@@ -52,6 +53,7 @@ export type WalletSnapshotCache = {
 };
 
 let dbPromise: Promise<SQLite.SQLiteDatabase> | null = null;
+const writeQueues = new WeakMap<SQLite.SQLiteDatabase, Promise<void>>();
 
 const initializeHistoryDb = async () => {
   const db = await SQLite.openDatabaseAsync(DB_NAME);
@@ -143,37 +145,53 @@ const openHistoryDb = async () => {
 export const loadTransactionOutputCache = async (
   walletId: string,
   txids: readonly string[],
-): Promise<CachedTransactionOutput[]> => {
-  const uniqueTxids = [...new Set(txids.filter(Boolean))];
-  if (uniqueTxids.length === 0) return [];
+): Promise<CachedTransactionOutput[]> => runWalletStorageOperation(
+  'transaction output cache read',
+  async () => {
+    const uniqueTxids = [...new Set(txids.filter(Boolean))];
+    if (uniqueTxids.length === 0) return [];
 
-  const db = await openHistoryDb();
-  const outputs: CachedTransactionOutput[] = [];
-  for (let offset = 0; offset < uniqueTxids.length; offset += SQLITE_TXID_QUERY_CHUNK_SIZE) {
-    const chunk = uniqueTxids.slice(offset, offset + SQLITE_TXID_QUERY_CHUNK_SIZE);
-    const placeholders = chunk.map(() => '?').join(', ');
-    const rows = await db.getAllAsync<TransactionOutputRow>(
-      `SELECT txid, output_index, value_sats, address
-       FROM wallet_transaction_outputs
-       WHERE wallet_id = ? AND txid IN (${placeholders})
-       ORDER BY txid, output_index, address`,
-      walletId,
-      ...chunk,
-    );
-    outputs.push(...rows.map((row) => ({
-      txid: row.txid,
-      outputIndex: row.output_index,
-      valueSats: row.value_sats,
-      address: row.address,
-    })));
-  }
-  return outputs;
+    const db = await openHistoryDb();
+    const outputs: CachedTransactionOutput[] = [];
+    for (let offset = 0; offset < uniqueTxids.length; offset += SQLITE_TXID_QUERY_CHUNK_SIZE) {
+      const chunk = uniqueTxids.slice(offset, offset + SQLITE_TXID_QUERY_CHUNK_SIZE);
+      const placeholders = chunk.map(() => '?').join(', ');
+      const rows = await db.getAllAsync<TransactionOutputRow>(
+        `SELECT txid, output_index, value_sats, address
+         FROM wallet_transaction_outputs
+         WHERE wallet_id = ? AND txid IN (${placeholders})
+         ORDER BY txid, output_index, address`,
+        walletId,
+        ...chunk,
+      );
+      outputs.push(...rows.map((row) => ({
+        txid: row.txid,
+        outputIndex: row.output_index,
+        valueSats: row.value_sats,
+        address: row.address,
+      })));
+    }
+    return outputs;
+  },
+);
+
+const runSerializedWrite = async <T>(
+  db: SQLite.SQLiteDatabase,
+  operation: () => Promise<T>,
+): Promise<T> => {
+  const previous = writeQueues.get(db) ?? Promise.resolve();
+  const pending = previous.then(operation, operation);
+  writeQueues.set(db, pending.then(
+    () => undefined,
+    () => undefined,
+  ));
+  return pending;
 };
 
 const runWriteTransaction = async (
   db: SQLite.SQLiteDatabase,
   operation: () => Promise<void>,
-) => retrySqliteWrite(async () => {
+) => runSerializedWrite(db, () => retrySqliteWrite(async () => {
   await db.execAsync('BEGIN IMMEDIATE TRANSACTION');
   try {
     await operation();
@@ -188,9 +206,11 @@ const runWriteTransaction = async (
     }
     throw caught;
   }
-});
+}));
 
-export const loadWalletHistoryCache = async (walletId: string): Promise<WalletHistoryCache> => {
+export const loadWalletHistoryCache = async (
+  walletId: string,
+): Promise<WalletHistoryCache> => runWalletStorageOperation('wallet history cache read', async () => {
   const db = await openHistoryDb();
   const [rows, state] = await Promise.all([
     db.getAllAsync<HistoryRow>(
@@ -222,32 +242,37 @@ export const loadWalletHistoryCache = async (walletId: string): Promise<WalletHi
     history: normalizeWalletHistory(history),
     fullHistoryHeight: state?.full_history_height ?? 0,
   };
-};
+});
 
-export const loadWalletSnapshotCache = async (walletId: string): Promise<WalletSnapshotCache | null> => {
-  const db = await openHistoryDb();
-  const row = await db.getFirstAsync<SnapshotRow>(
-    'SELECT snapshot_json, height FROM wallet_snapshot_cache WHERE wallet_id = ?',
-    walletId,
-  );
+export const loadWalletSnapshotCache = async (
+  walletId: string,
+): Promise<WalletSnapshotCache | null> => runWalletStorageOperation(
+  'wallet snapshot cache read',
+  async () => {
+    const db = await openHistoryDb();
+    const row = await db.getFirstAsync<SnapshotRow>(
+      'SELECT snapshot_json, height FROM wallet_snapshot_cache WHERE wallet_id = ?',
+      walletId,
+    );
 
-  if (!row) {
-    return null;
-  }
+    if (!row) {
+      return null;
+    }
 
-  return {
-    snapshot: JSON.parse(row.snapshot_json) as TransparentWalletSnapshot,
-    height: row.height,
-  };
-};
+    return {
+      snapshot: JSON.parse(row.snapshot_json) as TransparentWalletSnapshot,
+      height: row.height,
+    };
+  },
+);
 
 export const saveWalletSnapshotCache = async (
   walletId: string,
   snapshot: TransparentWalletSnapshot,
   height: number,
-) => {
+): Promise<void> => runWalletStorageOperation('wallet snapshot cache write', async () => {
   const db = await openHistoryDb();
-  await retrySqliteWrite(() => db.runAsync(
+  await runSerializedWrite(db, () => retrySqliteWrite(() => db.runAsync(
     `INSERT INTO wallet_snapshot_cache (wallet_id, snapshot_json, height, updated_at)
      VALUES (?, ?, ?, ?)
      ON CONFLICT(wallet_id) DO UPDATE SET
@@ -258,14 +283,14 @@ export const saveWalletSnapshotCache = async (
     JSON.stringify(snapshot),
     Math.max(0, height),
     new Date().toISOString(),
-  ));
-};
+  )));
+});
 
 export const saveWalletHistoryCache = async (
   walletId: string,
   history: ElectrumHistoryEntry[],
   fullHistoryHeight: number,
-) => {
+): Promise<void> => runWalletStorageOperation('wallet history cache write', async () => {
   const db = await openHistoryDb();
   const now = new Date().toISOString();
   const normalized = normalizeWalletHistory(history);
@@ -297,13 +322,13 @@ export const saveWalletHistoryCache = async (
       now,
     );
   });
-};
+});
 
 export const saveHistoryEnrichmentBatch = async (
   walletId: string,
   records: EnrichedHistoryRecord[],
   outputs: readonly CachedTransactionOutput[],
-) => {
+): Promise<void> => runWalletStorageOperation('wallet history enrichment write', async () => {
   if (records.length === 0 && outputs.length === 0) return;
   const db = await openHistoryDb();
   const now = new Date().toISOString();
@@ -349,19 +374,21 @@ export const saveHistoryEnrichmentBatch = async (
       );
     }
   });
-};
+});
 
 export const saveEnrichedHistoryRecords = async (
   walletId: string,
   records: EnrichedHistoryRecord[],
 ) => saveHistoryEnrichmentBatch(walletId, records, []);
 
-export const clearWalletHistoryCache = async (walletId: string) => {
-  const db = await openHistoryDb();
-  await runWriteTransaction(db, async () => {
-    await db.runAsync('DELETE FROM wallet_transaction_outputs WHERE wallet_id = ?', walletId);
-    await db.runAsync('DELETE FROM wallet_transactions WHERE wallet_id = ?', walletId);
-    await db.runAsync('DELETE FROM wallet_sync_state WHERE wallet_id = ?', walletId);
-    await db.runAsync('DELETE FROM wallet_snapshot_cache WHERE wallet_id = ?', walletId);
-  });
-};
+export const clearWalletHistoryCache = async (walletId: string): Promise<void> => (
+  runWalletStorageOperation('wallet history cache clear', async () => {
+    const db = await openHistoryDb();
+    await runWriteTransaction(db, async () => {
+      await db.runAsync('DELETE FROM wallet_transaction_outputs WHERE wallet_id = ?', walletId);
+      await db.runAsync('DELETE FROM wallet_transactions WHERE wallet_id = ?', walletId);
+      await db.runAsync('DELETE FROM wallet_sync_state WHERE wallet_id = ?', walletId);
+      await db.runAsync('DELETE FROM wallet_snapshot_cache WHERE wallet_id = ?', walletId);
+    });
+  })
+);

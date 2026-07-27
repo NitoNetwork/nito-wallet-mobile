@@ -8,6 +8,7 @@ import {
   canUseFreshHistoryCache,
   synchronizeWalletNetwork,
 } from './walletNetworkController';
+import { WalletStorageError } from './walletStorageError';
 
 vi.mock('expo-secure-store', () => ({
   getItemAsync: vi.fn(),
@@ -44,6 +45,7 @@ const network: NetworkState = {
 const messages = {
   noActiveWallet: 'no wallet',
   networkUnavailable: 'network unavailable',
+  walletStorageUnavailable: 'localized storage unavailable',
   syncing: 'syncing',
   syncingHistory: 'syncing history',
   walletSynced: 'synced',
@@ -242,6 +244,46 @@ describe('WalletNetworkController', () => {
       serverUrl: customUrl,
     });
     expect(currentNetwork.error).toContain(customUrl);
+  });
+
+  it('never exposes a raw SQLite driver error during synchronization', async () => {
+    const controller = new WalletNetworkController();
+    controller.beginWalletSession(wallet.address);
+    const setError = vi.fn();
+    const publishNetwork = vi.fn();
+
+    await synchronizeWalletNetwork({
+      controller,
+      getWallet: () => wallet,
+      getNetwork: () => network,
+      getClient: () => client,
+      setClient: vi.fn(),
+      actionPending: () => false,
+      fullHistoryByDefault: true,
+      readHistoryCache: async () => ({
+        status: 'hit',
+        value: { history: [], fullHistoryHeight: 100 },
+      }),
+      saveHistory: vi.fn(),
+      saveSnapshot: vi.fn(async () => {
+        throw new WalletStorageError();
+      }),
+      publishNetwork,
+      setError,
+      setStatus: vi.fn(),
+      setHistorySyncing: vi.fn(),
+      setHistoryProgress: vi.fn(),
+      setBalanceRefreshing: vi.fn(),
+      finishSync: () => controller.finishSync(vi.fn()),
+      messages,
+    });
+
+    expect(setError).toHaveBeenCalledWith(messages.walletStorageUnavailable);
+    expect(publishNetwork).toHaveBeenLastCalledWith(expect.objectContaining({
+      status: 'error',
+      error: messages.walletStorageUnavailable,
+    }));
+    expect(setError).not.toHaveBeenCalledWith(expect.stringContaining('transaction within'));
   });
 });
 

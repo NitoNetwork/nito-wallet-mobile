@@ -32,6 +32,7 @@ import type {
   WalletHistoryCache,
   WalletSnapshotCache,
 } from './walletHistoryDb';
+import { userFacingErrorMessage } from './walletStorageError';
 
 const COINBASE_MATURITY = 101;
 const BROADCAST_RECONCILIATION_CONCURRENCY = 6;
@@ -317,6 +318,7 @@ type WalletNetworkSyncPorts = {
   messages: {
     noActiveWallet: string;
     networkUnavailable: string;
+    walletStorageUnavailable: string;
     syncing: string;
     syncingHistory: string;
     walletSynced: string;
@@ -496,7 +498,11 @@ export const synchronizeWalletNetwork = async (
     if (caught instanceof TransparentScanIncompleteError && client?.connected) {
       client.disconnect(new ElectrumSessionUnhealthyError(caught));
     }
-    const message = caught instanceof Error ? caught.message : ports.messages.networkUnavailable;
+    const message = userFacingErrorMessage(
+      caught,
+      ports.messages.networkUnavailable,
+      ports.messages.walletStorageUnavailable,
+    );
     ports.publishNetwork({
       status: 'error',
       snapshot: fallbackNetwork.snapshot,

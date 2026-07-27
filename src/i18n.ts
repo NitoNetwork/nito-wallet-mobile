@@ -222,6 +222,7 @@ const en = {
   'errors.passwordDoesNotMatchWallet': 'This password does not match the active wallet.',
   'errors.invalidDestination': 'Enter a valid public Nito address.',
   'errors.invalidAmount': 'Enter a valid NITO amount with no more than 8 decimal places.',
+  'errors.walletStorageUnavailable': 'Local wallet data is temporarily unavailable. Please try again.',
   'errors.noAddress': 'No address to copy.',
   'errors.invalidQr': 'This QR code does not contain a valid Nito address.',
   'errors.cameraPermission': 'Camera access is required to scan a QR code.',

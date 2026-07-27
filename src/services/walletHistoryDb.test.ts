@@ -1,12 +1,17 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { EnrichedHistoryRecord } from './walletHistoryDb';
+import { WalletStorageError } from './walletStorageError';
 
 const sqlite = vi.hoisted(() => ({
   openDatabaseAsync: vi.fn(),
 }));
+const diagnostics = vi.hoisted(() => ({
+  reportNonFinancialFailure: vi.fn(),
+}));
 
 vi.mock('expo-sqlite', () => sqlite);
+vi.mock('./diagnostics', () => diagnostics);
 
 const db = {
   execAsync: vi.fn(async (_sql: string) => undefined),
@@ -108,11 +113,73 @@ describe('wallet transaction output cache', () => {
         valueSats: 90_000_000,
         address: 'wallet-address',
       }],
-    )).rejects.toThrow('disk full');
+    )).rejects.toBeInstanceOf(WalletStorageError);
 
     expect(db.execAsync.mock.calls.filter(([sql]) => (
       sql === 'BEGIN IMMEDIATE TRANSACTION'
     ))).toHaveLength(3);
     expect(db.execAsync.mock.calls.filter(([sql]) => sql === 'ROLLBACK')).toHaveLength(3);
+    expect(diagnostics.reportNonFinancialFailure).toHaveBeenCalledWith(
+      'wallet history enrichment write',
+      expect.objectContaining({ message: 'disk full' }),
+    );
+  });
+
+  it('serializes simultaneous transactions on the shared connection', async () => {
+    const { clearWalletHistoryCache } = await import('./walletHistoryDb');
+    const events: string[] = [];
+    let transactionOpen = false;
+    let transactionId = 0;
+    let activeTransactionId = 0;
+    let releaseFirstWrite: () => void = () => undefined;
+    let markFirstWriteEntered: () => void = () => undefined;
+    const firstWriteEntered = new Promise<void>((resolve) => {
+      markFirstWriteEntered = resolve;
+    });
+    const firstWriteReleased = new Promise<void>((resolve) => {
+      releaseFirstWrite = resolve;
+    });
+
+    db.execAsync.mockImplementation(async (sql: string) => {
+      if (sql === 'BEGIN IMMEDIATE TRANSACTION') {
+        if (transactionOpen) {
+          events.push('overlap');
+          throw new Error('cannot start a transaction within a transaction');
+        }
+        transactionOpen = true;
+        activeTransactionId = transactionId + 1;
+        transactionId = activeTransactionId;
+        events.push(`begin:${activeTransactionId}`);
+      } else if (sql === 'COMMIT') {
+        events.push(`commit:${activeTransactionId}`);
+        transactionOpen = false;
+        activeTransactionId = 0;
+      } else if (sql === 'ROLLBACK') {
+        events.push(`rollback:${activeTransactionId}`);
+        transactionOpen = false;
+        activeTransactionId = 0;
+      }
+    });
+    let firstRun = true;
+    db.runAsync.mockImplementation(async () => {
+      if (firstRun) {
+        firstRun = false;
+        markFirstWriteEntered();
+        await firstWriteReleased;
+      }
+      return { changes: 1, lastInsertRowId: 0 };
+    });
+
+    const first = clearWalletHistoryCache('wallet-a');
+    await firstWriteEntered;
+    const second = clearWalletHistoryCache('wallet-b');
+    await Promise.resolve();
+    await Promise.resolve();
+    const successfulBeginsBeforeRelease = events.filter((event) => event.startsWith('begin:')).length;
+    releaseFirstWrite();
+
+    await expect(Promise.all([first, second])).resolves.toEqual([undefined, undefined]);
+    expect(successfulBeginsBeforeRelease).toBe(1);
+    expect(events).toEqual(['begin:1', 'commit:1', 'begin:2', 'commit:2']);
   });
 });

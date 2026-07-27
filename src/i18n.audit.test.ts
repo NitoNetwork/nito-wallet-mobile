@@ -71,6 +71,29 @@ describe('i18n coverage', () => {
     }
   });
 
+  it('translates the local wallet storage failure in every language', () => {
+    const english = makeTranslator('en')('errors.walletStorageUnavailable');
+
+    for (const { code } of [
+      { code: 'en' },
+      { code: 'zh' },
+      { code: 'hi' },
+      { code: 'es' },
+      { code: 'fr' },
+      { code: 'ar' },
+      { code: 'bn' },
+      { code: 'pt' },
+      { code: 'ru' },
+    ] as const) {
+      const message = makeTranslator(code)('errors.walletStorageUnavailable');
+      expect(message).not.toContain('SQLite');
+      expect(message).not.toContain('NativeDatabase');
+      if (code !== 'en') {
+        expect(message).not.toBe(english);
+      }
+    }
+  });
+
   it('resolves the multi-recipient controls in every language', () => {
     const expected = {
       en: 'Add recipient',
