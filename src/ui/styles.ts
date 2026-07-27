@@ -225,12 +225,6 @@ export const styles = StyleSheet.create({
     shadowOpacity: 0,
     elevation: 0,
   },
-  buttonSuccess: {
-    backgroundColor: '#07351f',
-    borderWidth: 1,
-    borderColor: 'rgba(37, 181, 121, 0.58)',
-    shadowOpacity: 0,
-  },
   buttonDanger: {
     backgroundColor: '#39111c',
     borderWidth: 1,
@@ -266,9 +260,6 @@ export const styles = StyleSheet.create({
   },
   buttonTextGhost: {
     color: '#9fb4d3',
-  },
-  buttonTextSuccess: {
-    color: '#9ef2c9',
   },
   buttonTextDanger: {
     color: '#ff97a7',

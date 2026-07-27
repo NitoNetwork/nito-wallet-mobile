@@ -2570,7 +2570,6 @@ export default function App() {
             biometricAvailable: !biometricUnavailableReason,
             autoLockTimeoutMs,
             onSelectAutoLockTimeout: selectAutoLockTimeout,
-            onLockWallet: lockWallet,
             onToggleMnemonic: toggleMnemonic,
             onEnableBiometrics: askEnableBiometrics,
             onDisableBiometrics: askDisableBiometrics,

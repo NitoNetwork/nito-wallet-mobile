@@ -25,7 +25,6 @@ export function ActionButton({
         styles.button,
         variant === 'secondary' && styles.buttonSecondary,
         variant === 'ghost' && styles.buttonGhost,
-        variant === 'success' && styles.buttonSuccess,
         variant === 'danger' && styles.buttonDanger,
         inactive && styles.buttonDisabled,
       ]}
@@ -36,7 +35,6 @@ export function ActionButton({
             styles.buttonText,
             variant === 'secondary' && styles.buttonTextSecondary,
             variant === 'ghost' && styles.buttonTextGhost,
-            variant === 'success' && styles.buttonTextSuccess,
             variant === 'danger' && styles.buttonTextDanger,
             inactive && styles.buttonTextDisabled,
           ]}

@@ -759,7 +759,6 @@ function SecuritySettingsSection({
     biometricAvailable: boolean;
     autoLockTimeoutMs: AutoLockTimeoutMs;
     onSelectAutoLockTimeout: (next: AutoLockTimeoutMs) => void;
-    onLockWallet: () => void;
     onToggleMnemonic: () => void;
     onEnableBiometrics: () => void;
     onDisableBiometrics: () => void;
@@ -801,12 +800,6 @@ function SecuritySettingsSection({
             : settings.onEnableBiometrics}
         />
       ) : null}
-      <ActionButton
-        label={t('actions.lockWallet')}
-        variant="success"
-        disabled={actionLocked}
-        onPress={settings.onLockWallet}
-      />
       <ActionButton
         label={settings.showMnemonic ? t('actions.hideSeed') : t('actions.showSeed')}
         variant="secondary"
@@ -1111,7 +1104,6 @@ export function SecurityTab({
     biometricAvailable: boolean;
     autoLockTimeoutMs: AutoLockTimeoutMs;
     onSelectAutoLockTimeout: (next: AutoLockTimeoutMs) => void;
-    onLockWallet: () => void;
     onToggleMnemonic: () => void;
     onEnableBiometrics: () => void;
     onDisableBiometrics: () => void;
