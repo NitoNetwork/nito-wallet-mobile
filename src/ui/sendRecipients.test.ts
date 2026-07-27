@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  appendSendRecipient,
+  canAddSendRecipient,
   clearSendRecipientFieldError,
   duplicateRecipientAddresses,
   summarizeRecipientSpend,
@@ -8,6 +10,7 @@ import {
   validateSendRecipientDrafts,
   type SendRecipientDraft,
 } from './sendRecipients';
+import { MAX_SEND_RECIPIENTS } from '../constants/nito';
 
 const recipients: SendRecipientDraft[] = [
   { id: 1, address: 'nito1qfirst', amount: '1' },
@@ -74,5 +77,34 @@ describe('send recipient helpers', () => {
       amountError: 'Valid amount required',
       skipAmountRecipientId: 1,
     })).toEqual({});
+  });
+});
+
+describe('send recipient cap', () => {
+  const draft = (id: number) => ({ id, address: '', amount: '' });
+  const fill = (count: number) => Array.from({ length: count }, (_, index) => draft(index));
+
+  it('allows adding recipients below the cap', () => {
+    expect(canAddSendRecipient(fill(0))).toBe(true);
+    expect(canAddSendRecipient(fill(MAX_SEND_RECIPIENTS - 1))).toBe(true);
+  });
+
+  it('blocks adding recipients exactly at the cap', () => {
+    expect(canAddSendRecipient(fill(MAX_SEND_RECIPIENTS))).toBe(false);
+  });
+
+  it('never appends past the cap and leaves the list untouched', () => {
+    const full = fill(MAX_SEND_RECIPIENTS);
+    const result = appendSendRecipient(full, draft(999));
+
+    expect(result).toHaveLength(MAX_SEND_RECIPIENTS);
+    expect(result.some((recipient) => recipient.id === 999)).toBe(false);
+  });
+
+  it('appends normally below the cap', () => {
+    const result = appendSendRecipient(fill(MAX_SEND_RECIPIENTS - 1), draft(999));
+
+    expect(result).toHaveLength(MAX_SEND_RECIPIENTS);
+    expect(result[result.length - 1]?.id).toBe(999);
   });
 });

@@ -95,6 +95,7 @@ const en = {
   'send.inputsOutputs': 'Inputs: {inputs} | Outputs: {outputs}',
   'send.sending': 'Sending...',
   'send.available': 'Available: {amount} NITO',
+  'send.maxRecipients': 'Maximum number of recipients for this transaction',
   'send.recipientLabel': 'Recipient {index}',
   'send.addRecipient': 'Add recipient',
   'send.removeRecipient': 'Remove',
@@ -1425,6 +1426,7 @@ const FEATURE_TRANSLATIONS: Record<LanguageCode, Partial<TranslationSet>> = {
 const MULTI_SEND_TRANSLATIONS: Record<LanguageCode, Pick<
   TranslationSet,
   | 'send.recipientLabel'
+  | 'send.maxRecipients'
   | 'send.addRecipient'
   | 'send.removeRecipient'
   | 'send.totalWithFees'
@@ -1433,6 +1435,7 @@ const MULTI_SEND_TRANSLATIONS: Record<LanguageCode, Pick<
   | 'send.recipientsReview'
 >> = {
   en: {
+    'send.maxRecipients': 'Maximum number of recipients for this transaction',
     'send.recipientLabel': 'Recipient {index}',
     'send.addRecipient': 'Add recipient',
     'send.removeRecipient': 'Remove',
@@ -1442,6 +1445,7 @@ const MULTI_SEND_TRANSLATIONS: Record<LanguageCode, Pick<
     'send.recipientsReview': 'Recipients (entered order)',
   },
   zh: {
+    'send.maxRecipients': '本次交易的收款人数量已达上限',
     'send.recipientLabel': '收款人 {index}',
     'send.addRecipient': '添加收款人',
     'send.removeRecipient': '移除',
@@ -1451,6 +1455,7 @@ const MULTI_SEND_TRANSLATIONS: Record<LanguageCode, Pick<
     'send.recipientsReview': '收款人（输入顺序）',
   },
   hi: {
+    'send.maxRecipients': 'इस लेनदेन के लिए प्राप्तकर्ताओं की अधिकतम संख्या',
     'send.recipientLabel': 'प्राप्तकर्ता {index}',
     'send.addRecipient': 'प्राप्तकर्ता जोड़ें',
     'send.removeRecipient': 'हटाएँ',
@@ -1460,6 +1465,7 @@ const MULTI_SEND_TRANSLATIONS: Record<LanguageCode, Pick<
     'send.recipientsReview': 'प्राप्तकर्ता (दर्ज क्रम)',
   },
   es: {
+    'send.maxRecipients': 'Número máximo de destinatarios para esta transacción',
     'send.recipientLabel': 'Destinatario {index}',
     'send.addRecipient': 'Añadir destinatario',
     'send.removeRecipient': 'Eliminar',
@@ -1469,6 +1475,7 @@ const MULTI_SEND_TRANSLATIONS: Record<LanguageCode, Pick<
     'send.recipientsReview': 'Destinatarios (orden introducido)',
   },
   fr: {
+    'send.maxRecipients': 'Nombre max de destinataire pour cette transaction',
     'send.recipientLabel': 'Destinataire {index}',
     'send.addRecipient': 'Ajouter un destinataire',
     'send.removeRecipient': 'Retirer',
@@ -1478,6 +1485,7 @@ const MULTI_SEND_TRANSLATIONS: Record<LanguageCode, Pick<
     'send.recipientsReview': 'Destinataires (ordre saisi)',
   },
   ar: {
+    'send.maxRecipients': 'الحد الأقصى لعدد المستلمين لهذه المعاملة',
     'send.recipientLabel': 'المستلم {index}',
     'send.addRecipient': 'إضافة مستلم',
     'send.removeRecipient': 'إزالة',
@@ -1487,6 +1495,7 @@ const MULTI_SEND_TRANSLATIONS: Record<LanguageCode, Pick<
     'send.recipientsReview': 'المستلمون (ترتيب الإدخال)',
   },
   bn: {
+    'send.maxRecipients': 'এই লেনদেনের জন্য সর্বাধিক প্রাপকের সংখ্যা',
     'send.recipientLabel': 'প্রাপক {index}',
     'send.addRecipient': 'প্রাপক যোগ করুন',
     'send.removeRecipient': 'সরান',
@@ -1496,6 +1505,7 @@ const MULTI_SEND_TRANSLATIONS: Record<LanguageCode, Pick<
     'send.recipientsReview': 'প্রাপক (ইনপুট ক্রম)',
   },
   pt: {
+    'send.maxRecipients': 'Número máximo de destinatários para esta transação',
     'send.recipientLabel': 'Destinatário {index}',
     'send.addRecipient': 'Adicionar destinatário',
     'send.removeRecipient': 'Remover',
@@ -1505,6 +1515,7 @@ const MULTI_SEND_TRANSLATIONS: Record<LanguageCode, Pick<
     'send.recipientsReview': 'Destinatários (ordem inserida)',
   },
   ru: {
+    'send.maxRecipients': 'Максимальное число получателей для этой транзакции',
     'send.recipientLabel': 'Получатель {index}',
     'send.addRecipient': 'Добавить получателя',
     'send.removeRecipient': 'Удалить',

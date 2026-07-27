@@ -37,6 +37,7 @@ import nacl from 'tweetnacl';
 import { escapeCsvCell, isValidTransactionId, shortAddress, transactionExplorerUrl } from './src/ui/format';
 import { shouldShowBlockingLoadingOverlay } from './src/ui/loadingPolicy';
 import {
+  appendSendRecipient,
   clearSendRecipientFieldError,
   summarizeRecipientSpend,
   updateRecipientAddress,
@@ -1802,7 +1803,7 @@ export default function App() {
   const addSendRecipient = () => {
     const id = nextSendRecipientIdRef.current;
     nextSendRecipientIdRef.current += 1;
-    setSendRecipients((current) => [...current, { id, address: '', amount: '' }]);
+    setSendRecipients((current) => appendSendRecipient(current, { id, address: '', amount: '' }));
     setPreparedTx(null);
     setPreparedConsolidation(null);
   };

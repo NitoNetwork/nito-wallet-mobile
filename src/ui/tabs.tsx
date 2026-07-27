@@ -37,6 +37,7 @@ import {
   shortAddress,
 } from './format';
 import {
+  canAddSendRecipient,
   duplicateRecipientAddresses,
   type SendRecipientDraft,
   type SendRecipientFieldErrors,
@@ -111,6 +112,7 @@ export function SendTab({
 }) {
   const consolidationT = makeConsolidationTranslator(language);
   const duplicateAddresses = duplicateRecipientAddresses(recipients);
+  const canAddRecipient = canAddSendRecipient(recipients);
   const recipientsComplete = recipients.every(
     (recipient) => recipient.address.trim() && recipient.amount.trim(),
   );
@@ -193,12 +195,18 @@ export function SendTab({
           );
         })}
         <TouchableOpacity
-          disabled={actionLocked}
+          disabled={actionLocked || !canAddRecipient}
           onPress={onAddRecipient}
-          style={[styles.addRecipientButton, actionLocked && styles.scanButtonDisabled]}
+          style={[
+            styles.addRecipientButton,
+            (actionLocked || !canAddRecipient) && styles.scanButtonDisabled,
+          ]}
         >
           <Text style={styles.addRecipientText}>{t('send.addRecipient')}</Text>
         </TouchableOpacity>
+        {!canAddRecipient ? (
+          <Text style={styles.helper}>{t('send.maxRecipients')}</Text>
+        ) : null}
       </View>
       {duplicateAddresses.length > 0 ? (
         <Text style={styles.settingsWarning}>{t('send.duplicateRecipientWarning')}</Text>

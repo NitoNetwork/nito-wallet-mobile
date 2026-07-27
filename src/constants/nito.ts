@@ -10,6 +10,7 @@ export const AUTO_LOCK_TIMEOUT_OPTIONS_MS = [
   900_000,
 ] as const;
 export type AutoLockTimeoutMs = (typeof AUTO_LOCK_TIMEOUT_OPTIONS_MS)[number];
+export const MAX_SEND_RECIPIENTS = 20;
 export const VAULT_KEY = 'nito-mobile-wallet.v1';
 export const VAULT_META_KEY = 'nito-mobile-wallet.meta.v1';
 export const VAULT_VERSION = 1;

@@ -1,8 +1,26 @@
+import { MAX_SEND_RECIPIENTS } from '../constants/nito';
+
 export type SendRecipientDraft = {
   id: number;
   address: string;
   amount: string;
 };
+
+/**
+ * A transaction carries at most MAX_SEND_RECIPIENTS outputs. The cap is a
+ * usability bound, not a consensus one: the reviewed transaction stays readable
+ * and the fee stays predictable.
+ */
+export const canAddSendRecipient = (
+  recipients: readonly SendRecipientDraft[],
+): boolean => recipients.length < MAX_SEND_RECIPIENTS;
+
+export const appendSendRecipient = (
+  recipients: readonly SendRecipientDraft[],
+  recipient: SendRecipientDraft,
+): SendRecipientDraft[] => (
+  canAddSendRecipient(recipients) ? [...recipients, recipient] : [...recipients]
+);
 
 export type SendRecipientField = 'address' | 'amount';
 export type SendRecipientFieldErrors = Record<
