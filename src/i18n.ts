@@ -57,7 +57,7 @@ export function auditTranslationCoverage() {
 }
 
 export function auditTranslationQuality() {
-  const corruptedPattern = /�|\?{2,}|[\p{L}]\?[\p{L}]|Ã|Â|Ð|Ñ|Ø|Ù|à¤|à¦|åŠ|å®/u;
+  const corruptedPattern = /\uFFFD|\?{2,}|[\p{L}]\?[\p{L}]|Ã|Â|Ð|Ñ|Ø|Ù|à¤|à¦|åŠ|å®/u;
   return LANGUAGES.flatMap((language) =>
     (Object.keys(en) as TranslationKey[])
       .filter((key) => corruptedPattern.test(TRANSLATIONS[language.code][key]))

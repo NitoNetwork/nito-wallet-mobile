@@ -66,7 +66,7 @@ const NETWORK_STATUS_STYLE_KEYS = {
   error: 'networkStatusError',
 } satisfies Record<NetworkState['status'], keyof WalletStyles>;
 
-export function SettingsHeader({
+function SettingsHeader({
   t,
   title,
   onBack,
