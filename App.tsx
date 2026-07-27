@@ -155,6 +155,7 @@ import {
   createEmptyNetworkState,
   enrichHistorySnapshot,
   mergeHistoryEnrichment,
+  mergeWalletNetworkPublication,
   prefetchWalletSnapshot,
   prepareWalletEntry,
   reconcileBroadcastTransactions,
@@ -377,6 +378,7 @@ export default function App() {
   const pendingNetworkRef = useRef<{ address: string; snapshot: TransparentWalletSnapshot; height: number } | null>(null);
   const walletRef = useRef<Wallet | null>(null);
   const networkRef = useRef<NetworkState>(createEmptyNetworkState());
+  const networkOwnerAddressRef = useRef<string | null>(null);
   const silentNextAutoSyncRef = useRef(false);
   const subscriptionSyncFlushRef = useRef<() => void>(() => undefined);
   const autoBiometricAttemptedRef = useRef(false);
@@ -395,6 +397,20 @@ export default function App() {
   const walletScrollRef = useRef<ScrollView | null>(null);
   const [loadingSpin] = useState(() => new Animated.Value(0));
   const [network, setNetwork] = useState<NetworkState>(createEmptyNetworkState);
+  const publishNetworkState = useCallback((
+    incoming: NetworkState,
+    walletAddress = walletRef.current?.address ?? null,
+  ): NetworkState => {
+    const nextNetwork = mergeWalletNetworkPublication(
+      networkRef.current,
+      incoming,
+      walletAddress !== null && networkOwnerAddressRef.current === walletAddress,
+    );
+    networkOwnerAddressRef.current = walletAddress;
+    networkRef.current = nextNetwork;
+    setNetwork(nextNetwork);
+    return nextNetwork;
+  }, []);
   const [electrumServerPreference, setElectrumServerPreference] =
     useState<ElectrumServerPreference>(getElectrumServerPreference);
   const [importText, setImportText] = useState('');
@@ -753,8 +769,7 @@ export default function App() {
     setHistoryProgress(null);
     setHistorySyncing(false);
     setBroadcasting(false);
-    networkRef.current = nextNetwork;
-    setNetwork(nextNetwork);
+    publishNetworkState(nextNetwork, nextWallet.address);
     resetSendDraft();
     setPreparedTx(null);
     setPreparedConsolidation(null);
@@ -853,7 +868,6 @@ export default function App() {
               await saveHistoryEnrichmentBatch(
                 activeWallet.address,
                 records
-                  .filter((record) => record.blockHeight > 0)
                   .map((record) => ({
                     txid: record.txid,
                     height: record.blockHeight,
@@ -880,8 +894,7 @@ export default function App() {
                 snapshot: mergeHistoryEnrichment(current.snapshot, records),
               };
               requireCurrentSession();
-              networkRef.current = nextNetwork;
-              setNetwork(nextNetwork);
+              publishNetworkState(nextNetwork, activeWallet.address);
             },
             onBatchPublished: () => {
               recordHistoryEnrichmentBatchOutcome(
@@ -917,8 +930,7 @@ export default function App() {
           status: 'error',
           error: message,
         };
-        networkRef.current = nextNetwork;
-        setNetwork(nextNetwork);
+        publishNetworkState(nextNetwork, activeWallet.address);
         setError(message);
       }
     } finally {
@@ -930,7 +942,7 @@ export default function App() {
         walletNetworkController.finishEnrichment(enrichWalletHistoryRef.current);
       }
     }
-  }, [t, walletNetworkController]);
+  }, [publishNetworkState, t, walletNetworkController]);
 
   useEffect(() => {
     enrichWalletHistoryRef.current = () => {
@@ -956,10 +968,9 @@ export default function App() {
       saveHistory: saveWalletHistoryCache,
       saveSnapshot: saveWalletSnapshotCache,
       publishNetwork: (nextNetwork) => {
-        networkRef.current = nextNetwork;
-        setNetwork(nextNetwork);
+        const publishedNetwork = publishNetworkState(nextNetwork);
         if (
-          nextNetwork.status === 'connected'
+          publishedNetwork.status === 'connected'
           && releaseFailedHistoryEnrichmentAttempts(
             enrichAttemptedRef.current,
             enrichFailedRef.current,
@@ -985,7 +996,7 @@ export default function App() {
         walletSynced: t('status.walletSynced'),
       },
     }, includeHistory, options);
-  }, [t, walletNetworkController]);
+  }, [publishNetworkState, t, walletNetworkController]);
 
   useEffect(() => {
     if (screen !== 'wallet' || !network.snapshot) return;
@@ -1018,10 +1029,8 @@ export default function App() {
     if (!activeWallet) return;
     const session = walletNetworkController.sessions.capture(activeWallet.address);
     if (!walletNetworkController.isCurrent(session)) return;
-    const nextNetwork = { ...networkRef.current, height };
-    networkRef.current = nextNetwork;
-    setNetwork(nextNetwork);
-  }, [walletNetworkController]);
+    publishNetworkState({ ...networkRef.current, height }, activeWallet.address);
+  }, [publishNetworkState, walletNetworkController]);
 
   const requestSync = useCallback((options: Parameters<typeof syncTransparentNetwork>[1]) => {
     void syncTransparentNetwork(false, options);
@@ -1035,10 +1044,9 @@ export default function App() {
       status: 'error',
       error: message,
     };
-    networkRef.current = nextNetwork;
-    setNetwork(nextNetwork);
+    publishNetworkState(nextNetwork);
     setError(message);
-  }, [t]);
+  }, [publishNetworkState, t]);
 
   const startBroadcastReconciliation = useCallback((
     txids: readonly string[],
@@ -1103,8 +1111,7 @@ export default function App() {
       serverUrl: getConfiguredElectrumServerUrl(),
       height: 0,
     };
-    networkRef.current = nextNetwork;
-    setNetwork(nextNetwork);
+    publishNetworkState(nextNetwork);
     if (!walletRef.current) {
       setStatus(successMessage);
       return;
@@ -1113,7 +1120,7 @@ export default function App() {
     if (networkRef.current.status === 'connected') {
       setStatus(successMessage);
     }
-  }, [syncTransparentNetwork]);
+  }, [publishNetworkState, syncTransparentNetwork]);
 
   const configureCustomElectrumServer = async (
     input: string,
@@ -1529,8 +1536,7 @@ export default function App() {
                 setBalanceRefreshing(false);
                 setBroadcasting(false);
                 const emptyNetwork = createEmptyNetworkState();
-                networkRef.current = emptyNetwork;
-                setNetwork(emptyNetwork);
+                publishNetworkState(emptyNetwork);
                 setScreen('landing');
                 setStatus(t('status.walletDeleted'));
               } catch (caught) {
@@ -1576,14 +1582,14 @@ export default function App() {
     enrichAttemptedRef.current.clear();
     enrichFailedRef.current.clear();
     const emptyNetwork = createEmptyNetworkState();
-    networkRef.current = emptyNetwork;
-    setNetwork(emptyNetwork);
+    publishNetworkState(emptyNetwork);
     setScreen(seedSaved ? 'unlock' : 'landing');
   }, [
     applyVaultTransition,
     clearAddressSubscriptions,
     resetFeedback,
     resetSendDraft,
+    publishNetworkState,
     seedSaved,
     setScreen,
     setWalletTab,
@@ -1852,8 +1858,7 @@ export default function App() {
             txid,
           }),
         };
-        networkRef.current = optimisticNetwork;
-        setNetwork(optimisticNetwork);
+        publishNetworkState(optimisticNetwork, session.walletAddress);
       }
 
       setPreparedTx(null);
@@ -1957,8 +1962,7 @@ export default function App() {
               txid,
             });
             const optimisticNetwork = { ...currentNetwork, snapshot: optimisticSnapshot };
-            networkRef.current = optimisticNetwork;
-            setNetwork(optimisticNetwork);
+            publishNetworkState(optimisticNetwork, session.walletAddress);
           }
         }
         setPreparedConsolidation(null);
@@ -2229,7 +2233,6 @@ export default function App() {
             await saveHistoryEnrichmentBatch(
               activeWallet.address,
               fresh
-                .filter((record) => record.blockHeight > 0)
                 .map((record) => ({
                   txid: record.txid,
                   height: record.blockHeight,
@@ -2247,29 +2250,13 @@ export default function App() {
               );
             }
             if (!walletNetworkController.isCurrent(session)) return;
-            const byTxid = new Map(fresh.map((record) => [record.txid, record]));
             const current = networkRef.current;
             if (current.snapshot && walletNetworkController.isCurrent(session)) {
-              const merged = current.snapshot.history.map((entry) => {
-                const record = byTxid.get(entry.txid);
-                if (!record || entry.direction !== undefined || record.blockHeight !== entry.height) {
-                  return entry;
-                }
-                return {
-                  ...entry,
-                  direction: record.direction,
-                  amountSats: record.amountSats,
-                  feeSats: record.feeSats,
-                  counterparty: record.counterparty,
-                  blockTime: record.blockTime ?? undefined,
-                };
-              });
               const nextNetwork: NetworkState = {
                 ...current,
-                snapshot: { ...current.snapshot, history: merged },
+                snapshot: mergeHistoryEnrichment(current.snapshot, fresh),
               };
-              networkRef.current = nextNetwork;
-              setNetwork(nextNetwork);
+              publishNetworkState(nextNetwork, activeWallet.address);
             }
             if (!walletNetworkController.isCurrent(session)) return;
             recordHistoryEnrichmentBatchOutcome(

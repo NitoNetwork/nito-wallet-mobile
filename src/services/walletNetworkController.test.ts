@@ -6,15 +6,27 @@ import type { TransparentWalletSnapshot } from '../wallet/transparentScan';
 import {
   WalletNetworkController,
   canUseFreshHistoryCache,
+  mergeWalletNetworkPublication,
   synchronizeWalletNetwork,
 } from './walletNetworkController';
 import { WalletStorageError } from './walletStorageError';
+
+const transparentScanMocks = vi.hoisted(() => ({
+  refreshKnownUsedAddresses: vi.fn(),
+}));
 
 vi.mock('expo-secure-store', () => ({
   getItemAsync: vi.fn(),
   setItemAsync: vi.fn(),
   deleteItemAsync: vi.fn(),
 }));
+vi.mock('../wallet/transparentScan', async (importOriginal) => {
+  const original = await importOriginal<typeof import('../wallet/transparentScan')>();
+  return {
+    ...original,
+    refreshKnownUsedAddresses: transparentScanMocks.refreshKnownUsedAddresses,
+  };
+});
 
 const wallet: Wallet = {
   mnemonic: 'test mnemonic',
@@ -285,6 +297,84 @@ describe('WalletNetworkController', () => {
     }));
     expect(setError).not.toHaveBeenCalledWith(expect.stringContaining('transaction within'));
   });
+
+  it('preserves enrichment published while a synchronization scan is in flight', async () => {
+    const controller = new WalletNetworkController();
+    controller.beginWalletSession(wallet.address);
+    const txid = 'a'.repeat(64);
+    const rawEntry = { txid, height: 100, address: wallet.address };
+    const enrichedEntry = {
+      ...rawEntry,
+      direction: 'received' as const,
+      amountSats: 123_456_789,
+      feeSats: 1_234,
+      counterparty: 'sender-address',
+      blockTime: 1_753_000_000,
+    };
+    const scanSnapshot = { ...snapshot, history: [rawEntry] };
+    let currentNetwork: NetworkState = {
+      ...network,
+      snapshot: scanSnapshot,
+    };
+    let releaseScan: () => void = () => undefined;
+    let markScanStarted: () => void = () => undefined;
+    const scanStarted = new Promise<void>((resolve) => {
+      markScanStarted = resolve;
+    });
+    const scanReleased = new Promise<void>((resolve) => {
+      releaseScan = resolve;
+    });
+    transparentScanMocks.refreshKnownUsedAddresses.mockImplementationOnce(async () => {
+      markScanStarted();
+      await scanReleased;
+      return scanSnapshot;
+    });
+
+    const synchronization = synchronizeWalletNetwork({
+      controller,
+      getWallet: () => wallet,
+      getNetwork: () => currentNetwork,
+      getClient: () => client,
+      setClient: vi.fn(),
+      actionPending: () => false,
+      fullHistoryByDefault: true,
+      readHistoryCache: async () => ({
+        status: 'hit',
+        value: { history: [rawEntry], fullHistoryHeight: 0 },
+      }),
+      saveHistory: vi.fn(),
+      saveSnapshot: vi.fn(),
+      publishNetwork: (next) => {
+        currentNetwork = next;
+      },
+      setError: vi.fn(),
+      setStatus: vi.fn(),
+      setHistorySyncing: vi.fn(),
+      setHistoryProgress: vi.fn(),
+      setBalanceRefreshing: vi.fn(),
+      finishSync: () => controller.finishSync(vi.fn()),
+      messages,
+    }, true, { force: true });
+
+    await scanStarted;
+    currentNetwork = {
+      ...currentNetwork,
+      snapshot: { ...scanSnapshot, history: [enrichedEntry] },
+    };
+    releaseScan();
+    await synchronization;
+
+    expect(currentNetwork.snapshot?.history).toEqual([
+      expect.objectContaining({
+        txid,
+        direction: 'received',
+        amountSats: 123_456_789,
+        feeSats: 1_234,
+        counterparty: 'sender-address',
+        blockTime: 1_753_000_000,
+      }),
+    ]);
+  });
 });
 
 describe('fresh history cache policy', () => {
@@ -300,5 +390,99 @@ describe('fresh history cache policy', () => {
     expect(canUseFreshHistoryCache({ ...fresh, options: { force: true } })).toBe(false);
     expect(canUseFreshHistoryCache({ ...fresh, options: { rescanGap: true } })).toBe(false);
     expect(canUseFreshHistoryCache({ ...fresh, options: {} })).toBe(true);
+  });
+});
+
+describe('wallet network publication invariant', () => {
+  const txid = 'f'.repeat(64);
+  const enrichedEntry = {
+    txid,
+    height: 100,
+    address: wallet.address,
+    direction: 'sent' as const,
+    amountSats: 42_000_000,
+    feeSats: 12_345,
+    counterparty: 'recipient-address',
+    blockTime: 1_753_000_123,
+  };
+  const enrichedNetwork: NetworkState = {
+    ...network,
+    snapshot: { ...snapshot, history: [enrichedEntry] },
+  };
+
+  it.each([
+    ['scan', { ...network, status: 'connected' as const }],
+    ['subscription', { ...network, height: 101 }],
+    ['network failure', { ...network, status: 'error' as const, error: 'offline' }],
+    ['optimistic broadcast', {
+      ...network,
+      snapshot: {
+        ...snapshot,
+        history: [
+          { txid, height: 100, address: wallet.address },
+          { txid: 'b'.repeat(64), height: 0, address: wallet.address },
+        ],
+      },
+    }],
+  ])('does not lose enrichment when publishing from %s', (_source, incoming) => {
+    const published = mergeWalletNetworkPublication(enrichedNetwork, incoming);
+
+    expect(published.snapshot?.history.find((entry) => entry.txid === txid)).toMatchObject({
+      direction: 'sent',
+      amountSats: 42_000_000,
+      feeSats: 12_345,
+      counterparty: 'recipient-address',
+      blockTime: 1_753_000_123,
+    });
+  });
+
+  it('keeps mempool enrichment through republication and confirmation', () => {
+    const mempool = {
+      ...enrichedEntry,
+      height: 0,
+      blockTime: undefined,
+    };
+    const initial: NetworkState = {
+      ...network,
+      snapshot: { ...snapshot, history: [mempool] },
+    };
+    const republished = mergeWalletNetworkPublication(initial, {
+      ...network,
+      snapshot: {
+        ...snapshot,
+        history: [{ txid, height: 0, address: wallet.address }],
+      },
+    });
+    const confirmed = mergeWalletNetworkPublication(republished, {
+      ...network,
+      height: 101,
+      snapshot: {
+        ...snapshot,
+        history: [{ txid, height: 101, address: wallet.address }],
+      },
+    });
+
+    expect(confirmed.snapshot?.history).toEqual([
+      expect.objectContaining({
+        txid,
+        height: 101,
+        direction: 'sent',
+        amountSats: 42_000_000,
+        feeSats: 12_345,
+        counterparty: 'recipient-address',
+      }),
+    ]);
+  });
+
+  it('never carries history across different wallet owners', () => {
+    const incoming: NetworkState = {
+      ...network,
+      snapshot: {
+        ...snapshot,
+        history: [{ txid: 'b'.repeat(64), height: 200, address: 'wallet-b' }],
+      },
+    };
+
+    expect(mergeWalletNetworkPublication(enrichedNetwork, incoming, false)).toBe(incoming);
   });
 });

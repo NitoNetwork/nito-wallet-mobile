@@ -25,12 +25,16 @@ describe('normalizeWalletHistory', () => {
     expect(merged[0]).toMatchObject({ direction: 'received', amountSats: 120_000 });
   });
 
-  it('drops enrichment when the height changed (reorg / confirmation)', () => {
+  it('keeps enrichment attached to the txid when its height changes', () => {
     const reorged: ElectrumHistoryEntry = { ...freshScan, height: 101 };
     const merged = normalizeWalletHistory([cached, reorged]);
     expect(merged).toHaveLength(1);
-    expect(merged[0]?.height).toBe(101);
-    expect(merged[0]?.direction).toBeUndefined();
+    expect(merged[0]).toMatchObject({
+      height: 101,
+      direction: 'received',
+      amountSats: 120_000,
+      feeSats: 0,
+    });
   });
 
   it('deduplicates and sorts by descending height then txid', () => {

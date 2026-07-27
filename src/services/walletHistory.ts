@@ -15,7 +15,7 @@ const mergeEnrichment = (
   other: ElectrumHistoryEntry | undefined,
 ): ElectrumHistoryEntry => {
   if (!other || base.direction !== undefined) return base;
-  if (other.direction === undefined || other.height !== base.height) return base;
+  if (other.direction === undefined) return base;
   return {
     ...base,
     direction: other.direction,

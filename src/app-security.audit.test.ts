@@ -120,7 +120,20 @@ describe('mobile wallet UX and security invariants', () => {
       'walletNetworkController.finishEnrichment(enrichWalletHistoryRef.current);',
     );
     expect(appSource).toMatch(
-      /nextNetwork\.status === 'connected'[\s\S]{0,240}releaseFailedHistoryEnrichmentAttempts\([\s\S]{0,240}requestOrQueueEnrichment\(enrichWalletHistoryRef\.current\)/,
+      /publishedNetwork\.status === 'connected'[\s\S]{0,240}releaseFailedHistoryEnrichmentAttempts\([\s\S]{0,240}requestOrQueueEnrichment\(enrichWalletHistoryRef\.current\)/,
+    );
+  });
+
+  it('routes every in-memory network publication through one history-preserving owner', () => {
+    expect(appSource.match(/networkRef\.current\s*=/g)).toHaveLength(1);
+    expect(appSource.match(/setNetwork\(/g)).toHaveLength(1);
+    expect(appSource).toContain('mergeWalletNetworkPublication(');
+    expect(networkControllerSource).toContain('mergeWalletNetworkPublication(');
+  });
+
+  it('persists mempool enrichment instead of keeping it in memory only', () => {
+    expect(appSource).not.toMatch(
+      /\.filter\(\(record\) => record\.blockHeight > 0\)/,
     );
   });
 

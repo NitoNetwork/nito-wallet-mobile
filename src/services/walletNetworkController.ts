@@ -48,6 +48,27 @@ export const createEmptyNetworkState = (): NetworkState => ({
   fullHistoryEnabled: false,
 });
 
+export const mergeWalletNetworkPublication = (
+  current: NetworkState,
+  incoming: NetworkState,
+  sameWallet = true,
+): NetworkState => {
+  if (!sameWallet || !current.snapshot || !incoming.snapshot) {
+    return incoming;
+  }
+
+  return {
+    ...incoming,
+    snapshot: {
+      ...incoming.snapshot,
+      history: normalizeWalletHistory([
+        ...current.snapshot.history,
+        ...incoming.snapshot.history,
+      ]),
+    },
+  };
+};
+
 export const toQuickWalletSnapshot = (
   snapshot: TransparentWalletSnapshot,
 ): TransparentWalletSnapshot => {
@@ -332,6 +353,12 @@ export const synchronizeWalletNetwork = async (
 ): Promise<void> => {
   const activeWallet = ports.getWallet();
   const currentNetwork = ports.getNetwork();
+  const publishNetwork = (incoming: NetworkState) => {
+    ports.publishNetwork(mergeWalletNetworkPublication(
+      ports.getNetwork(),
+      incoming,
+    ));
+  };
   if (!activeWallet) {
     ports.setError(ports.messages.noActiveWallet);
     return;
@@ -362,7 +389,7 @@ export const synchronizeWalletNetwork = async (
       : { history: [], fullHistoryHeight: 0 };
     if (!ports.controller.isCurrent(session)) return;
     if (ports.getNetwork().serverUrl !== serverUrl) {
-      ports.publishNetwork({
+      publishNetwork({
         ...ports.getNetwork(),
         serverUrl,
       });
@@ -394,7 +421,7 @@ export const synchronizeWalletNetwork = async (
     ) {
       requireConnectedSession();
       if (!ports.controller.isCurrent(session)) return;
-      ports.publishNetwork({
+      publishNetwork({
         ...currentNetwork,
         status: 'connected',
         error: '',
@@ -432,7 +459,7 @@ export const synchronizeWalletNetwork = async (
       await ports.saveSnapshot(activeWallet.address, toQuickWalletSnapshot(snapshot), knownHeight);
       if (!ports.controller.isCurrent(session)) return;
       requireConnectedSession();
-      ports.publishNetwork(nextNetwork);
+      publishNetwork(nextNetwork);
       if (!options.silent) ports.setStatus(ports.messages.walletSynced);
       return;
     }
@@ -440,7 +467,7 @@ export const synchronizeWalletNetwork = async (
     if (!ports.controller.isCurrent(session)) return;
     if (!options.silent) {
       ports.setStatus(wantsFullHistory ? ports.messages.syncingHistory : ports.messages.syncing);
-      ports.publishNetwork({
+      publishNetwork({
         ...ports.getNetwork(),
         status: 'syncing',
         error: '',
@@ -467,7 +494,11 @@ export const synchronizeWalletNetwork = async (
     });
     if (!ports.controller.isCurrent(session)) return;
     requireConnectedSession();
-    const mergedHistory = normalizeWalletHistory([...cache.history, ...snapshot.history]);
+    const mergedHistory = normalizeWalletHistory([
+      ...cache.history,
+      ...(ports.getNetwork().snapshot?.history ?? []),
+      ...snapshot.history,
+    ]);
     if (wantsFullHistory) {
       snapshot = { ...snapshot, history: mergedHistory };
       if (!cacheAlreadyFresh || options.force || options.rescanGap) {
@@ -489,7 +520,7 @@ export const synchronizeWalletNetwork = async (
     await ports.saveSnapshot(activeWallet.address, toQuickWalletSnapshot(snapshot), knownHeight);
     if (!ports.controller.isCurrent(session)) return;
     requireConnectedSession();
-    ports.publishNetwork(nextNetwork);
+    publishNetwork(nextNetwork);
     if (!options.silent) ports.setStatus(ports.messages.walletSynced);
   } catch (caught) {
     if (!ports.controller.isCurrent(session)) return;
@@ -503,7 +534,7 @@ export const synchronizeWalletNetwork = async (
       ports.messages.networkUnavailable,
       ports.messages.walletStorageUnavailable,
     );
-    ports.publishNetwork({
+    publishNetwork({
       status: 'error',
       snapshot: fallbackNetwork.snapshot,
       error: message,
