@@ -23,6 +23,13 @@ const db = {
     changes: 1,
     lastInsertRowId: 0,
   })),
+  prepareAsync: vi.fn(async (_sql: string) => ({
+    executeAsync: vi.fn(async (..._params: unknown[]) => ({
+      changes: 1,
+      lastInsertRowId: 0,
+    })),
+    finalizeAsync: vi.fn(async () => undefined),
+  })),
 };
 
 const enrichedRecord: EnrichedHistoryRecord = {
@@ -45,6 +52,10 @@ describe('wallet transaction output cache', () => {
       sql === 'PRAGMA user_version' ? { user_version: 1 } : null
     ));
     db.runAsync.mockResolvedValue({ changes: 1, lastInsertRowId: 0 });
+    db.prepareAsync.mockImplementation(async () => ({
+      executeAsync: vi.fn(async () => ({ changes: 1, lastInsertRowId: 0 })),
+      finalizeAsync: vi.fn(async () => undefined),
+    }));
   });
 
   it('migrates version 1 with a separate minimal output table', async () => {
@@ -80,7 +91,7 @@ describe('wallet transaction output cache', () => {
 
     const transactionCommands = db.execAsync.mock.calls.map(([sql]) => sql);
     expect(transactionCommands).toEqual(['BEGIN IMMEDIATE TRANSACTION', 'COMMIT']);
-    expect(db.runAsync.mock.calls.some(([sql]) => (
+    expect(db.prepareAsync.mock.calls.some(([sql]) => (
       String(sql).includes('UPDATE wallet_transactions')
     ))).toBe(true);
     expect(db.runAsync.mock.calls.some(([sql]) => (
@@ -181,6 +192,336 @@ describe('wallet transaction output cache', () => {
     await expect(Promise.all([first, second])).resolves.toEqual([undefined, undefined]);
     expect(successfulBeginsBeforeRelease).toBe(1);
     expect(events).toEqual(['begin:1', 'commit:1', 'begin:2', 'commit:2']);
+  });
+
+  it('preserves inserted and conflict-updated cache content', async () => {
+    vi.resetModules();
+    type TransactionState = {
+      height: number;
+      address: string;
+      firstSeenAt: string;
+      amountSats: number | null;
+      direction: string | null;
+      feeSats: number | null;
+      counterparty: string | null;
+      blockTime: number | null;
+    };
+    const transactions = new Map<string, TransactionState>([
+      ['wallet-address:existing', {
+        height: 1,
+        address: 'old-address',
+        firstSeenAt: 'original-first-seen',
+        amountSats: null,
+        direction: null,
+        feeSats: null,
+        counterparty: null,
+        blockTime: null,
+      }],
+    ]);
+    const outputs = new Map<string, number>([
+      ['wallet-address:existing:0:wallet-address', 1],
+    ]);
+    let fullHistoryHeight = 0;
+    const finalized = vi.fn(async () => undefined);
+    const bindingsFrom = (params: unknown[]): unknown[] => (
+      params.length === 1 && Array.isArray(params[0]) ? params[0] : params
+    );
+    const applyEnrichment = (bindings: unknown[]) => {
+      const [
+        amountSats,
+        direction,
+        feeSats,
+        counterparty,
+        blockTime,
+        ,
+        walletId,
+        txid,
+        height,
+      ] = bindings;
+      const key = `${String(walletId)}:${String(txid)}`;
+      const existing = transactions.get(key);
+      if (existing && existing.height === Number(height)) {
+        transactions.set(key, {
+          ...existing,
+          amountSats: Number(amountSats),
+          direction: String(direction),
+          feeSats: Number(feeSats),
+          counterparty: String(counterparty),
+          blockTime: Number(blockTime),
+        });
+      }
+    };
+
+    db.getFirstAsync.mockImplementation(async (sql: string) => (
+      sql === 'PRAGMA user_version' ? { user_version: 2 } : null
+    ));
+    db.runAsync.mockImplementation(async (sql: string, ...params: unknown[]) => {
+      const source = String(sql);
+      const bindings = bindingsFrom(params);
+      if (source.includes('INSERT INTO wallet_transactions')) {
+        for (let offset = 0; offset < bindings.length; offset += 5) {
+          const [
+            walletId,
+            txid,
+            height,
+            address,
+            firstSeenAt,
+          ] = bindings.slice(offset, offset + 5);
+          const key = `${String(walletId)}:${String(txid)}`;
+          const existing = transactions.get(key);
+          transactions.set(key, existing ? {
+            ...existing,
+            height: Number(height),
+            address: String(address),
+          } : {
+            height: Number(height),
+            address: String(address),
+            firstSeenAt: String(firstSeenAt),
+            amountSats: null,
+            direction: null,
+            feeSats: null,
+            counterparty: null,
+            blockTime: null,
+          });
+        }
+      } else if (source.includes('UPDATE wallet_transactions')) {
+        applyEnrichment(bindings);
+      } else if (source.includes('INSERT INTO wallet_sync_state')) {
+        fullHistoryHeight = Math.max(fullHistoryHeight, Number(bindings[1]));
+      } else if (source.includes('INSERT INTO wallet_transaction_outputs')) {
+        for (let offset = 0; offset < bindings.length; offset += 5) {
+          const [walletId, txid, outputIndex, valueSats, address] = bindings.slice(
+            offset,
+            offset + 5,
+          );
+          outputs.set(
+            `${String(walletId)}:${String(txid)}:${Number(outputIndex)}:${String(address)}`,
+            Number(valueSats),
+          );
+        }
+      }
+      return { changes: 1, lastInsertRowId: 0 };
+    });
+    db.prepareAsync.mockImplementation(async (sql: string) => ({
+      executeAsync: vi.fn(async (...params: unknown[]) => {
+        if (String(sql).includes('UPDATE wallet_transactions')) {
+          applyEnrichment(bindingsFrom(params));
+        }
+        return { changes: 1, lastInsertRowId: 0 };
+      }),
+      finalizeAsync: finalized,
+    }));
+    sqlite.openDatabaseAsync.mockResolvedValue(db);
+    const {
+      saveHistoryEnrichmentBatch,
+      saveWalletHistoryCache,
+    } = await import('./walletHistoryDb');
+
+    await saveWalletHistoryCache(
+      'wallet-address',
+      [
+        { txid: 'existing', height: 30, address: 'updated-address' },
+        { txid: 'inserted', height: 20, address: 'inserted-address' },
+      ],
+      952_900,
+    );
+    await saveHistoryEnrichmentBatch(
+      'wallet-address',
+      [
+        {
+          txid: 'existing',
+          height: 30,
+          blockTime: 1_753_000_001,
+          direction: 'sent',
+          counterparty: 'external-address',
+          amountSats: 123_000_000,
+          feeSats: 10_000,
+        },
+        {
+          txid: 'inserted',
+          height: 20,
+          blockTime: 1_753_000_002,
+          direction: 'received',
+          counterparty: 'wallet-address',
+          amountSats: 456_000_000,
+          feeSats: 0,
+        },
+      ],
+      [
+        {
+          txid: 'existing',
+          outputIndex: 0,
+          valueSats: 123_000_000,
+          address: 'wallet-address',
+        },
+        {
+          txid: 'inserted',
+          outputIndex: 1,
+          valueSats: 456_000_000,
+          address: 'wallet-address',
+        },
+      ],
+    );
+
+    expect(transactions.get('wallet-address:existing')).toEqual({
+      height: 30,
+      address: 'updated-address',
+      firstSeenAt: 'original-first-seen',
+      amountSats: 123_000_000,
+      direction: 'sent',
+      feeSats: 10_000,
+      counterparty: 'external-address',
+      blockTime: 1_753_000_001,
+    });
+    expect(transactions.get('wallet-address:inserted')).toEqual({
+      height: 20,
+      address: 'inserted-address',
+      firstSeenAt: expect.any(String),
+      amountSats: 456_000_000,
+      direction: 'received',
+      feeSats: 0,
+      counterparty: 'wallet-address',
+      blockTime: 1_753_000_002,
+    });
+    expect(outputs).toEqual(new Map([
+      ['wallet-address:existing:0:wallet-address', 123_000_000],
+      ['wallet-address:inserted:1:wallet-address', 456_000_000],
+    ]));
+    expect(fullHistoryHeight).toBe(952_900);
+    expect(db.prepareAsync).toHaveBeenCalledTimes(1);
+    expect(finalized).toHaveBeenCalledTimes(1);
+  });
+
+  it('finalizes a failed enrichment statement and rolls back every retry', async () => {
+    vi.resetModules();
+    const amounts = new Map([
+      ['first', 1],
+      ['second', 2],
+    ]);
+    let snapshot = new Map(amounts);
+    let updatesInAttempt = 0;
+    const finalizers: ReturnType<typeof vi.fn>[] = [];
+    const bindingsFrom = (params: unknown[]): unknown[] => (
+      params.length === 1 && Array.isArray(params[0]) ? params[0] : params
+    );
+    const applyOrFail = async (params: unknown[]) => {
+      updatesInAttempt += 1;
+      const bindings = bindingsFrom(params);
+      if (updatesInAttempt === 2) {
+        throw new Error('write interrupted');
+      }
+      amounts.set(String(bindings[7]), Number(bindings[0]));
+      return { changes: 1, lastInsertRowId: 0 };
+    };
+
+    db.getFirstAsync.mockImplementation(async (sql: string) => (
+      sql === 'PRAGMA user_version' ? { user_version: 2 } : null
+    ));
+    db.execAsync.mockImplementation(async (sql: string) => {
+      if (sql === 'BEGIN IMMEDIATE TRANSACTION') {
+        snapshot = new Map(amounts);
+        updatesInAttempt = 0;
+      } else if (sql === 'ROLLBACK') {
+        amounts.clear();
+        for (const [txid, amount] of snapshot) amounts.set(txid, amount);
+      }
+    });
+    db.runAsync.mockImplementation(async (sql: string, ...params: unknown[]) => {
+      if (String(sql).includes('UPDATE wallet_transactions')) {
+        return applyOrFail(params);
+      }
+      return { changes: 1, lastInsertRowId: 0 };
+    });
+    db.prepareAsync.mockImplementation(async () => {
+      const finalizeAsync = vi.fn(async () => undefined);
+      finalizers.push(finalizeAsync);
+      return {
+        executeAsync: vi.fn(async (...params: unknown[]) => applyOrFail(params)),
+        finalizeAsync,
+      };
+    });
+    sqlite.openDatabaseAsync.mockResolvedValue(db);
+    const { saveHistoryEnrichmentBatch } = await import('./walletHistoryDb');
+
+    await expect(saveHistoryEnrichmentBatch(
+      'wallet-address',
+      [
+        { ...enrichedRecord, txid: 'first', amountSats: 100 },
+        { ...enrichedRecord, txid: 'second', amountSats: 200 },
+      ],
+      [],
+    )).rejects.toMatchObject({ name: 'WalletStorageError' });
+
+    expect(amounts).toEqual(new Map([
+      ['first', 1],
+      ['second', 2],
+    ]));
+    expect(finalizers).toHaveLength(3);
+    for (const finalizeAsync of finalizers) {
+      expect(finalizeAsync).toHaveBeenCalledTimes(1);
+    }
+    expect(db.execAsync.mock.calls.filter(([sql]) => sql === 'ROLLBACK')).toHaveLength(3);
+    expect(db.execAsync.mock.calls.filter(([sql]) => sql === 'COMMIT')).toHaveLength(0);
+  });
+
+  it('chunks history and output inserts below the SQLite binding limit', async () => {
+    vi.resetModules();
+    db.getFirstAsync.mockImplementation(async (sql: string) => (
+      sql === 'PRAGMA user_version' ? { user_version: 2 } : null
+    ));
+    db.runAsync.mockResolvedValue({ changes: 1, lastInsertRowId: 0 });
+    sqlite.openDatabaseAsync.mockResolvedValue(db);
+    const {
+      saveHistoryEnrichmentBatch,
+      saveWalletHistoryCache,
+    } = await import('./walletHistoryDb');
+
+    await saveWalletHistoryCache(
+      'wallet-address',
+      Array.from({ length: 400 }, (_, index) => ({
+        txid: `transaction-${index}`,
+        height: index + 1,
+        address: `address-${index % 160}`,
+      })),
+      952_900,
+    );
+    const historyInsertCalls = db.runAsync.mock.calls.filter(([sql]) => (
+      String(sql).includes('INSERT INTO wallet_transactions')
+    ));
+    expect(historyInsertCalls).toHaveLength(3);
+    expect(String(historyInsertCalls[0]?.[0])).toContain(
+      `ON CONFLICT(wallet_id, txid) DO UPDATE SET
+           height = excluded.height,
+           address = excluded.address`,
+    );
+    expect(historyInsertCalls.map((call) => {
+      const params = call.slice(1);
+      return params.length === 1 && Array.isArray(params[0]) ? params[0].length : params.length;
+    })).toEqual([995, 995, 10]);
+
+    db.runAsync.mockClear();
+    await saveHistoryEnrichmentBatch(
+      'wallet-address',
+      [],
+      Array.from({ length: 205 }, (_, index) => ({
+        txid: 'transaction',
+        outputIndex: index,
+        valueSats: index + 1,
+        address: `address-${index}`,
+      })),
+    );
+    const outputInsertCalls = db.runAsync.mock.calls.filter(([sql]) => (
+      String(sql).includes('INSERT INTO wallet_transaction_outputs')
+    ));
+    expect(outputInsertCalls).toHaveLength(2);
+    expect(String(outputInsertCalls[0]?.[0])).toContain(
+      `ON CONFLICT(wallet_id, txid, output_index, address) DO UPDATE SET
+           value_sats = excluded.value_sats`,
+    );
+    expect(outputInsertCalls.map((call) => {
+      const params = call.slice(1);
+      return params.length === 1 && Array.isArray(params[0]) ? params[0].length : params.length;
+    })).toEqual([995, 30]);
   });
 
   it('applies connection pragmas before schema work on every reopened connection', async () => {

@@ -13,6 +13,11 @@ export type { EnrichedHistoryRecord } from './walletHistory';
 
 const DB_NAME = 'nito-wallet-history.db';
 const SQLITE_TXID_QUERY_CHUNK_SIZE = 400;
+const SQLITE_BOUND_VARIABLE_LIMIT = 999;
+const CACHE_INSERT_BINDINGS_PER_ROW = 5;
+const CACHE_INSERT_BATCH_SIZE = Math.floor(
+  SQLITE_BOUND_VARIABLE_LIMIT / CACHE_INSERT_BINDINGS_PER_ROW,
+);
 
 type HistoryRow = {
   txid: string;
@@ -298,18 +303,27 @@ export const saveWalletHistoryCache = async (
   const normalized = normalizeWalletHistory(history);
 
   await runWriteTransaction(db, async () => {
-    for (const entry of normalized) {
+    for (let offset = 0; offset < normalized.length; offset += CACHE_INSERT_BATCH_SIZE) {
+      const batch = normalized.slice(offset, offset + CACHE_INSERT_BATCH_SIZE);
+      const values = batch.map(() => '(?, ?, ?, ?, ?)').join(', ');
+      const bindings: SQLite.SQLiteBindValue[] = [];
+      for (const entry of batch) {
+        bindings.push(
+          walletId,
+          entry.txid,
+          entry.height,
+          entry.address,
+          now,
+        );
+      }
       await db.runAsync(
-        `INSERT INTO wallet_transactions (wallet_id, txid, height, address, first_seen_at)
-         VALUES (?, ?, ?, ?, ?)
+        `INSERT INTO wallet_transactions
+           (wallet_id, txid, height, address, first_seen_at)
+         VALUES ${values}
          ON CONFLICT(wallet_id, txid) DO UPDATE SET
            height = excluded.height,
            address = excluded.address`,
-        walletId,
-        entry.txid,
-        entry.height,
-        entry.address,
-        now,
+        bindings,
       );
     }
 
@@ -336,43 +350,60 @@ export const saveHistoryEnrichmentBatch = async (
   const now = new Date().toISOString();
 
   await runWriteTransaction(db, async () => {
-    for (const record of records) {
-      await db.runAsync(
+    if (records.length > 0) {
+      const statement = await db.prepareAsync(
         `UPDATE wallet_transactions
          SET amount_sats = ?, direction = ?, fee_sats = ?, counterparty = ?, block_time = ?, enriched_at = ?
          WHERE wallet_id = ? AND txid = ? AND height = ?`,
-        Math.max(0, Math.trunc(record.amountSats)),
-        record.direction,
-        Math.max(0, Math.trunc(record.feeSats)),
-        record.counterparty,
-        record.blockTime,
-        now,
-        walletId,
-        record.txid,
-        record.height,
       );
+      try {
+        for (const record of records) {
+          await statement.executeAsync(
+            Math.max(0, Math.trunc(record.amountSats)),
+            record.direction,
+            Math.max(0, Math.trunc(record.feeSats)),
+            record.counterparty,
+            record.blockTime,
+            now,
+            walletId,
+            record.txid,
+            record.height,
+          );
+        }
+      } finally {
+        await statement.finalizeAsync();
+      }
     }
-    for (const output of outputs) {
-      if (
-        !output.txid
-        || !Number.isInteger(output.outputIndex)
-        || output.outputIndex < 0
-        || !Number.isSafeInteger(output.valueSats)
-        || output.valueSats < 0
-      ) {
-        throw new Error('Invalid transaction output cache write.');
+
+    for (let offset = 0; offset < outputs.length; offset += CACHE_INSERT_BATCH_SIZE) {
+      const batch = outputs.slice(offset, offset + CACHE_INSERT_BATCH_SIZE);
+      const values = batch.map(() => '(?, ?, ?, ?, ?)').join(', ');
+      const bindings: SQLite.SQLiteBindValue[] = [];
+      for (const output of batch) {
+        if (
+          !output.txid
+          || !Number.isInteger(output.outputIndex)
+          || output.outputIndex < 0
+          || !Number.isSafeInteger(output.valueSats)
+          || output.valueSats < 0
+        ) {
+          throw new Error('Invalid transaction output cache write.');
+        }
+        bindings.push(
+          walletId,
+          output.txid,
+          output.outputIndex,
+          output.valueSats,
+          output.address,
+        );
       }
       await db.runAsync(
         `INSERT INTO wallet_transaction_outputs
            (wallet_id, txid, output_index, value_sats, address)
-         VALUES (?, ?, ?, ?, ?)
+         VALUES ${values}
          ON CONFLICT(wallet_id, txid, output_index, address) DO UPDATE SET
            value_sats = excluded.value_sats`,
-        walletId,
-        output.txid,
-        output.outputIndex,
-        output.valueSats,
-        output.address,
+        bindings,
       );
     }
   });
