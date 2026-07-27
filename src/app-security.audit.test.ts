@@ -8,7 +8,7 @@ import appStateSecuritySource from './services/appStateSecurity.ts?raw';
 import amountFormatSource from './i18n.amounts.ts?raw';
 import constantsSource from './constants/nito.ts?raw';
 import i18nSource from './i18n.ts?raw';
-import completeI18nSource from './i18n.complete.ts?raw';
+import frI18nSource from './i18n/fr.ts?raw';
 import formatSource from './ui/format.ts?raw';
 import stylesSource from './ui/styles.ts?raw';
 import tabsSource from './ui/tabs.tsx?raw';
@@ -213,7 +213,7 @@ describe('mobile wallet UX and security invariants', () => {
     expect(constantsSource).not.toMatch(/AUTO_LOCK_TIMEOUT_OPTIONS_MS\s*=\s*\[\s*0,/);
     expect(sessionSource).not.toContain('this.timeoutMs === 0');
     expect(i18nSource).not.toContain('settings.autoLockImmediate');
-    expect(completeI18nSource).not.toContain('settings.autoLockImmediate');
+    expect(frI18nSource).not.toContain('settings.autoLockImmediate');
   });
 
   it('keeps advanced security and network settings collapsed until requested', () => {
