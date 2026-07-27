@@ -66,9 +66,30 @@ type HistoryDirection = 'received' | 'sent' | 'self';
 export const signedHistoryAmountLines = (
   direction: HistoryDirection,
   amounts: readonly string[],
+  debit?: string | null,
 ): string[] => {
   const sign = direction === 'sent' ? '−' : '+';
-  return amounts.map((amount) => `${sign}${amount}`);
+  const credits = amounts.map((amount) => `${sign}${amount}`);
+  return debit ? [`−${debit}`, ...credits] : credits;
+};
+
+/**
+ * An internal transaction spends and receives on our own addresses, so listing
+ * only the credits shows a total larger than the wallet actually holds — it
+ * reads like a gain when the fee was in fact lost. Leading with what left makes
+ * the row balance: debit, credits, and the gap between them is the fee.
+ *
+ * Every input and every output belongs to us here, so the debit is exact:
+ * total input = total output + fee. Sends and receipts are deliberately left
+ * alone; their single line already means what it says.
+ */
+export const internalDebitSats = (
+  direction: HistoryDirection,
+  totalSats: number,
+  feeSats: number | undefined,
+): number | null => {
+  if (direction !== 'self' || feeSats === undefined) return null;
+  return totalSats + feeSats;
 };
 
 export const historyAmountBreakdown = ({

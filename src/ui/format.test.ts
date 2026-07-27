@@ -10,9 +10,10 @@ import {
   signedHistoryAmountLines,
   shortAddress,
   transactionExplorerUrl,
+  internalDebitSats,
 } from './format';
-import type { LanguageCode } from '../i18n';
 import { satoshisToNito } from '../wallet/transparentScan';
+import type { LanguageCode } from '../i18n';
 
 describe('ui format helpers', () => {
   it('escapes CSV cells by doubling quotes and wrapping', () => {
@@ -186,5 +187,39 @@ describe('ui format helpers', () => {
       '−1',
       '−2',
     ]);
+  });
+});
+
+describe('internal transaction debit line', () => {
+  it('reproduces the real block 953852 transaction to the satoshi', () => {
+    // Inputs 1 109 311,58680412 = credits 1 109 311,58680130 + fee 0,00000282.
+    const creditsSats = 110_931_158_680_130;
+    const feeSats = 282;
+    const debit = internalDebitSats('self', creditsSats, feeSats);
+
+    expect(debit).toBe(110_931_158_680_412);
+    expect(satoshisToNito(debit!, 'fr')).toBe('1 109 311,58680412');
+  });
+
+  it('leads with the debit and keeps the credits below it', () => {
+    expect(signedHistoryAmountLines('self', ['11,22', '1 109 300,3668013'], '1 109 311,58680412'))
+      .toEqual(['−1 109 311,58680412', '+11,22', '+1 109 300,3668013']);
+  });
+
+  it('never adds a debit line to a send or a receipt', () => {
+    expect(internalDebitSats('sent', 120_000_000, 282)).toBeNull();
+    expect(internalDebitSats('received', 120_000_000, 282)).toBeNull();
+    expect(signedHistoryAmountLines('sent', ['1,2'])).toEqual(['−1,2']);
+    expect(signedHistoryAmountLines('received', ['1,1'])).toEqual(['+1,1']);
+  });
+
+  it('omits the debit when the fee is not known yet', () => {
+    expect(internalDebitSats('self', 120_000_000, undefined)).toBeNull();
+    expect(signedHistoryAmountLines('self', ['1,2'], null)).toEqual(['+1,2']);
+  });
+
+  it('applies to a single-output internal transaction too', () => {
+    expect(signedHistoryAmountLines('self', ['1,1'], '1,10000282'))
+      .toEqual(['−1,10000282', '+1,1']);
   });
 });

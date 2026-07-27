@@ -33,6 +33,7 @@ import {
   formatHomeBalance,
   historyAmountBreakdown,
   historyPageFromInput,
+  internalDebitSats,
   signedHistoryAmountLines,
   shortAddress,
 } from './format';
@@ -459,12 +460,16 @@ export function HistoryTab({
                 outputs: outputsByTxid.get(entry.txid) ?? [],
                 walletAddresses,
               });
+            const debitSats = entry.direction === undefined
+              ? null
+              : internalDebitSats(entry.direction, entry.amountSats ?? 0, entry.feeSats);
             const amountLines = amountBreakdown && entry.direction
               ? signedHistoryAmountLines(
                 entry.direction,
                 amountBreakdown.amountsSats.map((amountSats) => (
                   satoshisToNito(amountSats, language)
                 )),
+                debitSats === null ? null : satoshisToNito(debitSats, language),
               )
               : [];
             if (amountBreakdown && amountBreakdown.hiddenOutputCount > 0) {
