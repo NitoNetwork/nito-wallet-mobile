@@ -13,10 +13,23 @@ export type AutoLockTimeoutMs = (typeof AUTO_LOCK_TIMEOUT_OPTIONS_MS)[number];
 export const MAX_SEND_RECIPIENTS = 20;
 export const VAULT_KEY = 'nito-mobile-wallet.v1';
 export const VAULT_META_KEY = 'nito-mobile-wallet.meta.v1';
-export const VAULT_VERSION = 1;
+export const VAULT_VERSION = 1 as const;
 export const SALT_BYTE_LENGTH = 16;
-export const NONCE_BYTE_LENGTH = 24;
+
+/** Policy floor, enforced when a password is chosen. */
 export const PASSWORD_MIN_LENGTH = 10;
+
+/**
+ * Floor for the unlock and sensitive-action prompts. It is deliberately lower
+ * than the policy: this check only avoids spending 600 000 PBKDF2 rounds on an
+ * obviously empty field, it is not a security gate — an attacker running on
+ * their own device is not stopped by a client-side length test.
+ *
+ * NEVER raise it to PASSWORD_MIN_LENGTH. Doing so would reject a legitimate
+ * shorter password from an older vault before decryption is even attempted, and
+ * lock its owner out of their funds for no security gain.
+ */
+export const PASSWORD_UNLOCK_MIN_LENGTH = 8;
 
 export const CONSOLIDATION_MIN_UTXOS = 21;
 export const CONSOLIDATION_TARGET_OUTPUTS = 9;

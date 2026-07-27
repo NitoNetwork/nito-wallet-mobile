@@ -1,6 +1,6 @@
 import nacl from 'tweetnacl';
 
-import { PBKDF2_ROUNDS } from '../constants/nito';
+import { PBKDF2_ROUNDS, SALT_BYTE_LENGTH, VAULT_VERSION } from '../constants/nito';
 import { nitoWalletCrypto } from '../native/nitoWalletCrypto';
 import type { NitoWalletCryptoApi } from '../native/nitoWalletCryptoContract';
 import { decodeUtf8 } from '../security/utf8';
@@ -53,14 +53,14 @@ export const encryptVault = async (
   unlockMode: 'password' | 'biometric' = 'password',
   crypto: NitoWalletCryptoApi = nitoWalletCrypto,
 ): Promise<EncryptedVault> => {
-  const salt = nacl.randomBytes(16);
+  const salt = nacl.randomBytes(SALT_BYTE_LENGTH);
   const nonce = nacl.randomBytes(nacl.secretbox.nonceLength);
   const key = await deriveKey(password, salt, PBKDF2_ROUNDS, crypto);
   const plaintext = new TextEncoder().encode(JSON.stringify(payload));
   const ciphertext = nacl.secretbox(plaintext, nonce, key);
 
   return {
-    version: 1,
+    version: VAULT_VERSION,
     kdf: 'pbkdf2-sha256',
     rounds: PBKDF2_ROUNDS,
     salt: uint8ArrayToBase64(salt),

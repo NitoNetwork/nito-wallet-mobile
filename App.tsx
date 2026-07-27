@@ -1,4 +1,8 @@
-import { PBKDF2_ROUNDS } from './src/constants/nito';
+import {
+  PASSWORD_MIN_LENGTH,
+  PASSWORD_UNLOCK_MIN_LENGTH,
+  PBKDF2_ROUNDS,
+} from './src/constants/nito';
 import 'react-native-get-random-values';
 
 import { entropyToMnemonic, validateMnemonic } from '@scure/bip39';
@@ -1298,7 +1302,7 @@ function WalletApp({ theme, onSelectTheme }: {
     await runExclusiveAction('unlock', async () => {
     resetFeedback();
 
-    if (!useBiometrics && unlockPassword.length < 8) {
+    if (!useBiometrics && unlockPassword.length < PASSWORD_UNLOCK_MIN_LENGTH) {
       setUnlockPasswordError(t('errors.enterVaultPassword'));
       return;
     }
@@ -1458,7 +1462,7 @@ function WalletApp({ theme, onSelectTheme }: {
       return;
     }
 
-    if (persistPassword.length < 10) {
+    if (persistPassword.length < PASSWORD_MIN_LENGTH) {
       setPersistPasswordError(t('errors.passwordMin10'));
       return;
     }
@@ -2008,7 +2012,7 @@ function WalletApp({ theme, onSelectTheme }: {
     let vaultSecret = sensitivePassword;
 
     if (requirePassword) {
-      if (sensitivePassword.length < 8) {
+      if (sensitivePassword.length < PASSWORD_UNLOCK_MIN_LENGTH) {
         throw new Error(t('errors.enterVaultPassword'));
       }
     } else if (vault.unlockMode === 'biometric') {
@@ -2022,7 +2026,7 @@ function WalletApp({ theme, onSelectTheme }: {
       }
 
       vaultSecret = secret;
-    } else if (sensitivePassword.length < 8) {
+    } else if (sensitivePassword.length < PASSWORD_UNLOCK_MIN_LENGTH) {
       throw new Error(t('errors.enterVaultPassword'));
     }
 

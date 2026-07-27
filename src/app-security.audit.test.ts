@@ -3,6 +3,7 @@
 import { describe, expect, it } from 'vitest';
 
 import appSource from '../App.tsx?raw';
+import vaultCryptoSource from './services/vaultCrypto.ts?raw';
 import appStateSecuritySource from './services/appStateSecurity.ts?raw';
 import amountFormatSource from './i18n.amounts.ts?raw';
 import constantsSource from './constants/nito.ts?raw';
@@ -13,7 +14,6 @@ import stylesSource from './ui/styles.ts?raw';
 import tabsSource from './ui/tabs.tsx?raw';
 import sessionSource from './services/session.ts?raw';
 import vaultSource from './services/vault.ts?raw';
-import vaultCryptoSource from './services/vaultCrypto.ts?raw';
 import screensSource from './ui/screens.tsx?raw';
 import subscriptionsSource from './hooks/useWalletSubscriptions.ts?raw';
 import transparentScanSource from './wallet/transparentScan.ts?raw';
@@ -322,5 +322,29 @@ describe('mobile wallet UX and security invariants', () => {
     expect(amountFormatSource).not.toContain('markTruncated');
     expect(i18nSource).not.toContain('security.balanceDecimals');
     expect(stylesSource).not.toContain('balanceDecimals');
+  });
+});
+
+describe('password policy is declared once', () => {
+  it('enforces the creation floor from the named constant', () => {
+    expect(appSource).toContain('persistPassword.length < PASSWORD_MIN_LENGTH');
+    expect(appSource).not.toMatch(/persistPassword\.length < \d/);
+  });
+
+  it('keeps the unlock guard below the policy so an older vault is never locked out', () => {
+    // Raising this to PASSWORD_MIN_LENGTH would reject a legitimate shorter
+    // password before decryption is attempted. It buys no security: a client
+    // side length test does not stop an attacker running on their own device.
+    const floor = (name: string) => Number(
+      constantsSource.match(new RegExp(`${name} = ([0-9]+)`))?.[1],
+    );
+    expect(floor('PASSWORD_UNLOCK_MIN_LENGTH')).toBeLessThan(floor('PASSWORD_MIN_LENGTH'));
+    expect(appSource).not.toMatch(/(unlock|sensitive)Password\.length < \d/i);
+  });
+
+  it('derives vault version and salt length from the constants', () => {
+    expect(vaultCryptoSource).toContain('nacl.randomBytes(SALT_BYTE_LENGTH)');
+    expect(vaultCryptoSource).toContain('version: VAULT_VERSION');
+    expect(vaultCryptoSource).not.toContain('nacl.randomBytes(16)');
   });
 });
