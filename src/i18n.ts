@@ -153,6 +153,8 @@ const en = {
   'settings.connectionStatus': 'Connection status',
   'settings.blockHeight': 'Current block height',
   'settings.customElectrumTitle': 'Custom ElectrumX server',
+  'settings.customElectrumActive': 'Active',
+  'settings.customElectrumInactive': 'Inactive',
   'settings.customElectrumHint': 'Enter the WSS server manually. A custom server replaces the official servers without automatic fallback.',
   'settings.customElectrumRisk': 'A malicious server can show a false balance, hide incoming transactions, prevent spending, report a confirmation that does not exist, and see all wallet addresses linked to your IP address. It cannot steal funds: signing stays local and BIP143 commits to input amounts in the signature.',
   'settings.customElectrumCertificateWarning': 'Self-signed certificates are rejected by iOS and Android. Use a wss:// certificate trusted by the operating system; certificate bypass is never offered.',

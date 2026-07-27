@@ -202,6 +202,41 @@ describe('mobile wallet UX and security invariants', () => {
     expect(completeI18nSource).not.toContain('settings.autoLockImmediate');
   });
 
+  it('keeps advanced security and network settings collapsed until requested', () => {
+    expect(tabsSource).toContain(
+      'const [autoLockExpanded, setAutoLockExpanded] = useState(false);',
+    );
+    expect(tabsSource).toContain(
+      'const [customElectrumExpanded, setCustomElectrumExpanded] = useState(false);',
+    );
+    expect(tabsSource).toContain('accessibilityState={{ expanded }}');
+    expect(tabsSource).toContain(
+      "label={`${t('settings.autoLockTitle')}: ${t(AUTO_LOCK_LABEL_KEYS[settings.autoLockTimeoutMs])}`}",
+    );
+    expect(tabsSource).toMatch(
+      /settings\.onSelectAutoLockTimeout\(option\);\s*setAutoLockExpanded\(false\);/,
+    );
+    expect(tabsSource).toMatch(
+      /electrumServerPreference\.mode === 'custom'\s*\? t\('settings\.customElectrumActive'\)\s*: t\('settings\.customElectrumInactive'\)/,
+    );
+    expect(tabsSource).toContain(
+      "label={`${t('settings.customElectrumTitle')}: ${customElectrumState}`}",
+    );
+    expect(tabsSource).toMatch(
+      /customElectrumExpanded \? \([\s\S]*?settings\.customElectrumRisk[\s\S]*?settings\.customElectrumCertificateWarning/,
+    );
+  });
+
+  it('colors the connection text from the exact NetworkState status', () => {
+    expect(tabsSource).toMatch(
+      /NETWORK_STATUS_STYLES[\s\S]*?idle: styles\.networkStatusError[\s\S]*?syncing: styles\.networkStatusSyncing[\s\S]*?connected: styles\.networkStatusConnected[\s\S]*?error: styles\.networkStatusError/,
+    );
+    expect(tabsSource).toContain('valueStyle={NETWORK_STATUS_STYLES[network.status]}');
+    expect(stylesSource).toContain('networkStatusConnected');
+    expect(stylesSource).toContain('networkStatusSyncing');
+    expect(stylesSource).toContain('networkStatusError');
+  });
+
   it('never lets a prepared multi-recipient send coexist with a prepared consolidation', () => {
     expect(appSource).toMatch(
       /const prepareTransparentSend = async \(\) => \{\s*await runExclusiveAction\('prepare'/,

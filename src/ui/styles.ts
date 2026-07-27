@@ -844,6 +844,15 @@ export const styles = StyleSheet.create({
     lineHeight: 21,
     fontWeight: '800',
   },
+  networkStatusConnected: {
+    color: '#55d99a',
+  },
+  networkStatusSyncing: {
+    color: '#ffc66d',
+  },
+  networkStatusError: {
+    color: '#ff7f92',
+  },
   settingsOptionPanel: {
     borderRadius: 18,
     padding: 14,

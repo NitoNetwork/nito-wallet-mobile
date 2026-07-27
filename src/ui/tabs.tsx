@@ -1,6 +1,15 @@
 import Constants from 'expo-constants';
 import { useEffect, useState, type ReactNode } from 'react';
-import { ActivityIndicator, Linking, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import {
+  ActivityIndicator,
+  Linking,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View,
+  type StyleProp,
+  type TextStyle,
+} from 'react-native';
 import QRCode from 'react-native-qrcode-svg';
 
 import {
@@ -570,6 +579,12 @@ const NETWORK_STATUS_KEYS = {
   connected: 'settings.networkConnected',
   error: 'settings.networkError',
 } satisfies Record<NetworkState['status'], TranslationKey>;
+const NETWORK_STATUS_STYLES = {
+  idle: styles.networkStatusError,
+  syncing: styles.networkStatusSyncing,
+  connected: styles.networkStatusConnected,
+  error: styles.networkStatusError,
+} satisfies Record<NetworkState['status'], StyleProp<TextStyle>>;
 
 function SettingsHeader({
   t,
@@ -620,11 +635,41 @@ function SettingsNavigationRow({
   );
 }
 
-function SettingsValue({ label, value }: { label: string; value: string }) {
+function SettingsDisclosureRow({
+  label,
+  expanded,
+  onPress,
+}: {
+  label: string;
+  expanded: boolean;
+  onPress: () => void;
+}) {
+  return (
+    <TouchableOpacity
+      accessibilityRole="button"
+      accessibilityState={{ expanded }}
+      onPress={onPress}
+      style={styles.settingsNavigationRow}
+    >
+      <Text style={styles.settingsNavigationLabel}>{label}</Text>
+      <Text style={styles.settingsChevron}>{expanded ? '\u2303' : '\u2304'}</Text>
+    </TouchableOpacity>
+  );
+}
+
+function SettingsValue({
+  label,
+  value,
+  valueStyle,
+}: {
+  label: string;
+  value: string;
+  valueStyle?: StyleProp<TextStyle>;
+}) {
   return (
     <View style={styles.settingsValue}>
       <Text style={styles.label}>{label}</Text>
-      <Text selectable style={styles.settingsValueText}>{value}</Text>
+      <Text selectable style={[styles.settingsValueText, valueStyle]}>{value}</Text>
     </View>
   );
 }
@@ -714,6 +759,7 @@ function SecuritySettingsSection({
   confirmation: SensitiveConfirmationControls;
   onBack: () => void;
 }) {
+  const [autoLockExpanded, setAutoLockExpanded] = useState(false);
   const securityConfirmation = confirmation.sensitiveAction === 'delete'
     ? { ...confirmation, sensitiveAction: null }
     : confirmation;
@@ -769,35 +815,44 @@ function SecuritySettingsSection({
         biometricMethod={settings.biometricMethod}
         controls={securityConfirmation}
       />
-      <View style={styles.settingsOptionPanel}>
-        <Text style={styles.label}>{t('settings.autoLockTitle')}</Text>
-        <Text style={styles.helper}>{t('settings.autoLockHint')}</Text>
-        <View style={styles.settingsChoiceList}>
-          {AUTO_LOCK_TIMEOUT_OPTIONS_MS.map((option) => (
-            <TouchableOpacity
-              key={option}
-              accessibilityRole="button"
-              accessibilityState={{ selected: settings.autoLockTimeoutMs === option }}
-              disabled={actionLocked}
-              onPress={() => settings.onSelectAutoLockTimeout(option)}
-              style={[
-                styles.settingsChoice,
-                settings.autoLockTimeoutMs === option && styles.settingsChoiceActive,
-                actionLocked && styles.settingsChoiceDisabled,
-              ]}
-            >
-              <Text
+      <SettingsDisclosureRow
+        label={`${t('settings.autoLockTitle')}: ${t(AUTO_LOCK_LABEL_KEYS[settings.autoLockTimeoutMs])}`}
+        expanded={autoLockExpanded}
+        onPress={() => setAutoLockExpanded((current) => !current)}
+      />
+      {autoLockExpanded ? (
+        <View style={styles.settingsOptionPanel}>
+          <Text style={styles.helper}>{t('settings.autoLockHint')}</Text>
+          <View style={styles.settingsChoiceList}>
+            {AUTO_LOCK_TIMEOUT_OPTIONS_MS.map((option) => (
+              <TouchableOpacity
+                key={option}
+                accessibilityRole="button"
+                accessibilityState={{ selected: settings.autoLockTimeoutMs === option }}
+                disabled={actionLocked}
+                onPress={() => {
+                  settings.onSelectAutoLockTimeout(option);
+                  setAutoLockExpanded(false);
+                }}
                 style={[
-                  styles.settingsChoiceText,
-                  settings.autoLockTimeoutMs === option && styles.settingsChoiceTextActive,
+                  styles.settingsChoice,
+                  settings.autoLockTimeoutMs === option && styles.settingsChoiceActive,
+                  actionLocked && styles.settingsChoiceDisabled,
                 ]}
               >
-                {t(AUTO_LOCK_LABEL_KEYS[option])}
-              </Text>
-            </TouchableOpacity>
-          ))}
+                <Text
+                  style={[
+                    styles.settingsChoiceText,
+                    settings.autoLockTimeoutMs === option && styles.settingsChoiceTextActive,
+                  ]}
+                >
+                  {t(AUTO_LOCK_LABEL_KEYS[option])}
+                </Text>
+              </TouchableOpacity>
+            ))}
+          </View>
         </View>
-      </View>
+      ) : null}
     </View>
   );
 }
@@ -851,6 +906,10 @@ function NetworkSettingsSection({
     electrumServerPreference.customServerUrl ?? '',
   );
   const [customServerError, setCustomServerError] = useState('');
+  const [customElectrumExpanded, setCustomElectrumExpanded] = useState(false);
+  const customElectrumState = electrumServerPreference.mode === 'custom'
+    ? t('settings.customElectrumActive')
+    : t('settings.customElectrumInactive');
 
   return (
     <View style={styles.card}>
@@ -859,61 +918,73 @@ function NetworkSettingsSection({
       <SettingsValue
         label={t('settings.connectionStatus')}
         value={t(NETWORK_STATUS_KEYS[network.status])}
+        valueStyle={NETWORK_STATUS_STYLES[network.status]}
       />
       <SettingsValue label={t('settings.blockHeight')} value={blockHeight} />
-      <View style={styles.settingsOptionPanel}>
-        <Text style={styles.label}>{t('settings.customElectrumTitle')}</Text>
-        <Text style={styles.helper}>{t('settings.customElectrumHint')}</Text>
-        <Text style={styles.settingsWarning}>{t('settings.customElectrumRisk')}</Text>
-        <TextInput
-          value={customServerInput}
-          onChangeText={(value) => {
-            setCustomServerInput(value);
+      <SettingsDisclosureRow
+        label={`${t('settings.customElectrumTitle')}: ${customElectrumState}`}
+        expanded={customElectrumExpanded}
+        onPress={() => {
+          if (customElectrumExpanded) {
             setCustomServerError('');
-          }}
-          placeholder="wss://host:port"
-          placeholderTextColor="#6d7892"
-          autoCapitalize="none"
-          autoCorrect={false}
-          style={styles.input}
-        />
-        {customServerError ? (
-          <Text accessibilityLiveRegion="polite" style={styles.fieldError}>
-            {customServerError}
+          }
+          setCustomElectrumExpanded((current) => !current);
+        }}
+      />
+      {customElectrumExpanded ? (
+        <View style={styles.settingsOptionPanel}>
+          <Text style={styles.helper}>{t('settings.customElectrumHint')}</Text>
+          <Text style={styles.settingsWarning}>{t('settings.customElectrumRisk')}</Text>
+          <TextInput
+            value={customServerInput}
+            onChangeText={(value) => {
+              setCustomServerInput(value);
+              setCustomServerError('');
+            }}
+            placeholder="wss://host:port"
+            placeholderTextColor="#6d7892"
+            autoCapitalize="none"
+            autoCorrect={false}
+            style={styles.input}
+          />
+          {customServerError ? (
+            <Text accessibilityLiveRegion="polite" style={styles.fieldError}>
+              {customServerError}
+            </Text>
+          ) : null}
+          <Text style={styles.settingsWarning}>
+            {t('settings.customElectrumCertificateWarning')}
           </Text>
-        ) : null}
-        <Text style={styles.settingsWarning}>
-          {t('settings.customElectrumCertificateWarning')}
-        </Text>
-        <Text style={styles.helper}>{t('settings.customElectrumCacheHint')}</Text>
-        <ActionButton
-          label={t('actions.useCustomElectrum')}
-          loading={pendingAction === 'electrumServer'}
-          disabled={actionLocked || !customServerInput.trim()}
-          onPress={() => {
-            setCustomServerError(onUseCustomElectrumServer(
-              customServerInput,
-              setCustomServerError,
-            ) ?? '');
-          }}
-        />
-        {electrumServerPreference.mode !== 'official' ? (
-          <>
-            {electrumServerPreference.mode === 'recovery' ? (
-              <Text style={styles.settingsWarning}>
-                {t('settings.customElectrumRecovery')}
-              </Text>
-            ) : null}
-            <ActionButton
-              label={t('actions.useOfficialElectrum')}
-              variant="secondary"
-              loading={pendingAction === 'electrumServer'}
-              disabled={actionLocked}
-              onPress={onUseOfficialElectrumServers}
-            />
-          </>
-        ) : null}
-      </View>
+          <Text style={styles.helper}>{t('settings.customElectrumCacheHint')}</Text>
+          <ActionButton
+            label={t('actions.useCustomElectrum')}
+            loading={pendingAction === 'electrumServer'}
+            disabled={actionLocked || !customServerInput.trim()}
+            onPress={() => {
+              setCustomServerError(onUseCustomElectrumServer(
+                customServerInput,
+                setCustomServerError,
+              ) ?? '');
+            }}
+          />
+          {electrumServerPreference.mode !== 'official' ? (
+            <>
+              {electrumServerPreference.mode === 'recovery' ? (
+                <Text style={styles.settingsWarning}>
+                  {t('settings.customElectrumRecovery')}
+                </Text>
+              ) : null}
+              <ActionButton
+                label={t('actions.useOfficialElectrum')}
+                variant="secondary"
+                loading={pendingAction === 'electrumServer'}
+                disabled={actionLocked}
+                onPress={onUseOfficialElectrumServers}
+              />
+            </>
+          ) : null}
+        </View>
+      ) : null}
       <View style={styles.settingsOptionPanel}>
         <Text style={styles.helper}>{t('settings.resyncHistoryHint')}</Text>
         <ActionButton

@@ -183,4 +183,26 @@ describe('i18n coverage', () => {
       expect(englishWarning).toContain(requiredMeaning);
     });
   });
+
+  it('states whether the custom Electrum server is active in every language', () => {
+    const expected = {
+      en: ['Active', 'Inactive'],
+      zh: ['已启用', '未启用'],
+      hi: ['सक्रिय', 'निष्क्रिय'],
+      es: ['Activo', 'Inactivo'],
+      fr: ['Actif', 'Inactif'],
+      ar: ['نشط', 'غير نشط'],
+      bn: ['সক্রিয়', 'নিষ্ক্রিয়'],
+      pt: ['Ativo', 'Inativo'],
+      ru: ['Активен', 'Неактивен'],
+    } satisfies Record<LanguageCode, string[]>;
+
+    for (const code of Object.keys(expected) as LanguageCode[]) {
+      const t = makeTranslator(code);
+      expect([
+        t('settings.customElectrumActive'),
+        t('settings.customElectrumInactive'),
+      ]).toEqual(expected[code]);
+    }
+  });
 });
