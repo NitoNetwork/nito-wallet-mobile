@@ -242,9 +242,9 @@ describe('mobile wallet UX and security invariants', () => {
 
   it('colors the connection text from the exact NetworkState status', () => {
     expect(tabsSource).toMatch(
-      /NETWORK_STATUS_STYLES[\s\S]*?idle: styles\.networkStatusError[\s\S]*?syncing: styles\.networkStatusSyncing[\s\S]*?connected: styles\.networkStatusConnected[\s\S]*?error: styles\.networkStatusError/,
+      /NETWORK_STATUS_STYLE_KEYS[\s\S]*?idle: 'networkStatusError'[\s\S]*?syncing: 'networkStatusSyncing'[\s\S]*?connected: 'networkStatusConnected'[\s\S]*?error: 'networkStatusError'/,
     );
-    expect(tabsSource).toContain('valueStyle={NETWORK_STATUS_STYLES[network.status]}');
+    expect(tabsSource).toContain('valueStyle={styles[NETWORK_STATUS_STYLE_KEYS[network.status]]}');
     expect(stylesSource).toContain('networkStatusConnected');
     expect(stylesSource).toContain('networkStatusSyncing');
     expect(stylesSource).toContain('networkStatusError');

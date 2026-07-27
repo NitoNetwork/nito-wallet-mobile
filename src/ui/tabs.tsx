@@ -42,7 +42,9 @@ import {
   type SendRecipientDraft,
   type SendRecipientFieldErrors,
 } from './sendRecipients';
-import { styles } from './styles';
+import type { WalletStyles } from './styles';
+import { THEME_NAMES, type ThemeName } from './theme';
+import { useStyles, useThemeColor } from './themeContext';
 import type { BiometricMethod, NetworkState, PendingAction, Wallet } from './types';
 
 export function ReceiveTab({ wallet, t, pendingAction, actionLocked, onCopyAddress }: {
@@ -52,11 +54,13 @@ export function ReceiveTab({ wallet, t, pendingAction, actionLocked, onCopyAddre
   actionLocked: boolean;
   onCopyAddress: () => void;
 }) {
+  const styles = useStyles();
+  const themeColor = useThemeColor();
   return (
     <View style={styles.card}>
       <Text style={styles.sectionTitle}>{t('receive.title')}</Text>
       <View style={styles.qrPlaceholder}>
-        <QRCode value={wallet.address} size={204} quietZone={12} color="#071326" backgroundColor="#f8fbff" />
+        <QRCode value={wallet.address} size={204} quietZone={12} color={themeColor('#0b101d')} backgroundColor={themeColor('#f8fbff')} />
       </View>
       <Text style={styles.label}>{t('receive.bech32Address')}</Text>
       <Text selectable style={styles.address}>{wallet.address}</Text>
@@ -110,6 +114,8 @@ export function SendTab({
   onBroadcastConsolidation: () => void;
   onPreparedReviewLayout: () => void;
 }) {
+  const styles = useStyles();
+  const themeColor = useThemeColor();
   const consolidationT = makeConsolidationTranslator(language);
   const duplicateAddresses = duplicateRecipientAddresses(recipients);
   const canAddRecipient = canAddSendRecipient(recipients);
@@ -151,7 +157,7 @@ export function SendTab({
                   value={recipient.address}
                   onChangeText={(value) => onChangeRecipient(recipient.id, 'address', value)}
                   placeholder={t('send.destination')}
-                  placeholderTextColor="#6d7892"
+                  placeholderTextColor={themeColor('#6d7892')}
                   autoCapitalize="none"
                   autoCorrect={false}
                   style={[styles.input, styles.destinationInput]}
@@ -174,7 +180,7 @@ export function SendTab({
                   value={recipient.amount}
                   onChangeText={(value) => onChangeRecipient(recipient.id, 'amount', value)}
                   placeholder={t('send.amount')}
-                  placeholderTextColor="#6d7892"
+                  placeholderTextColor={themeColor('#6d7892')}
                   keyboardType="decimal-pad"
                   style={[styles.input, styles.amountInput]}
                 />
@@ -293,11 +299,13 @@ function HistoryLoadingStatus({
   historyProgress: { done: number; total: number } | null;
   indicatorSize: 'small' | 'large';
 }) {
+  const styles = useStyles();
+  const themeColor = useThemeColor();
   return (
     <View style={styles.historyLoadingStatus}>
       <ActivityIndicator
         accessibilityLabel={t('history.syncing')}
-        color="#dbeaff"
+        color={themeColor('#dbeaff')}
         size={indicatorSize}
       />
       <Text style={styles.historyLoadingTitle}>{t('history.loading')}</Text>
@@ -340,6 +348,7 @@ export function HistoryTab({
   onExportHistory: () => void;
   onOpenTx: (txid: string) => void;
 }) {
+  const styles = useStyles();
   const historyEntries = network.snapshot?.history ?? [];
   const loading = network.status === 'syncing' || historyProgress !== null || historySyncing;
   const historyPageCount = Math.max(1, Math.ceil(historyEntries.length / HISTORY_PAGE_SIZE));
@@ -581,18 +590,22 @@ const AUTO_LOCK_LABEL_KEYS = {
   300_000: 'settings.autoLockFiveMinutes',
   900_000: 'settings.autoLockFifteenMinutes',
 } satisfies Record<AutoLockTimeoutMs, TranslationKey>;
+const THEME_LABEL_KEYS = {
+  dark: 'settings.themeDark',
+  light: 'settings.themeLight',
+} satisfies Record<ThemeName, TranslationKey>;
 const NETWORK_STATUS_KEYS = {
   idle: 'settings.networkIdle',
   syncing: 'settings.networkSyncing',
   connected: 'settings.networkConnected',
   error: 'settings.networkError',
 } satisfies Record<NetworkState['status'], TranslationKey>;
-const NETWORK_STATUS_STYLES = {
-  idle: styles.networkStatusError,
-  syncing: styles.networkStatusSyncing,
-  connected: styles.networkStatusConnected,
-  error: styles.networkStatusError,
-} satisfies Record<NetworkState['status'], StyleProp<TextStyle>>;
+const NETWORK_STATUS_STYLE_KEYS = {
+  idle: 'networkStatusError',
+  syncing: 'networkStatusSyncing',
+  connected: 'networkStatusConnected',
+  error: 'networkStatusError',
+} satisfies Record<NetworkState['status'], keyof WalletStyles>;
 
 function SettingsHeader({
   t,
@@ -603,6 +616,7 @@ function SettingsHeader({
   title: string;
   onBack: () => void;
 }) {
+  const styles = useStyles();
   return (
     <View style={styles.settingsHeader}>
       <TouchableOpacity
@@ -627,6 +641,7 @@ function SettingsNavigationRow({
   onPress: () => void;
   danger?: boolean;
 }) {
+  const styles = useStyles();
   return (
     <TouchableOpacity
       accessibilityRole="button"
@@ -652,6 +667,7 @@ function SettingsDisclosureRow({
   expanded: boolean;
   onPress: () => void;
 }) {
+  const styles = useStyles();
   return (
     <TouchableOpacity
       accessibilityRole="button"
@@ -674,6 +690,7 @@ function SettingsValue({
   value: string;
   valueStyle?: StyleProp<TextStyle>;
 }) {
+  const styles = useStyles();
   return (
     <View style={styles.settingsValue}>
       <Text style={styles.label}>{label}</Text>
@@ -695,6 +712,7 @@ function SensitiveConfirmation({
   biometricMethod: BiometricMethod;
   controls: SensitiveConfirmationControls;
 }) {
+  const styles = useStyles();
   const { sensitiveAction } = controls;
   if (!sensitiveAction) return null;
 
@@ -766,6 +784,7 @@ function SecuritySettingsSection({
   confirmation: SensitiveConfirmationControls;
   onBack: () => void;
 }) {
+  const styles = useStyles();
   const [autoLockExpanded, setAutoLockExpanded] = useState(false);
   const securityConfirmation = confirmation.sensitiveAction === 'delete'
     ? { ...confirmation, sensitiveAction: null }
@@ -861,16 +880,47 @@ function SecuritySettingsSection({
 function DisplaySettingsSection({
   t,
   languageSettings,
+  theme,
+  onSelectTheme,
   onBack,
 }: {
   t: Translator;
   languageSettings: ReactNode;
+  theme: ThemeName;
+  onSelectTheme: (next: ThemeName) => void;
   onBack: () => void;
 }) {
+  const styles = useStyles();
   return (
     <View style={styles.card}>
       <SettingsHeader t={t} title={t('settings.sectionDisplay')} onBack={onBack} />
       {languageSettings}
+      <View style={styles.settingsOptionPanel}>
+        <Text style={styles.label}>{t('settings.themeTitle')}</Text>
+        <View style={styles.settingsChoiceList}>
+          {THEME_NAMES.map((option) => (
+            <TouchableOpacity
+              key={option}
+              accessibilityRole="button"
+              accessibilityState={{ selected: theme === option }}
+              onPress={() => onSelectTheme(option)}
+              style={[
+                styles.settingsChoice,
+                theme === option && styles.settingsChoiceActive,
+              ]}
+            >
+              <Text
+                style={[
+                  styles.settingsChoiceText,
+                  theme === option && styles.settingsChoiceTextActive,
+                ]}
+              >
+                {t(THEME_LABEL_KEYS[option])}
+              </Text>
+            </TouchableOpacity>
+          ))}
+        </View>
+      </View>
     </View>
   );
 }
@@ -901,6 +951,8 @@ function NetworkSettingsSection({
   onResynchronizeHistory: () => void;
   onBack: () => void;
 }) {
+  const styles = useStyles();
+  const themeColor = useThemeColor();
   const server = network.serverUrl.replace(/^wss:\/\//i, '') || '—';
   const blockHeight = network.height > 0 ? network.height.toLocaleString('fr-FR') : '—';
   const [customServerInput, setCustomServerInput] = useState(
@@ -919,7 +971,7 @@ function NetworkSettingsSection({
       <SettingsValue
         label={t('settings.connectionStatus')}
         value={t(NETWORK_STATUS_KEYS[network.status])}
-        valueStyle={NETWORK_STATUS_STYLES[network.status]}
+        valueStyle={styles[NETWORK_STATUS_STYLE_KEYS[network.status]]}
       />
       <SettingsValue label={t('settings.blockHeight')} value={blockHeight} />
       <SettingsDisclosureRow
@@ -943,7 +995,7 @@ function NetworkSettingsSection({
               setCustomServerError('');
             }}
             placeholder="wss://host:port"
-            placeholderTextColor="#6d7892"
+            placeholderTextColor={themeColor('#6d7892')}
             autoCapitalize="none"
             autoCorrect={false}
             style={styles.input}
@@ -1006,6 +1058,7 @@ function AboutLink({
   label: string;
   url: string;
 }) {
+  const styles = useStyles();
   return (
     <TouchableOpacity
       accessibilityRole="link"
@@ -1023,6 +1076,7 @@ function AboutLink({
 }
 
 function AboutSettingsSection({ t, onBack }: { t: Translator; onBack: () => void }) {
+  const styles = useStyles();
   return (
     <View style={styles.card}>
       <SettingsHeader t={t} title={t('settings.sectionAbout')} onBack={onBack} />
@@ -1056,6 +1110,7 @@ function DangerSettingsSection({
   onAskDelete: () => void;
   onBack: () => void;
 }) {
+  const styles = useStyles();
   const deleteConfirmation = confirmation.sensitiveAction === 'delete'
     ? confirmation
     : { ...confirmation, sensitiveAction: null };
@@ -1111,6 +1166,8 @@ export function SecurityTab({
   confirmation: SensitiveConfirmationControls;
   display: {
     languageSettings: ReactNode;
+    theme: ThemeName;
+    onSelectTheme: (next: ThemeName) => void;
   };
   networkSettings: {
     network: NetworkState;
@@ -1129,6 +1186,7 @@ export function SecurityTab({
     onAskDelete: () => void;
   };
 }) {
+  const styles = useStyles();
   const [route, setRoute] = useState<SettingsRoute>('root');
   const goBack = () => {
     confirmation.onCancelSensitive();
@@ -1155,6 +1213,8 @@ export function SecurityTab({
       <DisplaySettingsSection
         t={t}
         languageSettings={display.languageSettings}
+        theme={display.theme}
+        onSelectTheme={display.onSelectTheme}
         onBack={goBack}
       />
     );
@@ -1246,6 +1306,7 @@ export function HomeTab({
   onRefreshBalance: () => void;
   onConfirmConsolidation: () => void;
 }) {
+  const styles = useStyles();
   const spendableAddressSet = new Set(
     (network.snapshot?.spendableAddresses ?? []).map((address) => address.address),
   );

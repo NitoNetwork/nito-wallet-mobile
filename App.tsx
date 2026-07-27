@@ -46,7 +46,9 @@ import {
   type SendRecipientField,
   type SendRecipientFieldErrors,
 } from './src/ui/sendRecipients';
-import { styles } from './src/ui/styles';
+import { ThemeProvider, useStyles } from './src/ui/themeContext';
+import type { ThemeName } from './src/ui/theme';
+import { useThemePreference } from './src/hooks/useThemePreference';
 import {
   Feedback,
   Hero,
@@ -345,7 +347,11 @@ const requestBiometricGate = async (promptMessage: string) => {
   }
 };
 
-export default function App() {
+function WalletApp({ theme, onSelectTheme }: {
+  theme: ThemeName;
+  onSelectTheme: (next: ThemeName) => void;
+}) {
+  const styles = useStyles();
   const [importFieldError, setImportFieldError] = useState('');
   const [sendRecipientErrors, setSendRecipientErrors] = useState<SendRecipientFieldErrors>({});
   const [unlockPasswordError, setUnlockPasswordError] = useState('');
@@ -2595,6 +2601,8 @@ export default function App() {
           }}
           display={{
             languageSettings,
+            theme,
+            onSelectTheme,
           }}
           networkSettings={{
             network,
@@ -2775,5 +2783,15 @@ export default function App() {
         </SafeAreaView>
       </Modal>
     </SafeAreaProvider>
+  );
+}
+
+export default function App() {
+  const { theme, selectTheme } = useThemePreference();
+
+  return (
+    <ThemeProvider theme={theme}>
+      <WalletApp theme={theme} onSelectTheme={selectTheme} />
+    </ThemeProvider>
   );
 }

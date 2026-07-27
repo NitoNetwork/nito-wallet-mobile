@@ -1,6 +1,8 @@
 import { Platform, StyleSheet } from 'react-native';
 
-export const styles = StyleSheet.create({
+import { mapStyleColors, type ThemeName } from './theme';
+
+const RAW_STYLES = StyleSheet.create({
   safeArea: {
     flex: 1,
     backgroundColor: '#020611',
@@ -913,3 +915,20 @@ export const styles = StyleSheet.create({
   scannerCloseButton: { minHeight: 54, borderRadius: 18, alignItems: 'center', justifyContent: 'center', backgroundColor: '#0b203a', borderWidth: 1, borderColor: 'rgba(91, 166, 255, 0.54)' },
   scannerCloseButtonText: { color: '#dbeaff', fontSize: 15, fontWeight: '900' },
 });
+
+const STYLE_SHEETS = new Map<ThemeName, typeof RAW_STYLES>();
+
+/** StyleSheet.create runs once per theme, never per render. */
+export const createStyles = (theme: ThemeName): typeof RAW_STYLES => {
+  if (theme === 'dark') return RAW_STYLES;
+  const cached = STYLE_SHEETS.get(theme);
+  if (cached) return cached;
+  const created = StyleSheet.create(mapStyleColors(RAW_STYLES, theme));
+  STYLE_SHEETS.set(theme, created);
+  return created;
+};
+
+export type WalletStyles = typeof RAW_STYLES;
+
+export { RAW_STYLES };
+

@@ -4,6 +4,9 @@ type LocalizedText = Partial<Record<TranslationKey, string>>;
 
 export const COMPLETE_TRANSLATIONS: Record<Exclude<LanguageCode, 'en'>, LocalizedText> = {
   zh: {
+    'settings.themeTitle': '主题',
+    'settings.themeDark': '深色',
+    'settings.themeLight': '浅色',
     'settings.customElectrumTitle': '自定义 ElectrumX 服务器',
     'settings.customElectrumActive': '已启用',
     'settings.customElectrumInactive': '未启用',
@@ -144,6 +147,9 @@ export const COMPLETE_TRANSLATIONS: Record<Exclude<LanguageCode, 'en'>, Localize
     'dialog.sentBody': '交易已广播。交易编号：{txid}',
   },
   hi: {
+    'settings.themeTitle': 'थीम',
+    'settings.themeDark': 'गहरा',
+    'settings.themeLight': 'हल्का',
     'settings.customElectrumTitle': 'कस्टम ElectrumX सर्वर',
     'settings.customElectrumActive': 'सक्रिय',
     'settings.customElectrumInactive': 'निष्क्रिय',
@@ -284,6 +290,9 @@ export const COMPLETE_TRANSLATIONS: Record<Exclude<LanguageCode, 'en'>, Localize
     'dialog.sentBody': 'आपका लेनदेन प्रसारित हो गया। लेनदेन: {txid}',
   },
   es: {
+    'settings.themeTitle': 'Tema',
+    'settings.themeDark': 'Oscuro',
+    'settings.themeLight': 'Claro',
     'settings.customElectrumTitle': 'Servidor ElectrumX personalizado',
     'settings.customElectrumActive': 'Activo',
     'settings.customElectrumInactive': 'Inactivo',
@@ -420,6 +429,9 @@ export const COMPLETE_TRANSLATIONS: Record<Exclude<LanguageCode, 'en'>, Localize
     'errors.walletSyncing': 'Espera unos segundos: el wallet se sincroniza automáticamente.',
   },
   fr: {
+    'settings.themeTitle': 'Thème',
+    'settings.themeDark': 'Sombre',
+    'settings.themeLight': 'Clair',
     'settings.customElectrumTitle': 'Serveur ElectrumX personnalisé',
     'settings.customElectrumActive': 'Actif',
     'settings.customElectrumInactive': 'Inactif',
@@ -556,6 +568,9 @@ export const COMPLETE_TRANSLATIONS: Record<Exclude<LanguageCode, 'en'>, Localize
     'errors.walletSyncing': 'Patientez quelques secondes : le portefeuille se synchronise automatiquement.',
   },
   ar: {
+    'settings.themeTitle': 'السمة',
+    'settings.themeDark': 'داكن',
+    'settings.themeLight': 'فاتح',
     'settings.customElectrumTitle': 'خادم ElectrumX مخصص',
     'settings.customElectrumActive': 'نشط',
     'settings.customElectrumInactive': 'غير نشط',
@@ -696,6 +711,9 @@ export const COMPLETE_TRANSLATIONS: Record<Exclude<LanguageCode, 'en'>, Localize
     'dialog.sentBody': 'تم بث معاملتك. المعرّف: {txid}',
   },
   bn: {
+    'settings.themeTitle': 'থিম',
+    'settings.themeDark': 'গাঢ়',
+    'settings.themeLight': 'হালকা',
     'settings.customElectrumTitle': 'কাস্টম ElectrumX সার্ভার',
     'settings.customElectrumActive': 'সক্রিয়',
     'settings.customElectrumInactive': 'নিষ্ক্রিয়',
@@ -836,6 +854,9 @@ export const COMPLETE_TRANSLATIONS: Record<Exclude<LanguageCode, 'en'>, Localize
     'dialog.sentBody': 'আপনার লেনদেন সম্প্রচার করা হয়েছে। লেনদেন: {txid}',
   },
   pt: {
+    'settings.themeTitle': 'Tema',
+    'settings.themeDark': 'Escuro',
+    'settings.themeLight': 'Claro',
     'settings.customElectrumTitle': 'Servidor ElectrumX personalizado',
     'settings.customElectrumActive': 'Ativo',
     'settings.customElectrumInactive': 'Inativo',
@@ -975,6 +996,9 @@ export const COMPLETE_TRANSLATIONS: Record<Exclude<LanguageCode, 'en'>, Localize
     'dialog.sentBody': 'Sua transação foi transmitida. Transação: {txid}',
   },
   ru: {
+    'settings.themeTitle': 'Тема',
+    'settings.themeDark': 'Тёмная',
+    'settings.themeLight': 'Светлая',
     'settings.customElectrumTitle': 'Пользовательский сервер ElectrumX',
     'settings.customElectrumActive': 'Активен',
     'settings.customElectrumInactive': 'Неактивен',

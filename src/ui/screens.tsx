@@ -3,7 +3,7 @@ import { Animated, Image, Text, TextInput, TouchableOpacity, View } from 'react-
 
 import { LANGUAGES, type LanguageCode, type Translator } from '../i18n';
 import { ActionButton, PasswordField } from './components';
-import { styles } from './styles';
+import { useStyles, useThemeColor } from './themeContext';
 import type { BiometricMethod, PendingAction, Wallet } from './types';
 
 const NITO_LOGO = require('../../assets/nito-logo.png');
@@ -11,6 +11,7 @@ const NITO_LOGO = require('../../assets/nito-logo.png');
 type Rotation = Animated.AnimatedInterpolation<string | number>;
 
 export function Hero({ t }: { t: Translator }) {
+  const styles = useStyles();
   return (
     <View style={styles.hero}>
       <View style={styles.brandRow}>
@@ -24,6 +25,7 @@ export function Hero({ t }: { t: Translator }) {
 }
 
 export function Feedback({ error, status }: { error: string; status: string }) {
+  const styles = useStyles();
   return (
     <>
       {error ? <Text style={styles.error}>{error}</Text> : null}
@@ -33,6 +35,7 @@ export function Feedback({ error, status }: { error: string; status: string }) {
 }
 
 export function LoadingScreen({ t, rotation }: { t: Translator; rotation: Rotation }) {
+  const styles = useStyles();
   return (
     <View style={styles.loadingPanel}>
       <Animated.Image
@@ -54,6 +57,7 @@ export function LoadingOverlay({
   message: string;
   rotation: Rotation;
 }) {
+  const styles = useStyles();
   return (
     <View style={styles.loadingOverlay} pointerEvents="auto">
       <View style={styles.loadingLogoShell}>
@@ -84,6 +88,7 @@ export function LanguageSettings({
   onToggle: () => void;
   onSelect: (next: LanguageCode) => void;
 }) {
+  const styles = useStyles();
   return (
     <View style={styles.languageSettings}>
       <TouchableOpacity
@@ -133,6 +138,7 @@ export function LandingScreen({
   onCreate: () => void;
   onImport: () => void;
 }) {
+  const styles = useStyles();
   return (
     <View style={styles.card}>
       <Text style={styles.sectionTitle}>{t('start.title')}</Text>
@@ -172,6 +178,8 @@ export function ImportScreen({
   onSubmit: () => void;
   onBack: () => void;
 }) {
+  const styles = useStyles();
+  const themeColor = useThemeColor();
   return (
     <View style={styles.card}>
       <Text style={styles.sectionTitle}>{t('import.title')}</Text>
@@ -181,7 +189,7 @@ export function ImportScreen({
           value={importText}
           onChangeText={onChangeImportText}
           placeholder={t('import.placeholder')}
-          placeholderTextColor="#6d7892"
+          placeholderTextColor={themeColor('#6d7892')}
           autoCapitalize="none"
           autoCorrect={false}
           spellCheck={false}
@@ -251,6 +259,7 @@ export function UnlockScreen({
   onUnlockWithBiometrics: () => void;
   onUnlockWithPassword: () => void;
 }) {
+  const styles = useStyles();
   return (
     <View style={styles.card}>
       <Text style={styles.sectionTitle}>{t('unlock.title')}</Text>
@@ -320,6 +329,7 @@ export function PersistScreen({
   onToggleShowConfirmPassword: () => void;
   onSubmit: () => void;
 }) {
+  const styles = useStyles();
   return (
     <View style={styles.card}>
       <Text style={styles.sectionTitle}>{t('persist.title')}</Text>
@@ -365,6 +375,7 @@ export function WalletShell({
   onSelectTab: (key: string) => void;
   children: ReactNode;
 }) {
+  const styles = useStyles();
   return (
     <View style={styles.walletShell}>
       <View style={styles.tabs}>

@@ -1,6 +1,6 @@
 import { Text, TextInput, TouchableOpacity, View } from 'react-native';
 
-import { styles } from './styles';
+import { useStyles, useThemeColor } from './themeContext';
 import type { ButtonVariant } from './types';
 
 export function ActionButton({
@@ -16,6 +16,7 @@ export function ActionButton({
   disabled?: boolean;
   loading?: boolean;
 }) {
+  const styles = useStyles();
   const inactive = disabled || loading || variant === 'disabled';
   return (
     <TouchableOpacity
@@ -65,6 +66,8 @@ export function PasswordField({
   hideLabel: string;
   error?: string;
 }) {
+  const styles = useStyles();
+  const themeColor = useThemeColor();
   return (
     <View style={styles.passwordFieldShell}>
       <View style={styles.passwordField}>
@@ -72,7 +75,7 @@ export function PasswordField({
           value={value}
           onChangeText={onChangeText}
           placeholder={placeholder}
-          placeholderTextColor="#6d7892"
+          placeholderTextColor={themeColor('#6d7892')}
           secureTextEntry={!visible}
           style={styles.passwordInput}
         />
