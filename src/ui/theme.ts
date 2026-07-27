@@ -135,6 +135,17 @@ export const LIGHT_COLOR_MAP: Readonly<Record<string, string>> = {
 };
 
 /**
+ * Native chrome does not follow the in-app theme on its own: app.config.js pins
+ * a dark Android status bar and iOS follows the system appearance. Left alone, a
+ * paper screen under a phone in dark mode would draw white status text on cream
+ * and become unreadable, so the bar is driven from the wallet theme instead.
+ */
+export const STATUS_BAR_BACKGROUND: Readonly<Record<ThemeName, string>> = {
+  dark: '#020611',
+  light: '#f4f1ea',
+};
+
+/**
  * The QR code cannot go through LIGHT_COLOR_MAP: its foreground shares a literal
  * with a card surface, and surfaces invert between themes. A code whose modules
  * inverted with the background would stop scanning, so the pair is explicit.

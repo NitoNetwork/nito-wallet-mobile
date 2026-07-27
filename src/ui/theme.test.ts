@@ -9,10 +9,12 @@ import {
   themeColor,
   DEFAULT_THEME,
   QR_COLORS,
+  STATUS_BAR_BACKGROUND,
 } from './theme';
 import tabsSource from './tabs.tsx?raw';
 import screensSource from './screens.tsx?raw';
 import componentsSource from './components.tsx?raw';
+import appSource from '../../App.tsx?raw';
 
 describe('theme', () => {
   it('defaults to dark', () => {
@@ -127,5 +129,17 @@ describe('inline theme colours', () => {
     expect(QR_COLORS.dark.foreground).toBe('#071326');
     expect(QR_COLORS.dark.background).toBe('#f8fbff');
     expect(QR_COLORS.light.foreground).not.toBe(QR_COLORS.light.background);
+  });
+});
+
+describe('native chrome', () => {
+  it('drives the status bar from the wallet theme, not the system appearance', () => {
+    // app.config.js pins androidStatusBar.backgroundColor to the dark surface and
+    // iOS follows the system. Without this the paper theme would draw white
+    // status text on cream when the phone itself is in dark mode.
+    expect(STATUS_BAR_BACKGROUND.dark).toBe('#020611');
+    expect(STATUS_BAR_BACKGROUND.light).toBe(LIGHT_COLOR_MAP['#020611']);
+    expect(appSource).toContain("barStyle={theme === 'dark' ? 'light-content' : 'dark-content'}");
+    expect(appSource).toContain('backgroundColor={STATUS_BAR_BACKGROUND[theme]}');
   });
 });
