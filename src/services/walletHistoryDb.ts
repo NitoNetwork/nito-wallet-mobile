@@ -59,6 +59,8 @@ const initializeHistoryDb = async () => {
   const db = await SQLite.openDatabaseAsync(DB_NAME);
   await retrySqliteWrite(() => db.execAsync(`
       PRAGMA journal_mode = WAL;
+      PRAGMA busy_timeout = 5000;
+      PRAGMA synchronous = NORMAL;
       CREATE TABLE IF NOT EXISTS wallet_sync_state (
         wallet_id TEXT PRIMARY KEY NOT NULL,
         full_history_height INTEGER NOT NULL DEFAULT 0,

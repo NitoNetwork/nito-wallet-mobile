@@ -182,4 +182,47 @@ describe('wallet transaction output cache', () => {
     expect(successfulBeginsBeforeRelease).toBe(1);
     expect(events).toEqual(['begin:1', 'commit:1', 'begin:2', 'commit:2']);
   });
+
+  it('applies connection pragmas before schema work on every reopened connection', async () => {
+    vi.resetModules();
+    const createConnection = () => ({
+      execAsync: vi.fn(async (_sql: string) => undefined),
+      getAllAsync: vi.fn(async (_sql: string, ..._params: unknown[]) => []),
+      getFirstAsync: vi.fn(async (sql: string) => (
+        sql === 'PRAGMA user_version' ? { user_version: 2 } : null
+      )),
+      runAsync: vi.fn(async (_sql: string, ..._params: unknown[]) => ({
+        changes: 1,
+        lastInsertRowId: 0,
+      })),
+    });
+    const failedConnection = createConnection();
+    const reopenedConnection = createConnection();
+    failedConnection.execAsync.mockRejectedValue(new Error('initialization failed'));
+    sqlite.openDatabaseAsync
+      .mockResolvedValueOnce(failedConnection)
+      .mockResolvedValueOnce(reopenedConnection);
+    const { loadTransactionOutputCache } = await import('./walletHistoryDb');
+
+    await expect(
+      loadTransactionOutputCache('wallet-address', ['first']),
+    ).rejects.toMatchObject({ name: 'WalletStorageError' });
+    await expect(
+      loadTransactionOutputCache('wallet-address', ['second']),
+    ).resolves.toEqual([]);
+
+    expect(sqlite.openDatabaseAsync).toHaveBeenCalledTimes(2);
+    for (const connection of [failedConnection, reopenedConnection]) {
+      const initializationSql = String(connection.execAsync.mock.calls[0]?.[0]);
+      const walIndex = initializationSql.indexOf('PRAGMA journal_mode = WAL');
+      const busyTimeoutIndex = initializationSql.indexOf('PRAGMA busy_timeout = 5000');
+      const synchronousIndex = initializationSql.indexOf('PRAGMA synchronous = NORMAL');
+      const schemaIndex = initializationSql.indexOf('CREATE TABLE');
+
+      expect(walIndex).toBeGreaterThanOrEqual(0);
+      expect(busyTimeoutIndex).toBeGreaterThan(walIndex);
+      expect(synchronousIndex).toBeGreaterThan(busyTimeoutIndex);
+      expect(schemaIndex).toBeGreaterThan(synchronousIndex);
+    }
+  });
 });
