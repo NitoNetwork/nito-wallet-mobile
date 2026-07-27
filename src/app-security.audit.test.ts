@@ -12,6 +12,7 @@ import completeI18nSource from './i18n.complete.ts?raw';
 import formatSource from './ui/format.ts?raw';
 import stylesSource from './ui/styles.ts?raw';
 import tabsSource from './ui/tabs.tsx?raw';
+import settingsSource from './ui/settings.tsx?raw';
 import sessionSource from './services/session.ts?raw';
 import vaultSource from './services/vault.ts?raw';
 import screensSource from './ui/screens.tsx?raw';
@@ -200,7 +201,7 @@ describe('mobile wallet UX and security invariants', () => {
   it('keeps field validation beside the edited value and removes recipient review numbering', () => {
     expect(tabsSource).toContain('recipientErrors[recipient.id]?.address');
     expect(tabsSource).toContain('recipientErrors[recipient.id]?.amount');
-    expect(tabsSource).toContain('customServerError');
+    expect(settingsSource).toContain('customServerError');
     expect(tabsSource).not.toContain('`${index + 1}. ${satoshisToNito');
     expect(appSource).toContain('setUnlockPasswordError');
     expect(appSource).toContain('setPersistPasswordError');
@@ -216,35 +217,35 @@ describe('mobile wallet UX and security invariants', () => {
   });
 
   it('keeps advanced security and network settings collapsed until requested', () => {
-    expect(tabsSource).toContain(
+    expect(settingsSource).toContain(
       'const [autoLockExpanded, setAutoLockExpanded] = useState(false);',
     );
-    expect(tabsSource).toContain(
+    expect(settingsSource).toContain(
       'const [customElectrumExpanded, setCustomElectrumExpanded] = useState(false);',
     );
-    expect(tabsSource).toContain('accessibilityState={{ expanded }}');
-    expect(tabsSource).toContain(
+    expect(settingsSource).toContain('accessibilityState={{ expanded }}');
+    expect(settingsSource).toContain(
       "label={`${t('settings.autoLockTitle')}: ${t(AUTO_LOCK_LABEL_KEYS[settings.autoLockTimeoutMs])}`}",
     );
-    expect(tabsSource).toMatch(
+    expect(settingsSource).toMatch(
       /settings\.onSelectAutoLockTimeout\(option\);\s*setAutoLockExpanded\(false\);/,
     );
-    expect(tabsSource).toMatch(
+    expect(settingsSource).toMatch(
       /electrumServerPreference\.mode === 'custom'\s*\? t\('settings\.customElectrumActive'\)\s*: t\('settings\.customElectrumInactive'\)/,
     );
-    expect(tabsSource).toContain(
+    expect(settingsSource).toContain(
       "label={`${t('settings.customElectrumTitle')}: ${customElectrumState}`}",
     );
-    expect(tabsSource).toMatch(
+    expect(settingsSource).toMatch(
       /customElectrumExpanded \? \([\s\S]*?settings\.customElectrumRisk[\s\S]*?settings\.customElectrumCertificateWarning/,
     );
   });
 
   it('colors the connection text from the exact NetworkState status', () => {
-    expect(tabsSource).toMatch(
+    expect(settingsSource).toMatch(
       /NETWORK_STATUS_STYLE_KEYS[\s\S]*?idle: 'networkStatusError'[\s\S]*?syncing: 'networkStatusSyncing'[\s\S]*?connected: 'networkStatusConnected'[\s\S]*?error: 'networkStatusError'/,
     );
-    expect(tabsSource).toContain('valueStyle={styles[NETWORK_STATUS_STYLE_KEYS[network.status]]}');
+    expect(settingsSource).toContain('valueStyle={styles[NETWORK_STATUS_STYLE_KEYS[network.status]]}');
     expect(stylesSource).toContain('networkStatusConnected');
     expect(stylesSource).toContain('networkStatusSyncing');
     expect(stylesSource).toContain('networkStatusError');

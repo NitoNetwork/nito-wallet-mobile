@@ -67,7 +67,8 @@ import {
   UnlockScreen,
   WalletShell,
 } from './src/ui/screens';
-import { HistoryTab, HomeTab, ReceiveTab, SecurityTab, SendTab } from './src/ui/tabs';
+import { HistoryTab, HomeTab, ReceiveTab, SendTab } from './src/ui/tabs';
+import { SecurityTab } from './src/ui/settings';
 import type {
   AppScreen,
   BiometricMethod,
