@@ -1,7 +1,7 @@
 export interface AppStateLockContext {
   nextState: string;
   systemPromptActive: boolean;
-  walletOpen: boolean;
+  sensitiveWalletState: boolean;
 }
 
 interface MutableValue<T> {
@@ -24,14 +24,23 @@ export interface WalletAppStateChangeRefs {
 export const shouldLockWalletForAppState = ({
   nextState,
   systemPromptActive,
-  walletOpen,
+  sensitiveWalletState,
 }: AppStateLockContext): boolean => (
-  walletOpen
+  sensitiveWalletState
   && (
     nextState === 'background'
     || (nextState === 'inactive' && !systemPromptActive)
   )
 );
+
+export const lockWalletIfAppStateInactive = (
+  appState: string,
+  lockWallet: () => void,
+): boolean => {
+  if (appState === 'active') return false;
+  lockWallet();
+  return true;
+};
 
 export const createWalletAppStateChangeHandler = ({
   appStateRef,
@@ -50,7 +59,7 @@ export const createWalletAppStateChangeHandler = ({
   if (shouldLockWalletForAppState({
     nextState,
     systemPromptActive: systemPromptActiveRef.current,
-    walletOpen: screenRef.current === 'wallet',
+    sensitiveWalletState: screenRef.current === 'wallet' || screenRef.current === 'persist',
   })) {
     lockWalletRef.current();
   }

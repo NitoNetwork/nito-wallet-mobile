@@ -71,8 +71,29 @@ describe('mobile wallet UX and security invariants', () => {
     expect(appSource).toMatch(
       /createWalletAppStateChangeHandler\(\{[\s\S]*?unlockSavedWalletRef,\s*\}\),\s*\);\s*return \(\) => subscription\.remove\(\);\s*\}, \[\]\);/,
     );
-    expect(appStateSecuritySource).toContain("walletOpen: screenRef.current === 'wallet'");
-    expect(appStateSecuritySource).not.toContain("walletOpen: screen === 'wallet'");
+    expect(appStateSecuritySource).toContain(
+      "sensitiveWalletState: screenRef.current === 'wallet' || screenRef.current === 'persist'",
+    );
+    expect(appStateSecuritySource).not.toContain("sensitiveWalletState: screen === 'wallet'");
+    expect(appSource).toMatch(
+      /setScreen\('wallet'\);\s*if \(lockWalletIfAppStateInactive\(appStateRef\.current, lockWalletRef\.current\)\) return;/,
+    );
+  });
+
+  it('requires a visible and verified backup before persisting a created seed', () => {
+    expect(appSource).toMatch(
+      /const mnemonic = generateMnemonic24\(\);[\s\S]*?setPendingWalletRequiresSeedBackup\(true\);/,
+    );
+    expect(appSource).toMatch(
+      /if \(\s*pendingWalletRequiresSeedBackup[\s\S]*?seedBackupConfirmationStep < seedBackupChallenges\.length[\s\S]*?return;/,
+    );
+    expect(screensSource).toContain('{pendingWallet.mnemonic}');
+    expect(screensSource).toContain("t('persist.seedBackupConfirmInstruction'");
+    const persistScreenSource = screensSource.slice(
+      screensSource.indexOf('export function PersistScreen'),
+      screensSource.indexOf('export function WalletShell'),
+    );
+    expect(persistScreenSource).not.toContain('<TextInput');
   });
 
   it('never re-prompts biometrics automatically once the user dismissed it', () => {

@@ -91,7 +91,10 @@ import {
 import { readOptionalCache } from './src/services/cachePolicy';
 import { reportNonFinancialFailure } from './src/services/diagnostics';
 import { ExclusiveActionGate } from './src/services/exclusiveActionGate';
-import { createWalletAppStateChangeHandler } from './src/services/appStateSecurity';
+import {
+  createWalletAppStateChangeHandler,
+  lockWalletIfAppStateInactive,
+} from './src/services/appStateSecurity';
 import {
   CustomElectrumServerValidationError,
   createElectrumClient,
@@ -112,6 +115,10 @@ import {
   recordHistoryEnrichmentBatchOutcome,
   releaseFailedHistoryEnrichmentAttempts,
 } from './src/services/historyEnrichmentQueue';
+import {
+  createSeedBackupChallenges,
+  isSeedBackupChallengeAnswerCorrect,
+} from './src/services/seedBackup';
 import { type Translator } from './src/i18n';
 import { nitoWalletCrypto } from './src/native/nitoWalletCrypto';
 import {
@@ -374,12 +381,14 @@ function WalletApp({ theme, onSelectTheme }: {
   const [unlockPasswordError, setUnlockPasswordError] = useState('');
   const [persistPasswordError, setPersistPasswordError] = useState('');
   const [persistConfirmPasswordError, setPersistConfirmPasswordError] = useState('');
+  const [seedBackupConfirmationError, setSeedBackupConfirmationError] = useState('');
   const [sensitivePasswordError, setSensitivePasswordError] = useState('');
   const clearFieldErrors = useCallback(() => {
     setImportFieldError('');
     setUnlockPasswordError('');
     setPersistPasswordError('');
     setPersistConfirmPasswordError('');
+    setSeedBackupConfirmationError('');
     setSensitivePasswordError('');
     setSendRecipientErrors({});
   }, []);
@@ -397,6 +406,8 @@ function WalletApp({ theme, onSelectTheme }: {
   }, [clearFieldErrors]);
   const [wallet, setWallet] = useState<Wallet | null>(null);
   const [pendingWallet, setPendingWallet] = useState<Wallet | null>(null);
+  const [pendingWalletRequiresSeedBackup, setPendingWalletRequiresSeedBackup] = useState(false);
+  const [seedBackupConfirmationStep, setSeedBackupConfirmationStep] = useState(-1);
   const [walletNetworkController] = useState(() => new WalletNetworkController());
   const electrumClientRef = useRef<NitoElectrumClient | null>(null);
   const pendingNetworkRef = useRef<{ address: string; snapshot: TransparentWalletSnapshot; height: number } | null>(null);
@@ -500,6 +511,14 @@ function WalletApp({ theme, onSelectTheme }: {
   const qrScanAttemptsRef = useRef(0);
   const [cameraPermission, requestCameraPermission] = useCameraPermissions();
   const tRef = useRef(t);
+  const seedBackupChallenges = useMemo(
+    () => (
+      pendingWalletRequiresSeedBackup && pendingWallet
+        ? createSeedBackupChallenges(pendingWallet.mnemonic)
+        : []
+    ),
+    [pendingWallet, pendingWalletRequiresSeedBackup],
+  );
 
   useEffect(() => {
     tRef.current = t;
@@ -808,6 +827,7 @@ function WalletApp({ theme, onSelectTheme }: {
     setPreparedTx(null);
     setPreparedConsolidation(null);
     setScreen('wallet');
+    if (lockWalletIfAppStateInactive(appStateRef.current, lockWalletRef.current)) return;
     setStatus(message);
   };
 
@@ -1274,13 +1294,18 @@ function WalletApp({ theme, onSelectTheme }: {
     try {
       const mnemonic = generateMnemonic24();
       const nextWallet = await derivePrimaryAddress(mnemonic);
+      walletLockAppliedRef.current = false;
       setPendingWallet(nextWallet);
+      setPendingWalletRequiresSeedBackup(true);
+      setSeedBackupConfirmationStep(-1);
+      setSeedBackupConfirmationError('');
       void prefetchWalletNetwork(nextWallet);
       setWallet(null);
       setPersistPassword('');
       setPersistConfirmPassword('');
       setShowMnemonic(false);
       setScreen('persist');
+      if (lockWalletIfAppStateInactive(appStateRef.current, lockWalletRef.current)) return;
       setStatus(t('status.seedCreated'));
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : t('errors.walletCreationFailed'));
@@ -1303,7 +1328,11 @@ function WalletApp({ theme, onSelectTheme }: {
 
     try {
       const nextWallet = await derivePrimaryAddress(mnemonic);
+      walletLockAppliedRef.current = false;
       setPendingWallet(nextWallet);
+      setPendingWalletRequiresSeedBackup(false);
+      setSeedBackupConfirmationStep(-1);
+      setSeedBackupConfirmationError('');
       void prefetchWalletNetwork(nextWallet);
       setWallet(null);
       setPersistPassword('');
@@ -1312,6 +1341,7 @@ function WalletApp({ theme, onSelectTheme }: {
       setImportText('');
       setShowImportSeed(false);
       setScreen('persist');
+      if (lockWalletIfAppStateInactive(appStateRef.current, lockWalletRef.current)) return;
       setStatus(t('status.seedImported'));
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : t('errors.importFailed'));
@@ -1484,6 +1514,17 @@ function WalletApp({ theme, onSelectTheme }: {
       return;
     }
 
+    if (
+      pendingWalletRequiresSeedBackup
+      && (
+        seedBackupChallenges.length === 0
+        || seedBackupConfirmationStep < seedBackupChallenges.length
+      )
+    ) {
+      setSeedBackupConfirmationError(t('errors.seedBackupIncomplete'));
+      return;
+    }
+
     if (persistPassword.length < PASSWORD_MIN_LENGTH) {
       setPersistPasswordError(t('errors.passwordMin10'));
       return;
@@ -1528,6 +1569,9 @@ function WalletApp({ theme, onSelectTheme }: {
 
       setPersistPassword('');
       setPersistConfirmPassword('');
+      setPendingWalletRequiresSeedBackup(false);
+      setSeedBackupConfirmationStep(-1);
+      setSeedBackupConfirmationError('');
       enterWallet(walletToPersist, true, biometricNotice || t('status.walletOpened'));
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : t('errors.saveFailed'));
@@ -1536,6 +1580,33 @@ function WalletApp({ theme, onSelectTheme }: {
     }
   
     });
+  };
+
+  const startSeedBackupConfirmation = () => {
+    setSeedBackupConfirmationError('');
+    setSeedBackupConfirmationStep(0);
+  };
+
+  const showSeedBackupAgain = () => {
+    setSeedBackupConfirmationError('');
+    setSeedBackupConfirmationStep(-1);
+  };
+
+  const confirmSeedBackupWord = (answer: string) => {
+    const challenge = seedBackupChallenges[seedBackupConfirmationStep];
+    if (!challenge) return;
+
+    if (!isSeedBackupChallengeAnswerCorrect(challenge, answer)) {
+      setSeedBackupConfirmationError(t('errors.seedBackupWordMismatch'));
+      return;
+    }
+
+    setSeedBackupConfirmationError('');
+    const nextStep = seedBackupConfirmationStep + 1;
+    setSeedBackupConfirmationStep(nextStep);
+    if (nextStep >= seedBackupChallenges.length) {
+      setStatus(t('status.seedBackupVerified'));
+    }
   };
 
   const removeSavedWallet = () => {
@@ -1563,6 +1634,9 @@ function WalletApp({ theme, onSelectTheme }: {
                 applyVaultTransition({ type: 'delete' });
                 setWallet(null);
                 setPendingWallet(null);
+                setPendingWalletRequiresSeedBackup(false);
+                setSeedBackupConfirmationStep(-1);
+                setSeedBackupConfirmationError('');
                 setShowMnemonic(false);
                 setSensitiveAction(null);
                 setSensitivePassword('');
@@ -1596,6 +1670,9 @@ function WalletApp({ theme, onSelectTheme }: {
     clearAddressSubscriptions();
     setWallet(null);
     setPendingWallet(null);
+    setPendingWalletRequiresSeedBackup(false);
+    setSeedBackupConfirmationStep(-1);
+    setSeedBackupConfirmationError('');
     setShowMnemonic(false);
     setWalletTab('home');
     setHistoryPage(0);
@@ -1620,14 +1697,13 @@ function WalletApp({ theme, onSelectTheme }: {
     enrichFailedRef.current.clear();
     const emptyNetwork = createEmptyNetworkState();
     publishNetworkState(emptyNetwork);
-    setScreen(seedSaved ? 'unlock' : 'landing');
+    setScreen(vaultSessionStateRef.current.status !== 'absent' ? 'unlock' : 'landing');
   }, [
     applyVaultTransition,
     clearAddressSubscriptions,
     resetFeedback,
     resetSendDraft,
     publishNetworkState,
-    seedSaved,
     setScreen,
     setWalletTab,
     walletNetworkController,
@@ -2753,7 +2829,13 @@ function WalletApp({ theme, onSelectTheme }: {
           actionLocked={actionLocked}
           busy={persistBusy}
           pendingWallet={pendingWallet}
-          showMnemonic={showMnemonic}
+          seedBackupRequired={pendingWalletRequiresSeedBackup}
+          seedBackupConfirmationStep={seedBackupConfirmationStep}
+          seedBackupChallenges={seedBackupChallenges}
+          seedBackupConfirmationError={seedBackupConfirmationError}
+          onStartSeedBackupConfirmation={startSeedBackupConfirmation}
+          onShowSeedBackupAgain={showSeedBackupAgain}
+          onConfirmSeedBackupWord={confirmSeedBackupWord}
           password={persistPassword}
           passwordError={persistPasswordError}
           onChangePassword={(value) => {

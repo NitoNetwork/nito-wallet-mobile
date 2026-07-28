@@ -2,6 +2,7 @@ import type { ReactNode } from 'react';
 import { Animated, Image, Text, TextInput, TouchableOpacity, View } from 'react-native';
 
 import { LANGUAGES, type LanguageCode, type Translator } from '../i18n';
+import type { SeedBackupChallenge } from '../services/seedBackup';
 import { ActionButton, PasswordField } from './components';
 import { useStyles, useThemeColor } from './themeContext';
 import type { BiometricMethod, PendingAction, Wallet } from './types';
@@ -298,7 +299,13 @@ export function PersistScreen({
   actionLocked,
   busy,
   pendingWallet,
-  showMnemonic,
+  seedBackupRequired,
+  seedBackupConfirmationStep,
+  seedBackupChallenges,
+  seedBackupConfirmationError,
+  onStartSeedBackupConfirmation,
+  onShowSeedBackupAgain,
+  onConfirmSeedBackupWord,
   password,
   passwordError,
   onChangePassword,
@@ -316,7 +323,13 @@ export function PersistScreen({
   actionLocked: boolean;
   busy: boolean;
   pendingWallet: Wallet | null;
-  showMnemonic: boolean;
+  seedBackupRequired: boolean;
+  seedBackupConfirmationStep: number;
+  seedBackupChallenges: readonly SeedBackupChallenge[];
+  seedBackupConfirmationError: string;
+  onStartSeedBackupConfirmation: () => void;
+  onShowSeedBackupAgain: () => void;
+  onConfirmSeedBackupWord: (word: string) => void;
   password: string;
   passwordError: string;
   onChangePassword: (value: string) => void;
@@ -330,36 +343,97 @@ export function PersistScreen({
   onSubmit: () => void;
 }) {
   const styles = useStyles();
+  const activeSeedBackupChallenge = (
+    seedBackupRequired
+    && seedBackupConfirmationStep >= 0
+    && seedBackupConfirmationStep < seedBackupChallenges.length
+  )
+    ? seedBackupChallenges[seedBackupConfirmationStep]
+    : null;
+  const seedBackupConfirmed = (
+    !seedBackupRequired
+    || (
+      seedBackupChallenges.length > 0
+      && seedBackupConfirmationStep >= seedBackupChallenges.length
+    )
+  );
+
   return (
     <View style={styles.card}>
       <Text style={styles.sectionTitle}>{t('persist.title')}</Text>
-      {showMnemonic && pendingWallet ? <Text selectable style={styles.mnemonic}>{pendingWallet.mnemonic}</Text> : null}
-      <PasswordField
-        value={password}
-        onChangeText={onChangePassword}
-        placeholder={t('persist.password')}
-        visible={showPassword}
-        onToggleVisible={onToggleShowPassword}
-        showLabel={t('actions.show')}
-        hideLabel={t('actions.hide')}
-        error={passwordError}
-      />
-      <PasswordField
-        value={confirmPassword}
-        onChangeText={onChangeConfirmPassword}
-        placeholder={t('persist.confirmPassword')}
-        visible={showConfirmPassword}
-        onToggleVisible={onToggleShowConfirmPassword}
-        showLabel={t('actions.show')}
-        hideLabel={t('actions.hide')}
-        error={confirmPasswordError}
-      />
-      <ActionButton
-        label={busy ? t('persist.protecting') : t('persist.protectOpen')}
-        loading={pendingAction === 'protect' || busy}
-        disabled={actionLocked || busy}
-        onPress={onSubmit}
-      />
+      {seedBackupRequired && pendingWallet && seedBackupConfirmationStep < 0 ? (
+        <>
+          <Text style={styles.helper}>{t('persist.seedBackupInstruction')}</Text>
+          <Text style={styles.mnemonic}>{pendingWallet.mnemonic}</Text>
+          <ActionButton
+            label={t('actions.confirmSeedBackup')}
+            disabled={actionLocked}
+            onPress={onStartSeedBackupConfirmation}
+          />
+        </>
+      ) : null}
+      {activeSeedBackupChallenge ? (
+        <>
+          <Text style={styles.helper}>
+            {t('persist.seedBackupConfirmInstruction', {
+              position: activeSeedBackupChallenge.wordIndex + 1,
+            })}
+          </Text>
+          {activeSeedBackupChallenge.options.map((word) => (
+            <ActionButton
+              key={word}
+              label={word}
+              variant="secondary"
+              disabled={actionLocked}
+              onPress={() => onConfirmSeedBackupWord(word)}
+            />
+          ))}
+          {seedBackupConfirmationError ? (
+            <Text accessibilityLiveRegion="polite" style={styles.fieldError}>
+              {seedBackupConfirmationError}
+            </Text>
+          ) : null}
+          <ActionButton
+            label={t('actions.showSeed')}
+            variant="ghost"
+            disabled={actionLocked}
+            onPress={onShowSeedBackupAgain}
+          />
+        </>
+      ) : null}
+      {seedBackupRequired && seedBackupConfirmed ? (
+        <Text style={styles.helper}>{t('status.seedBackupVerified')}</Text>
+      ) : null}
+      {seedBackupConfirmed ? (
+        <>
+          <PasswordField
+            value={password}
+            onChangeText={onChangePassword}
+            placeholder={t('persist.password')}
+            visible={showPassword}
+            onToggleVisible={onToggleShowPassword}
+            showLabel={t('actions.show')}
+            hideLabel={t('actions.hide')}
+            error={passwordError}
+          />
+          <PasswordField
+            value={confirmPassword}
+            onChangeText={onChangeConfirmPassword}
+            placeholder={t('persist.confirmPassword')}
+            visible={showConfirmPassword}
+            onToggleVisible={onToggleShowConfirmPassword}
+            showLabel={t('actions.show')}
+            hideLabel={t('actions.hide')}
+            error={confirmPasswordError}
+          />
+          <ActionButton
+            label={busy ? t('persist.protecting') : t('persist.protectOpen')}
+            loading={pendingAction === 'protect' || busy}
+            disabled={actionLocked || busy}
+            onPress={onSubmit}
+          />
+        </>
+      ) : null}
     </View>
   );
 }
