@@ -33,7 +33,7 @@ export const NITO_DATE_FORMATS: Readonly<Record<LanguageCode, DateTimeFormat>> =
 
 const pad = (value: number) => String(value).padStart(2, '0');
 
-export const formatNitoDate = (blockTime: number, language: LanguageCode): string => {
+const formatNitoDate = (blockTime: number, language: LanguageCode): string => {
   const format = NITO_DATE_FORMATS[language];
   const at = new Date(blockTime * 1000);
   const day = pad(at.getDate());
@@ -45,7 +45,7 @@ export const formatNitoDate = (blockTime: number, language: LanguageCode): strin
   return [day, month, year].join(format.dateSeparator);
 };
 
-export const formatNitoTime = (blockTime: number, language: LanguageCode): string => {
+const formatNitoTime = (blockTime: number, language: LanguageCode): string => {
   const format = NITO_DATE_FORMATS[language];
   const at = new Date(blockTime * 1000);
   const minutes = pad(at.getMinutes());

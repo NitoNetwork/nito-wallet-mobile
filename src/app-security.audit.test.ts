@@ -6,6 +6,7 @@ import appSource from '../App.tsx?raw';
 import vaultCryptoSource from './services/vaultCrypto.ts?raw';
 import appStateSecuritySource from './services/appStateSecurity.ts?raw';
 import amountFormatSource from './i18n.amounts.ts?raw';
+import dateFormatSource from './i18n.datetime.ts?raw';
 import constantsSource from './constants/nito.ts?raw';
 import i18nSource from './i18n.ts?raw';
 import frI18nSource from './i18n/fr.ts?raw';
@@ -311,8 +312,14 @@ describe('mobile wallet UX and security invariants', () => {
     expect(amountFormatSource).not.toContain('toLocaleString');
     expect(formatSource).not.toContain("toLocaleString('fr-FR')");
     expect(transparentScanSource).not.toContain("toLocaleString('fr-FR')");
-    expect(amountFormatSource).toContain("de: { groupSeparator: '.', decimalSeparator: ',', grouping: 'western' }");
+    expect(amountFormatSource).toContain("de: { groupSeparator: '.', decimalSeparator: ',' }");
     expect(amountFormatSource).toContain("fr: { groupSeparator: '\\u202f'");
+    // Dates share the same rule: a fixed table, never the device locale data.
+    // Matching the call form, not the bare word, so the comment that explains
+    // why we avoid it does not trip the check.
+    expect(dateFormatSource).not.toMatch(/\.toLocale(Date|Time|)String\(/);
+    expect(dateFormatSource).not.toMatch(/\bIntl\./);
+    expect(dateFormatSource).toContain('NITO_DATE_FORMATS');
   });
 
   it('keeps the main balance fixed at eight decimals without a persisted display preference', () => {

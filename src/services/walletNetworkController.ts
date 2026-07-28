@@ -344,9 +344,6 @@ type WalletNetworkSyncPorts = {
     noActiveWallet: string;
     networkUnavailable: string;
     walletStorageUnavailable: string;
-    syncing: string;
-    syncingHistory: string;
-    walletSynced: string;
   };
 };
 

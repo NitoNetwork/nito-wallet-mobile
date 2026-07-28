@@ -790,7 +790,7 @@ function WalletApp({ theme, onSelectTheme }: {
     setPreparedTx(null);
     setPreparedConsolidation(null);
     setScreen('wallet');
-    setStatus(pendingPreload ? t('status.syncing') : message);
+    setStatus(message);
   };
 
   const prefetchWalletNetwork = useCallback(async (nextWallet: Wallet) => {
@@ -1007,9 +1007,6 @@ function WalletApp({ theme, onSelectTheme }: {
         noActiveWallet: t('errors.noActiveWallet'),
         networkUnavailable: t('errors.networkUnavailable'),
         walletStorageUnavailable: t('errors.walletStorageUnavailable'),
-        syncing: t('status.syncing'),
-        syncingHistory: t('status.syncingHistory'),
-        walletSynced: t('status.walletSynced'),
       },
     }, includeHistory, options);
   }, [publishNetworkState, t, walletNetworkController]);
@@ -2409,7 +2406,6 @@ function WalletApp({ theme, onSelectTheme }: {
     if (!walletNetworkController.isCurrent(session)) return;
     await syncTransparentNetwork(false, { force: true, silent: true });
     if (walletNetworkController.isCurrent(session) && networkRef.current.status === 'connected') {
-      setStatus(t('status.walletSynced'));
     }
   };
 
