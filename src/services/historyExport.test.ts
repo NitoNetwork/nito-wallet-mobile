@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import type { ElectrumHistoryEntry, ElectrumVerboseTransaction } from '../network/electrum';
+import { formatNitoDateTime } from '../i18n.datetime';
 import {
   buildHistoryExportBatch,
   buildHistoryExportRecords,
@@ -87,7 +88,10 @@ describe('wallet history export', () => {
     });
 
     expect(record).toMatchObject({ direction: 'self', amountSats: 950_000_000, feeSats: 50_000_000 });
-    expect(historyExportTsvRows([record!], 'en')[1]?.[0]).toBe('10:26 AM · 07/20/2025');
+    // Exported block times intentionally follow the device timezone.
+    expect(historyExportTsvRows([record!], 'en')[1]?.[0]).toBe(
+      formatNitoDateTime(record!.blockTime!, 'en'),
+    );
   });
 
   it('does not classify a transaction with an external input as internal', async () => {
