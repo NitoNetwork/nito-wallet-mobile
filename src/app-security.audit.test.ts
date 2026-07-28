@@ -24,6 +24,7 @@ import screenProtectionPolicySource from './services/screenProtection.ts?raw';
 import transparentScanSource from './wallet/transparentScan.ts?raw';
 import coinbaseSource from './wallet/coinbaseMaturity.ts?raw';
 import historyDbSource from './services/walletHistoryDb.ts?raw';
+import historyEnrichmentQueueSource from './services/historyEnrichmentQueue.ts?raw';
 import networkControllerSource from './services/walletNetworkController.ts?raw';
 import exclusiveActionGateSource from './services/exclusiveActionGate.ts?raw';
 import vaultSessionMachineSource from './services/vaultSessionMachine.ts?raw';
@@ -190,7 +191,17 @@ describe('mobile wallet UX and security invariants', () => {
       /reconcileBroadcasts\(txids, session\)\.catch\(reportNetworkFailure\)/,
     );
     expect(appSource).toContain('processHistoryEnrichmentPasses({');
-    expect(appSource).toContain("sessionCurrent ? 'failed' : 'interrupted'");
+    expect(appSource).toContain(
+      ": retryableFailure ? 'retryable-failure' : 'failed';",
+    );
+    expect(appSource).toContain('isRetryableHistoryEnrichmentFailure(caught, activeBatch)');
+    expect(appSource).toContain('historyEnrichmentRetryScheduler.schedule(');
+    expect(appSource).toMatch(
+      /screenRef\.current === 'wallet'[\s\S]{0,160}walletNetworkController\.isCurrent\(session\)/,
+    );
+    expect(historyEnrichmentQueueSource).toContain(
+      'const HISTORY_ENRICHMENT_RETRY_DELAYS_MS = [1_000, 3_000, 10_000, 30_000, 60_000];',
+    );
     expect(networkControllerSource).toContain('requestOrQueueEnrichment(');
     expect(appSource).toContain(
       'walletNetworkController.requestOrQueueEnrichment(enrichWalletHistoryRef.current);',

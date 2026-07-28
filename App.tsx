@@ -111,11 +111,15 @@ import {
 import { invalidateElectrumRuntimeForServerChange } from './src/services/electrumServerTransition';
 import {
   HistoryEnrichmentQueue,
+  HistoryEnrichmentRetryScheduler,
   historyEnrichmentKey as enrichKey,
+  isRetryableHistoryEnrichmentFailure,
   processHistoryEnrichmentQueue,
   processHistoryEnrichmentPasses,
+  pruneHistoryEnrichmentFailures,
   recordHistoryEnrichmentBatchOutcome,
   releaseFailedHistoryEnrichmentAttempts,
+  type HistoryEnrichmentFailures,
 } from './src/services/historyEnrichmentQueue';
 import {
   createSeedBackupChallenges,
@@ -422,6 +426,8 @@ function WalletApp({ theme, onSelectTheme }: {
     useState(createSeedBackupAttemptToken);
   const seedBackupAnswerLockedRef = useRef(false);
   const [walletNetworkController] = useState(() => new WalletNetworkController());
+  const [historyEnrichmentRetryScheduler] =
+    useState(() => new HistoryEnrichmentRetryScheduler());
   const electrumClientRef = useRef<NitoElectrumClient | null>(null);
   const pendingNetworkRef = useRef<{ address: string; snapshot: TransparentWalletSnapshot; height: number } | null>(null);
   const walletRef = useRef<Wallet | null>(null);
@@ -439,7 +445,7 @@ function WalletApp({ theme, onSelectTheme }: {
   const clearTransientSecretsRef = useRef<() => void>(() => undefined);
   const transientSecretGenerationRef = useRef(0);
   const enrichAttemptedRef = useRef<Set<string>>(new Set());
-  const enrichFailedRef = useRef<Set<string>>(new Set());
+  const enrichFailedRef = useRef<HistoryEnrichmentFailures>(new Map());
   const appStateRef = useRef(AppState.currentState);
   const systemPromptActiveRef = useRef(false);
   const autoLockRef = useRef<AutoLock | null>(null);
@@ -854,6 +860,7 @@ function WalletApp({ theme, onSelectTheme }: {
     }
     setWalletTab('home');
     setHistoryPage(0);
+    historyEnrichmentRetryScheduler.cancel();
     enrichAttemptedRef.current.clear();
     enrichFailedRef.current.clear();
     setBalanceRefreshing(!pendingPreload);
@@ -897,6 +904,33 @@ function WalletApp({ theme, onSelectTheme }: {
     }
   }, [t, walletNetworkController]);
 
+  const scheduleHistoryEnrichmentRetries = useCallback(() => {
+    const activeWallet = walletRef.current;
+    const session = activeWallet
+      ? walletNetworkController.sessions.capture(activeWallet.address)
+      : null;
+    if (!session || screenRef.current !== 'wallet') {
+      historyEnrichmentRetryScheduler.cancel();
+      return;
+    }
+    historyEnrichmentRetryScheduler.schedule(
+      enrichAttemptedRef.current,
+      enrichFailedRef.current,
+      () => {
+        walletNetworkController.requestOrQueueEnrichment(enrichWalletHistoryRef.current);
+      },
+      () => (
+        screenRef.current === 'wallet'
+        && walletNetworkController.isCurrent(session)
+      ),
+    );
+  }, [historyEnrichmentRetryScheduler, walletNetworkController]);
+
+  useEffect(
+    () => () => historyEnrichmentRetryScheduler.cancel(),
+    [historyEnrichmentRetryScheduler],
+  );
+
   const enrichWalletHistory = useCallback(async () => {
     if (!walletNetworkController.startEnrichment()) {
       walletNetworkController.requestOrQueueEnrichment(enrichWalletHistoryRef.current);
@@ -913,6 +947,7 @@ function WalletApp({ theme, onSelectTheme }: {
       return;
     }
     let ownedQueue: HistoryEnrichmentQueue | null = null;
+    let activeBatch: TransparentWalletSnapshot['history'] = [];
     let activeBatchKeys: string[] = [];
     try {
       const client = electrumClientRef.current || createElectrumClient();
@@ -943,6 +978,7 @@ function WalletApp({ theme, onSelectTheme }: {
           await processHistoryEnrichmentQueue({
             queue,
             onBatchStart: (batch) => {
+              activeBatch = batch;
               activeBatchKeys = batch.map(enrichKey);
             },
             enrichBatch: async (batch, onBatchProgress) => {
@@ -1003,7 +1039,9 @@ function WalletApp({ theme, onSelectTheme }: {
                 activeBatchKeys,
                 'published',
               );
+              activeBatch = [];
               activeBatchKeys = [];
+              scheduleHistoryEnrichmentRetries();
             },
             onProgress: (done, total) => {
               if (walletNetworkController.isCurrent(session)) {
@@ -1015,14 +1053,24 @@ function WalletApp({ theme, onSelectTheme }: {
       });
     } catch (caught) {
       const sessionCurrent = walletNetworkController.isCurrent(session);
+      const retryableFailure = (
+        sessionCurrent
+        && isRetryableHistoryEnrichmentFailure(caught, activeBatch)
+      );
+      const failureOutcome = !sessionCurrent
+        ? 'interrupted'
+        : retryableFailure ? 'retryable-failure' : 'failed';
       recordHistoryEnrichmentBatchOutcome(
         enrichAttemptedRef.current,
         enrichFailedRef.current,
         activeBatchKeys,
-        sessionCurrent ? 'failed' : 'interrupted',
+        failureOutcome,
       );
+      activeBatch = [];
       activeBatchKeys = [];
-      if (sessionCurrent) {
+      if (retryableFailure) {
+        scheduleHistoryEnrichmentRetries();
+      } else if (sessionCurrent) {
         const message = translatedErrorMessage(
           caught,
           t,
@@ -1047,7 +1095,12 @@ function WalletApp({ theme, onSelectTheme }: {
         walletNetworkController.finishEnrichment(enrichWalletHistoryRef.current);
       }
     }
-  }, [publishNetworkState, t, walletNetworkController]);
+  }, [
+    publishNetworkState,
+    scheduleHistoryEnrichmentRetries,
+    t,
+    walletNetworkController,
+  ]);
 
   useEffect(() => {
     enrichWalletHistoryRef.current = () => {
@@ -1085,6 +1138,7 @@ function WalletApp({ theme, onSelectTheme }: {
             enrichFailedRef.current,
           ) > 0
         ) {
+          historyEnrichmentRetryScheduler.cancel();
           walletNetworkController.requestOrQueueEnrichment(enrichWalletHistoryRef.current);
         }
       },
@@ -1101,10 +1155,26 @@ function WalletApp({ theme, onSelectTheme }: {
         walletStorageUnavailable: t('errors.walletStorageUnavailable'),
       },
     }, includeHistory, options);
-  }, [publishNetworkState, t, walletNetworkController]);
+  }, [
+    historyEnrichmentRetryScheduler,
+    publishNetworkState,
+    t,
+    walletNetworkController,
+  ]);
 
   useEffect(() => {
     if (screen !== 'wallet' || !network.snapshot) return;
+    const pendingKeys = new Set(
+      network.snapshot.history
+        .filter(needsHistoryEnrichment)
+        .map(enrichKey),
+    );
+    pruneHistoryEnrichmentFailures(
+      enrichAttemptedRef.current,
+      enrichFailedRef.current,
+      pendingKeys,
+    );
+    scheduleHistoryEnrichmentRetries();
     const hasPending = network.snapshot.history.some(
       (entry) => needsHistoryEnrichment(entry)
         && !enrichAttemptedRef.current.has(enrichKey(entry)),
@@ -1112,7 +1182,12 @@ function WalletApp({ theme, onSelectTheme }: {
     if (hasPending) {
       walletNetworkController.requestOrQueueEnrichment(enrichWalletHistoryRef.current);
     }
-  }, [screen, network.snapshot, walletNetworkController]);
+  }, [
+    network.snapshot,
+    scheduleHistoryEnrichmentRetries,
+    screen,
+    walletNetworkController,
+  ]);
 
   const reconcileBroadcasts = useCallback(async (
     txids: readonly string[],
@@ -1199,6 +1274,7 @@ function WalletApp({ theme, onSelectTheme }: {
       clearPreparedTransaction: () => setPreparedTx(null),
       clearPreparedConsolidation: () => setPreparedConsolidation(null),
       clearDeferredNetworkWork: () => {
+        historyEnrichmentRetryScheduler.cancel();
         pendingNetworkRef.current = null;
         silentNextAutoSyncRef.current = false;
         historyEnrichmentQueueRef.current = null;
@@ -1208,7 +1284,11 @@ function WalletApp({ theme, onSelectTheme }: {
         setBalanceRefreshing(false);
       },
     });
-  }, [clearAddressSubscriptions, walletNetworkController]);
+  }, [
+    clearAddressSubscriptions,
+    historyEnrichmentRetryScheduler,
+    walletNetworkController,
+  ]);
 
   const synchronizeAfterElectrumServerChange = useCallback(async (
     preference: ElectrumServerPreference,
@@ -1745,6 +1825,7 @@ function WalletApp({ theme, onSelectTheme }: {
                 }
                 await deleteBiometricSecret();
                 await deleteVault();
+                historyEnrichmentRetryScheduler.cancel();
                 walletNetworkController.cancel();
                 clearAddressSubscriptions();
                 electrumClientRef.current?.disconnect(new Error('Wallet deleted.'));
@@ -1805,6 +1886,7 @@ function WalletApp({ theme, onSelectTheme }: {
     walletLockAppliedRef.current = true;
     lockedDuringSessionRef.current = true;
     applyVaultTransition({ type: 'lock' });
+    historyEnrichmentRetryScheduler.cancel();
     walletNetworkController.cancel();
     pendingNetworkRef.current = null;
     walletRef.current = null;
@@ -1851,6 +1933,7 @@ function WalletApp({ theme, onSelectTheme }: {
   }, [
     applyVaultTransition,
     clearAddressSubscriptions,
+    historyEnrichmentRetryScheduler,
     resetFeedback,
     resetSendDraft,
     publishNetworkState,
@@ -2610,6 +2693,7 @@ function WalletApp({ theme, onSelectTheme }: {
         clearAddressSubscriptions();
         await clearWalletHistoryCache(activeWallet.address);
         if (!walletNetworkController.isCurrent(session)) return;
+        historyEnrichmentRetryScheduler.cancel();
         const currentNetwork = networkRef.current;
         if (currentNetwork.snapshot) {
           publishNetworkState({
