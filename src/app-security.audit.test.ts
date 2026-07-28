@@ -376,6 +376,25 @@ describe('QR scanner does not fight the auto lock', () => {
     expect(appSource).toMatch(/const lockWallet = useCallback\(\(\) => \{[\s\S]*?systemPromptActiveRef\.current = false;/);
   });
 
+  it('rearms auto lock after a refused attempt and when the scanner closes', () => {
+    expect(appSource).toMatch(
+      /new AutoLock\(\(\) => \{\s*if \(systemPromptActiveRef\.current\) return false;\s*lockWallet\(\);\s*return true;/,
+    );
+    expect(appSource).toMatch(
+      /const closeQrScanner = \(\) => \{[\s\S]*?systemPromptActiveRef\.current = false;[\s\S]*?autoLockRef\.current\?\.resetTimer\(\);/,
+    );
+  });
+
+  it('claims scan events synchronously before updating rendered state', () => {
+    expect(appSource).toContain('const qrScanHandledRef = useRef(false);');
+    expect(appSource).toMatch(
+      /const handleQrScan = \(value: string\) => \{\s*if \(qrScanHandledRef\.current\) return;\s*qrScanHandledRef\.current = true;\s*setQrScanHandled\(true\);/,
+    );
+    expect(appSource).toMatch(
+      /qrRetryTimerRef\.current = setTimeout\(\(\) => \{\s*qrRetryTimerRef\.current = null;\s*qrScanHandledRef\.current = false;\s*setQrScanHandled\(false\);/,
+    );
+  });
+
   it('stops retrying instead of blinking forever', () => {
     expect(appSource).toContain('if (qrScanAttemptsRef.current >= QR_SCAN_MAX_ATTEMPTS) return;');
     expect(appSource).toContain('qrScanAttemptsRef.current = 0;');

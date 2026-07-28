@@ -29,4 +29,24 @@ describe('AutoLock', () => {
     locker.stop();
     vi.useRealTimers();
   });
+
+  test('rearms the timeout when locking is temporarily refused', async () => {
+    vi.useFakeTimers();
+    const onLock = vi.fn()
+      .mockReturnValueOnce(false)
+      .mockReturnValueOnce(true);
+    const locker = new AutoLock(onLock, 60_000);
+
+    locker.resetTimer();
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(onLock).toHaveBeenCalledTimes(1);
+
+    await vi.advanceTimersByTimeAsync(59_999);
+    expect(onLock).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(onLock).toHaveBeenCalledTimes(2);
+
+    locker.stop();
+    vi.useRealTimers();
+  });
 });

@@ -483,6 +483,7 @@ function WalletApp({ theme, onSelectTheme }: {
   const [refreshCooldownUntil, setRefreshCooldownUntil] = useState(0);
   const [qrScannerOpen, setQrScannerOpen] = useState(false);
   const [qrScanHandled, setQrScanHandled] = useState(false);
+  const qrScanHandledRef = useRef(false);
   const [qrScannerError, setQrScannerError] = useState('');
   const qrRetryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const qrScanAttemptsRef = useRef(0);
@@ -1585,7 +1586,8 @@ function WalletApp({ theme, onSelectTheme }: {
     setPreparedConsolidation(null);
     systemPromptActiveRef.current = false;
     setQrScannerOpen(false);
-    setQrScanHandled(false);
+    qrScanHandledRef.current = true;
+    setQrScanHandled(true);
     setQrScannerError('');
     setBalanceRefreshing(false);
     setHistoryProgress(null);
@@ -1640,9 +1642,9 @@ function WalletApp({ theme, onSelectTheme }: {
       return;
     }
     const lock = new AutoLock(() => {
-      if (!systemPromptActiveRef.current) {
-        lockWallet();
-      }
+      if (systemPromptActiveRef.current) return false;
+      lockWallet();
+      return true;
     }, autoLockTimeoutMs);
     autoLockRef.current = lock;
     lock.resetTimer();
@@ -2430,6 +2432,7 @@ function WalletApp({ theme, onSelectTheme }: {
       return;
     }
     setQrScannerError('');
+    qrScanHandledRef.current = false;
     setQrScanHandled(false);
     qrScanAttemptsRef.current = 0;
     // Opening the camera makes some Android builds report the app as inactive.
@@ -2446,11 +2449,14 @@ function WalletApp({ theme, onSelectTheme }: {
     systemPromptActiveRef.current = false;
     setQrScannerOpen(false);
     setQrScannerError('');
-    setQrScanHandled(false);
+    qrScanHandledRef.current = true;
+    setQrScanHandled(true);
+    autoLockRef.current?.resetTimer();
   };
 
   const handleQrScan = (value: string) => {
-    if (qrScanHandled) return;
+    if (qrScanHandledRef.current) return;
+    qrScanHandledRef.current = true;
     setQrScanHandled(true);
     try {
       const recipientId = qrRecipientIdRef.current;
@@ -2479,6 +2485,7 @@ function WalletApp({ theme, onSelectTheme }: {
       if (qrScanAttemptsRef.current >= QR_SCAN_MAX_ATTEMPTS) return;
       qrRetryTimerRef.current = setTimeout(() => {
         qrRetryTimerRef.current = null;
+        qrScanHandledRef.current = false;
         setQrScanHandled(false);
       }, 900);
     }
