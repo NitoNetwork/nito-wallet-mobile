@@ -234,7 +234,10 @@ describe('mobile wallet UX and security invariants', () => {
 
   it('reports subscription read failures instead of dropping the subscription silently', () => {
     expect(subscriptionsSource).toContain('onConnectionError');
-    expect(subscriptionsSource).toMatch(/catch \(error\) \{[\s\S]*?onConnectionError\(error\);/);
+    expect(subscriptionsSource).toMatch(
+      /catch \(error\) \{[\s\S]*?reportConnectionErrorIfCurrent\(error\);/,
+    );
+    expect(subscriptionsSource).toContain('subscriptionRunGuardRef.current.invalidate();');
   });
 
   it('queues Electrum events received during synchronization and serializes subscription refreshes', () => {

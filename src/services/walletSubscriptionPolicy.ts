@@ -1,5 +1,21 @@
 import type { WalletSyncOptions } from './walletNetworkController';
 
+export class WalletSubscriptionRunGuard {
+  private generation = 0;
+
+  capture(): number {
+    return this.generation;
+  }
+
+  invalidate(): void {
+    this.generation += 1;
+  }
+
+  isCurrent(generation: number): boolean {
+    return generation === this.generation;
+  }
+}
+
 const authoritativeRefresh = (): WalletSyncOptions => ({
   force: true,
   silent: true,

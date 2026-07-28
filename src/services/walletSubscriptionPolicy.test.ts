@@ -4,9 +4,22 @@ import {
   syncRequestAfterInitialSubscriptions,
   syncRequestForAddressStatus,
   syncRequestForBlockStatus,
+  WalletSubscriptionRunGuard,
 } from './walletSubscriptionPolicy';
 
 describe('wallet subscription synchronization policy', () => {
+  it('invalidates abandoned subscription reads without hiding current failures', () => {
+    const guard = new WalletSubscriptionRunGuard();
+    const abandonedRun = guard.capture();
+
+    expect(guard.isCurrent(abandonedRun)).toBe(true);
+    guard.invalidate();
+    expect(guard.isCurrent(abandonedRun)).toBe(false);
+
+    const activeRun = guard.capture();
+    expect(guard.isCurrent(activeRun)).toBe(true);
+  });
+
   it('requests an authoritative refresh for any used-address status change', () => {
     expect(syncRequestForAddressStatus(true)).toEqual({ force: true, silent: true, rescanGap: false });
     expect(syncRequestForAddressStatus(false)).toEqual({ force: true, silent: true, rescanGap: true });

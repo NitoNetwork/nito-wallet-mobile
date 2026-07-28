@@ -12,6 +12,7 @@ import {
   syncRequestAfterInitialSubscriptions,
   syncRequestForAddressStatus,
   syncRequestForBlockStatus,
+  WalletSubscriptionRunGuard,
 } from '../services/walletSubscriptionPolicy';
 
 /**
@@ -48,6 +49,7 @@ export const useWalletSubscriptions = ({
   const blockHeightUnsubscribeRef = useRef<(() => void) | null>(null);
   const connectionStateUnsubscribeRef = useRef<(() => void) | null>(null);
   const refreshPromiseRef = useRef<Promise<void> | null>(null);
+  const subscriptionRunGuardRef = useRef(new WalletSubscriptionRunGuard());
 
   const requestOrQueueSync = useCallback((options: WalletSyncOptions) => {
     controller.requestOrQueueSync(options, requestSync);
@@ -58,6 +60,11 @@ export const useWalletSubscriptions = ({
   }, [controller, requestSync]);
 
   const clearSubscriptions = useCallback(() => {
+    subscriptionRunGuardRef.current.invalidate();
+    blockHeightUnsubscribeRef.current?.();
+    blockHeightUnsubscribeRef.current = null;
+    connectionStateUnsubscribeRef.current?.();
+    connectionStateUnsubscribeRef.current = null;
     unsubscribeRef.current.forEach((unsubscribe) => unsubscribe());
     unsubscribeRef.current.clear();
     statusRef.current.clear();
@@ -128,6 +135,17 @@ export const useWalletSubscriptions = ({
     }
 
     let cancelled = false;
+    const runGuard = subscriptionRunGuardRef.current;
+    const runGeneration = runGuard.capture();
+    const runIsCurrent = () => (
+      !cancelled
+      && runGuard.isCurrent(runGeneration)
+    );
+    const reportConnectionErrorIfCurrent = (error: unknown) => {
+      if (runIsCurrent()) {
+        onConnectionError(error);
+      }
+    };
     const activeAddresses = new Set(snapshot.addresses.map(({ address }) => address));
     for (const [address, unsubscribe] of unsubscribeRef.current) {
       if (!activeAddresses.has(address)) {
@@ -147,7 +165,7 @@ export const useWalletSubscriptions = ({
       while (refreshPromiseRef.current) {
         const activeRefresh = refreshPromiseRef.current;
         await activeRefresh;
-        if (cancelled) return;
+        if (!runIsCurrent()) return;
       }
 
       const refresh = (async () => {
@@ -155,7 +173,7 @@ export const useWalletSubscriptions = ({
         for (const scannedAddress of snapshot.addresses) {
           const address = scannedAddress.address;
 
-          if (cancelled || unsubscribeRef.current.has(address)) {
+          if (!runIsCurrent() || unsubscribeRef.current.has(address)) {
             continue;
           }
 
@@ -172,7 +190,7 @@ export const useWalletSubscriptions = ({
               }
             });
 
-            if (cancelled) {
+            if (!runIsCurrent()) {
               subscription.unsubscribe();
               return;
             }
@@ -185,12 +203,12 @@ export const useWalletSubscriptions = ({
             }
           } catch (error) {
             statusRef.current.delete(address);
-            onConnectionError(error);
+            reportConnectionErrorIfCurrent(error);
             return;
           }
         }
         const initialSyncRequest = syncRequestAfterInitialSubscriptions(needsAuthoritativeRefresh);
-        if (!cancelled && initialSyncRequest) {
+        if (runIsCurrent() && initialSyncRequest) {
           // The initial status is not an event. Refresh all known used addresses
           // so same-height mempool changes that happened while the app was closed
           // cannot be mistaken for a fresh cache.
@@ -207,10 +225,11 @@ export const useWalletSubscriptions = ({
       }
     };
 
-    void subscribeKnownAddresses().catch(onConnectionError);
+    void subscribeKnownAddresses().catch(reportConnectionErrorIfCurrent);
 
     return () => {
       cancelled = true;
+      runGuard.invalidate();
     };
   }, [clientRef, enabled, networkRef, onConnectionError, requestOrQueueSync, snapshot]);
 
