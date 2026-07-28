@@ -21,6 +21,7 @@ export default {
     android: {
       blockedPermissions: [
         "android.permission.READ_EXTERNAL_STORAGE",
+        "android.permission.READ_MEDIA_IMAGES",
         "android.permission.WRITE_EXTERNAL_STORAGE",
       ],
       package: process.env.NITO_ANDROID_PACKAGE ?? "network.nito.wallet",

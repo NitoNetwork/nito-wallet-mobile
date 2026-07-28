@@ -14,12 +14,27 @@ function withCleanManifest(config) {
     const permissions = manifest['uses-permission'] || [];
     const blockedPermissions = new Set([
       'android.permission.READ_EXTERNAL_STORAGE',
+      'android.permission.READ_MEDIA_IMAGES',
       'android.permission.SYSTEM_ALERT_WINDOW',
       'android.permission.WRITE_EXTERNAL_STORAGE',
     ]);
-    manifest['uses-permission'] = permissions.filter(
-      (permission) => !blockedPermissions.has(permission.$?.['android:name'])
-    );
+    manifest['uses-permission'] = permissions.filter((permission) => {
+      const permissionName = permission.$?.['android:name'];
+      const isRemovalMarker = permission.$?.['tools:node'] === 'remove';
+      if (
+        isRemovalMarker &&
+        permissionName === 'android.permission.WRITE_EXTERNAL_STORAGE'
+      ) {
+        return false;
+      }
+      if (
+        isRemovalMarker &&
+        permissionName === 'android.permission.READ_EXTERNAL_STORAGE'
+      ) {
+        permission.$['android:maxSdkVersion'] = '32';
+      }
+      return isRemovalMarker || !blockedPermissions.has(permissionName);
+    });
 
     const features = manifest['uses-feature'] || [];
     if (!features.some((feature) => feature.$?.['android:name'] === 'android.hardware.camera')) {

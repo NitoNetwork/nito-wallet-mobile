@@ -26,6 +26,7 @@ import networkControllerSource from './services/walletNetworkController.ts?raw';
 import exclusiveActionGateSource from './services/exclusiveActionGate.ts?raw';
 import vaultSessionMachineSource from './services/vaultSessionMachine.ts?raw';
 import expoConfig from '../app.config.js?raw';
+import androidLintFixesSource from '../plugins/withNitoAndroidLintFixes.cjs?raw';
 
 describe('mobile wallet UX and security invariants', () => {
   it('keeps password encryption when biometric quick unlock is enabled', () => {
@@ -125,6 +126,25 @@ describe('mobile wallet UX and security invariants', () => {
     expect(screenProtectionSource).toContain('preventScreenCaptureAsync(SCREEN_CAPTURE_KEY)');
     expect(screenProtectionSource).toContain('enableAppSwitcherProtectionAsync(1)');
     expect(screenProtectionSource).toContain('allowScreenCaptureAsync(SCREEN_CAPTURE_KEY)');
+  });
+
+  it('removes unused photo-library permissions without disabling screen protection', () => {
+    const blockedPermissions = expoConfig.match(
+      /blockedPermissions:\s*\[([\s\S]*?)\]/,
+    )?.[1];
+    expect(blockedPermissions).toContain('"android.permission.READ_MEDIA_IMAGES"');
+    expect(androidLintFixesSource).toContain("'android.permission.READ_MEDIA_IMAGES'");
+    expect(androidLintFixesSource).toContain(
+      "const isRemovalMarker = permission.$?.['tools:node'] === 'remove';",
+    );
+    expect(androidLintFixesSource).toContain(
+      "permission.$['android:maxSdkVersion'] = '32';",
+    );
+    expect(androidLintFixesSource).toContain(
+      'return isRemovalMarker || !blockedPermissions.has(permissionName);',
+    );
+    expect(screenProtectionSource).not.toContain('addScreenshotListener');
+    expect(screenProtectionSource).not.toContain('useScreenshotListener');
   });
 
   it('lets the user turn biometric unlock off again without losing the vault', () => {
