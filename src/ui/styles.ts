@@ -904,6 +904,28 @@ const RAW_STYLES = StyleSheet.create({
     fontSize: 15,
     lineHeight: 23,
   },
+  mnemonicGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'space-between',
+    gap: 8,
+    backgroundColor: 'rgba(246, 196, 79, 0.10)',
+    borderColor: 'rgba(246, 196, 79, 0.24)',
+    borderWidth: 1,
+    borderRadius: 18,
+    padding: 10,
+  },
+  mnemonicWord: {
+    width: '48%',
+    color: '#fff4d6',
+    backgroundColor: 'rgba(246, 196, 79, 0.10)',
+    borderRadius: 10,
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+    fontSize: 15,
+    lineHeight: 21,
+    fontWeight: '700',
+  },
   scannerSafeArea: { flex: 1, padding: 20, gap: 18, backgroundColor: '#020611' },
   scannerHeader: { gap: 6 },
   scannerTitle: { color: '#f6f8ff', fontSize: 25, fontWeight: '900' },
@@ -931,4 +953,3 @@ export const createStyles = (theme: ThemeName): typeof RAW_STYLES => {
 export type WalletStyles = typeof RAW_STYLES;
 
 export { RAW_STYLES };
-

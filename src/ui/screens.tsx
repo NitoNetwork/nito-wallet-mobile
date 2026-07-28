@@ -2,7 +2,10 @@ import type { ReactNode } from 'react';
 import { Animated, Image, Text, TextInput, TouchableOpacity, View } from 'react-native';
 
 import { LANGUAGES, type LanguageCode, type Translator } from '../i18n';
-import type { SeedBackupChallenge } from '../services/seedBackup';
+import {
+  numberSeedBackupWords,
+  type SeedBackupChallenge,
+} from '../services/seedBackup';
 import { ActionButton, PasswordField } from './components';
 import { useStyles, useThemeColor } from './themeContext';
 import type { BiometricMethod, PendingAction, Wallet } from './types';
@@ -381,7 +384,17 @@ export function PersistScreen({
       {seedBackupRequired && pendingWallet && seedBackupConfirmationStep < 0 ? (
         <>
           <Text style={styles.helper}>{t('persist.seedBackupInstruction')}</Text>
-          <Text style={styles.mnemonic}>{pendingWallet.mnemonic}</Text>
+          <View style={styles.mnemonicGrid}>
+            {numberSeedBackupWords(pendingWallet.mnemonic).map((numberedWord, index) => (
+              <Text
+                key={`${index}:${numberedWord}`}
+                selectable
+                style={styles.mnemonicWord}
+              >
+                {numberedWord}
+              </Text>
+            ))}
+          </View>
           {seedBackupConfirmationError ? (
             <Text accessibilityLiveRegion="polite" style={styles.fieldError}>
               {seedBackupConfirmationError}

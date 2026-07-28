@@ -92,7 +92,8 @@ describe('mobile wallet UX and security invariants', () => {
     expect(appSource).toMatch(
       /if \(\s*pendingWalletRequiresSeedBackup[\s\S]*?seedBackupConfirmationStep < seedBackupChallenges\.length[\s\S]*?return;/,
     );
-    expect(screensSource).toContain('{pendingWallet.mnemonic}');
+    expect(screensSource).toContain('numberSeedBackupWords(pendingWallet.mnemonic).map');
+    expect(screensSource).toMatch(/<Text[\s\S]*?selectable[\s\S]*?>\s*\{numberedWord\}\s*<\/Text>/);
     expect(screensSource).toContain("t('persist.seedBackupConfirmInstruction'");
     const persistScreenSource = screensSource.slice(
       screensSource.indexOf('export function PersistScreen'),

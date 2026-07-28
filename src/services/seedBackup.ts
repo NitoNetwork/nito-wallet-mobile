@@ -8,6 +8,13 @@ export type SeedBackupChallenge = Readonly<{
   options: readonly string[];
 }>;
 
+export const numberSeedBackupWords = (mnemonic: string): readonly string[] => (
+  mnemonic
+    .trim()
+    .split(/\s+/u)
+    .map((word, index) => `${index + 1}. ${word}`)
+);
+
 const stableHash = (value: string): number => {
   let hash = 0x811c9dc5;
   for (let index = 0; index < value.length; index += 1) {
