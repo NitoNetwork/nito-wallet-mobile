@@ -152,6 +152,7 @@ import { useAutoLockTimeout } from './src/hooks/useAutoLockTimeout';
 import { useLanguage } from './src/hooks/useLanguage';
 import { useWalletScreenProtection } from './src/hooks/useWalletScreenProtection';
 import { useWalletSubscriptions } from './src/hooks/useWalletSubscriptions';
+import { shouldProtectIosAppSwitcher } from './src/services/screenProtection';
 import { AutoLock } from './src/services/session';
 import {
   reportUnexpectedTransparentSendFailure,
@@ -386,7 +387,6 @@ function WalletApp({ theme, onSelectTheme }: {
   theme: ThemeName;
   onSelectTheme: (next: ThemeName) => void;
 }) {
-  useWalletScreenProtection();
   const styles = useStyles();
   const [importFieldError, setImportFieldError] = useState('');
   const [sendRecipientErrors, setSendRecipientErrors] = useState<SendRecipientFieldErrors>({});
@@ -537,6 +537,17 @@ function WalletApp({ theme, onSelectTheme }: {
     ),
     [pendingWallet, pendingWalletRequiresSeedBackup, seedBackupAttemptToken],
   );
+  useWalletScreenProtection({
+    protectIosAppSwitcher: shouldProtectIosAppSwitcher({
+      screen,
+      importPhraseVisible: showImportSeed && importText.trim().length > 0,
+      seedBackupInProgress: (
+        pendingWalletRequiresSeedBackup
+        && seedBackupConfirmationStep < seedBackupChallenges.length
+      ),
+    }),
+    theme,
+  });
 
   useLayoutEffect(() => {
     seedBackupAnswerLockedRef.current = false;

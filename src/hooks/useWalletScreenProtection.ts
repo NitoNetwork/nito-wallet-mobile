@@ -1,39 +1,60 @@
 import * as ScreenCapture from 'expo-screen-capture';
-import { useEffect } from 'react';
+import { useCallback, useEffect, useRef } from 'react';
 import { Platform } from 'react-native';
 
 import { reportNonFinancialFailure } from '../services/diagnostics';
+import type { ThemeName } from '../ui/theme';
 
 const SCREEN_CAPTURE_KEY = 'nito-wallet-sensitive-content';
 
 /**
- * Protects wallet content for the full app lifetime. Android uses FLAG_SECURE;
- * iOS additionally receives a privacy overlay for app-switcher snapshots.
+ * Prevents capture for the full app lifetime (FLAG_SECURE on Android) while
+ * limiting the iOS app-switcher overlay to screens that display secrets.
  */
-export const useWalletScreenProtection = (): void => {
+export const useWalletScreenProtection = ({
+  protectIosAppSwitcher,
+  theme,
+}: {
+  protectIosAppSwitcher: boolean;
+  theme: ThemeName;
+}): void => {
+  const appSwitcherUpdateRef = useRef<Promise<void>>(Promise.resolve());
+  const queueAppSwitcherUpdate = useCallback((
+    enabled: boolean,
+    activeTheme: ThemeName,
+  ) => {
+    appSwitcherUpdateRef.current = appSwitcherUpdateRef.current
+      .then(() => (
+        enabled
+          ? ScreenCapture.enableAppSwitcherProtectionAsync(1, activeTheme)
+          : ScreenCapture.disableAppSwitcherProtectionAsync()
+      ))
+      .catch((caught) => {
+        reportNonFinancialFailure('wallet app switcher protection', caught);
+      });
+  }, []);
+
   useEffect(() => {
-    let mounted = true;
-    void (async () => {
-      try {
-        await ScreenCapture.preventScreenCaptureAsync(SCREEN_CAPTURE_KEY);
-        if (mounted && Platform.OS === 'ios') {
-          await ScreenCapture.enableAppSwitcherProtectionAsync(1);
-        }
-      } catch (caught) {
-        reportNonFinancialFailure('wallet screen capture protection', caught);
-      }
-    })();
+    void ScreenCapture.preventScreenCaptureAsync(SCREEN_CAPTURE_KEY).catch((caught) => {
+      reportNonFinancialFailure('wallet screen capture protection', caught);
+    });
 
     return () => {
-      mounted = false;
       void ScreenCapture.allowScreenCaptureAsync(SCREEN_CAPTURE_KEY).catch((caught) => {
         reportNonFinancialFailure('wallet screen capture protection cleanup', caught);
       });
-      if (Platform.OS === 'ios') {
-        void ScreenCapture.disableAppSwitcherProtectionAsync().catch((caught) => {
-          reportNonFinancialFailure('wallet app switcher protection cleanup', caught);
-        });
-      }
     };
   }, []);
+
+  useEffect(() => {
+    if (Platform.OS === 'ios') {
+      queueAppSwitcherUpdate(protectIosAppSwitcher, theme);
+    }
+  }, [protectIosAppSwitcher, queueAppSwitcherUpdate, theme]);
+
+  useEffect(() => () => {
+    if (Platform.OS === 'ios') {
+      queueAppSwitcherUpdate(false, theme);
+    }
+  }, [queueAppSwitcherUpdate, theme]);
 };
