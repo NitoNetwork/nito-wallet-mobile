@@ -41,6 +41,13 @@ export type ElectrumHistoryEntry = {
   amountSats?: number;
   feeSats?: number;
   blockTime?: number;
+  /**
+   * Set when the amounts were carried over from a mempool sighting so the row
+   * shows something useful straight away. A mempool transaction can still be
+   * replaced or dropped, so the confirmed block remains the source of truth:
+   * the entry stays queued for enrichment until the confirmed data lands.
+   */
+  provisional?: boolean;
 };
 
 export type ElectrumVerboseTransaction = {

@@ -35,7 +35,9 @@ export class HistoryEnrichmentQueue {
     const seen = new Set<string>();
     this.remaining = history.flatMap((entry, index) => {
       const key = historyEnrichmentKey(entry);
-      if (entry.direction !== undefined || attempted.has(key) || seen.has(key)) {
+      // A provisional row still needs the confirmed block, so it stays queued.
+      const enriched = entry.direction !== undefined && !entry.provisional;
+      if (enriched || attempted.has(key) || seen.has(key)) {
         return [];
       }
       seen.add(key);

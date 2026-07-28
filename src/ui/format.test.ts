@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   canShowHistoryExport,
-  escapeCsvCell,
+  escapeTsvCell,
   formatHomeBalance,
   historyAmountBreakdown,
   historyPageFromInput,
@@ -16,10 +16,13 @@ import { satoshisToNito } from '../wallet/transparentScan';
 import type { LanguageCode } from '../i18n';
 
 describe('ui format helpers', () => {
-  it('escapes CSV cells by doubling quotes and wrapping', () => {
-    expect(escapeCsvCell('a,b')).toBe('"a,b"');
-    expect(escapeCsvCell('say "hi"')).toBe('"say ""hi"""');
-    expect(escapeCsvCell(42)).toBe('"42"');
+  it('quotes a tab cell only when the value would break the table', () => {
+    expect(escapeTsvCell('a,b')).toBe('a,b');
+    expect(escapeTsvCell(42)).toBe('42');
+    expect(escapeTsvCell('2026-07-28T12:22:00Z')).toBe('2026-07-28T12:22:00Z');
+    expect(escapeTsvCell('say "hi"')).toBe('"say ""hi"""');
+    expect(escapeTsvCell('a\tb')).toBe('"a\tb"');
+    expect(escapeTsvCell('line\nbreak')).toBe('"line\nbreak"');
   });
 
   it('shortens an address keeping head and tail', () => {

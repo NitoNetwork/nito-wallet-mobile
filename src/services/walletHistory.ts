@@ -14,15 +14,34 @@ const mergeEnrichment = (
   base: ElectrumHistoryEntry,
   other: ElectrumHistoryEntry | undefined,
 ): ElectrumHistoryEntry => {
-  if (!other || base.direction !== undefined) return base;
+  if (!other || (base.direction !== undefined && !base.provisional)) return base;
   if (other.direction === undefined) return base;
+
+  // Same height: both describe the same confirmed state, take it as final.
+  if (other.height === base.height) {
+    return {
+      ...base,
+      direction: other.direction,
+      amountSats: other.amountSats,
+      feeSats: other.feeSats,
+      counterparty: other.counterparty,
+      blockTime: other.blockTime,
+      provisional: other.provisional,
+    };
+  }
+
+  // Different heights means the amounts come from a mempool sighting of a now
+  // confirmed transaction. Carry the stable fields so the row is readable at
+  // once, but never the block time — a mempool entry has none, and writing its
+  // null would strand the row without a date. The entry stays provisional so
+  // the confirmed block, which alone is authoritative, still overwrites it.
   return {
     ...base,
     direction: other.direction,
     amountSats: other.amountSats,
     feeSats: other.feeSats,
     counterparty: other.counterparty,
-    blockTime: other.blockTime,
+    provisional: true,
   };
 };
 

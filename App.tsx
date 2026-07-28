@@ -39,7 +39,7 @@ import {
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import nacl from 'tweetnacl';
 
-import { escapeCsvCell, isValidTransactionId, shortAddress, transactionExplorerUrl } from './src/ui/format';
+import { escapeTsvCell, isValidTransactionId, shortAddress, transactionExplorerUrl } from './src/ui/format';
 import { shouldShowBlockingLoadingOverlay } from './src/ui/loadingPolicy';
 import {
   appendSendRecipient,
@@ -1017,7 +1017,8 @@ function WalletApp({ theme, onSelectTheme }: {
   useEffect(() => {
     if (screen !== 'wallet' || !network.snapshot) return;
     const hasPending = network.snapshot.history.some(
-      (entry) => entry.direction === undefined && !enrichAttemptedRef.current.has(enrichKey(entry)),
+      (entry) => (entry.direction === undefined || entry.provisional)
+        && !enrichAttemptedRef.current.has(enrichKey(entry)),
     );
     if (hasPending) {
       walletNetworkController.requestOrQueueEnrichment(enrichWalletHistoryRef.current);
@@ -2292,15 +2293,18 @@ function WalletApp({ theme, onSelectTheme }: {
         if (!walletNetworkController.isCurrent(session)) return;
         const records = historyRecordsFromEntries(networkRef.current.snapshot?.history ?? []);
         const rows = historyExportCsvRows(records);
-        const csv = `\uFEFF${rows.map((row) => row.map(escapeCsvCell).join(',')).join('\r\n')}`;
+        // Tab separated rather than comma: a comma file collapses into a single
+        // column wherever the spreadsheet list separator is a semicolon, which
+        // is the default on French and German Windows. Tabs split everywhere.
+        const table = `\uFEFF${rows.map((row) => row.map(escapeTsvCell).join('\t')).join('\r\n')}`;
         const date = new Date().toISOString().slice(0, 10);
-        const uri = `${rootDirectory}nito-wallet-history-${date}.csv`;
-        await FileSystem.writeAsStringAsync(uri, csv, { encoding: FileSystem.EncodingType.UTF8 });
+        const uri = `${rootDirectory}nito-wallet-history-${date}.tsv`;
+        await FileSystem.writeAsStringAsync(uri, table, { encoding: FileSystem.EncodingType.UTF8 });
         if (!walletNetworkController.isCurrent(session)) return;
         await Sharing.shareAsync(uri, {
           dialogTitle: t('history.exportTitle'),
-          mimeType: 'text/csv',
-          UTI: 'public.comma-separated-values-text',
+          mimeType: 'text/tab-separated-values',
+          UTI: 'public.tab-separated-values-text',
         });
         if (!walletNetworkController.isCurrent(session)) return;
         setStatus(t('status.historyExported'));
@@ -2796,7 +2800,13 @@ function WalletApp({ theme, onSelectTheme }: {
         </KeyboardAvoidingView>
       </SafeAreaView>
       <Modal animationType="fade" onRequestClose={closeQrScanner} presentationStyle="fullScreen" visible={qrScannerOpen}>
-        <SafeAreaView style={styles.scannerSafeArea}>
+        {/*
+          A Modal renders in its own native view, outside the root provider, so
+          the SafeAreaView inside it measured no inset and the title slid under
+          the notch. Its own provider gives it the real system margins.
+        */}
+        <SafeAreaProvider>
+        <SafeAreaView edges={['top', 'bottom']} style={styles.scannerSafeArea}>
           <View style={styles.scannerHeader}>
             <Text style={styles.scannerTitle}>{t('send.scanQrTitle')}</Text>
             <Text style={styles.scannerHint}>{t('send.scanQrHint')}</Text>
@@ -2810,6 +2820,7 @@ function WalletApp({ theme, onSelectTheme }: {
             <Text style={styles.scannerCloseButtonText}>{t('actions.cancel')}</Text>
           </TouchableOpacity>
         </SafeAreaView>
+        </SafeAreaProvider>
       </Modal>
     </SafeAreaProvider>
   );

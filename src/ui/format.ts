@@ -1,7 +1,15 @@
 import type { LanguageCode } from '../i18n';
 import { formatNitoAmount } from '../i18n.amounts';
 
-export const escapeCsvCell = (value: string | number) => `"${String(value).replace(/"/g, '""')}"`;
+/**
+ * Quotes a cell only when it has to be. A tab file whose every field is wrapped
+ * in quotes is still valid, but spreadsheets then show the quotes on plain
+ * values, which is what made the exported header look inconsistent.
+ */
+export const escapeTsvCell = (value: string | number) => {
+  const text = String(value);
+  return /["\t\r\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+};
 
 export const shortAddress = (address: string) => `${address.slice(0, 13)}...${address.slice(-8)}`;
 

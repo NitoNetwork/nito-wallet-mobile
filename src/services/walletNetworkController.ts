@@ -239,9 +239,12 @@ export const mergeHistoryEnrichment = (
   const byTxid = new Map(records.map((record) => [record.txid, record]));
   const history = snapshot.history.map((entry) => {
     const record = byTxid.get(entry.txid);
-    if (!record || entry.direction !== undefined || record.blockHeight !== entry.height) {
+    const alreadyFinal = entry.direction !== undefined && !entry.provisional;
+    if (!record || alreadyFinal || record.blockHeight !== entry.height) {
       return entry;
     }
+    // Enrichment at the entry's own height is authoritative: it clears the
+    // provisional mark carried over from a mempool sighting.
     return {
       ...entry,
       direction: record.direction,
@@ -249,6 +252,7 @@ export const mergeHistoryEnrichment = (
       feeSats: record.feeSats,
       counterparty: record.counterparty,
       blockTime: record.blockTime ?? undefined,
+      provisional: undefined,
     };
   });
   return { ...snapshot, history };
@@ -429,7 +433,6 @@ export const synchronizeWalletNetwork = async (
         height: Math.max(currentNetwork.height, knownHeight),
         fullHistoryEnabled: currentNetwork.fullHistoryEnabled || cache.fullHistoryHeight > 0,
       });
-      if (!options.silent) ports.setStatus(ports.messages.walletSynced);
       return;
     }
 
@@ -460,13 +463,11 @@ export const synchronizeWalletNetwork = async (
       if (!ports.controller.isCurrent(session)) return;
       requireConnectedSession();
       publishNetwork(nextNetwork);
-      if (!options.silent) ports.setStatus(ports.messages.walletSynced);
       return;
     }
 
     if (!ports.controller.isCurrent(session)) return;
     if (!options.silent) {
-      ports.setStatus(wantsFullHistory ? ports.messages.syncingHistory : ports.messages.syncing);
       publishNetwork({
         ...ports.getNetwork(),
         status: 'syncing',
@@ -521,7 +522,6 @@ export const synchronizeWalletNetwork = async (
     if (!ports.controller.isCurrent(session)) return;
     requireConnectedSession();
     publishNetwork(nextNetwork);
-    if (!options.silent) ports.setStatus(ports.messages.walletSynced);
   } catch (caught) {
     if (!ports.controller.isCurrent(session)) return;
     const fallbackNetwork = ports.getNetwork();
