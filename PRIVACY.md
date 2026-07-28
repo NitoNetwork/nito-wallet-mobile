@@ -21,14 +21,21 @@ Nito Wallet is a lightweight client. Balances, unspent outputs and history are
 reported by the ElectrumX servers it connects to and are not independently
 verified with block Merkle proofs (no full SPV verification). A malicious or
 compromised server could therefore misreport balances or the result of a
-broadcast. The wallet mitigates this by using more than one server, but users
-who require full verification should run and connect to their own trusted node.
+broadcast. In official-server mode, the wallet can connect to more than one
+configured Nito ElectrumX server. In custom-server mode, it connects only to the
+selected server and does not automatically fall back to official servers. That
+custom server can associate every wallet address queried by the application
+with the same source IP address. Users who require full verification should run
+and connect to their own trusted node.
 
 ## Local data
 
 Wallet metadata, synchronization checkpoints and optional reconstructed history
 are stored locally. Removing the wallet from the application deletes its local
 vault and cached metadata but does not erase the public blockchain.
+
+The application enables platform screen-capture protection while it is running.
+On iOS, sensitive screens are also protected in application-switcher previews.
 
 The application does not include advertising or behavioral analytics.
 

@@ -10,16 +10,24 @@ transactions and new blocks, and to broadcast signed transactions.
 ## Features
 
 - Create a new 24-word recovery phrase.
+- Verify selected recovery words before protecting a newly created wallet.
 - Import a valid 12-word or 24-word BIP39 recovery phrase.
 - Protect wallet secrets with device-backed encrypted storage.
 - Unlock with a password and, when enabled, device biometrics.
+- Configure automatic locking after 1, 5 or 15 minutes of inactivity.
 - Discover standard transparent HD branches with gap-limit scanning.
 - Receive with a Bech32 address and QR code.
-- Send transparent transactions with local signing and a review step.
+- Send to multiple recipients in one transparent transaction with local signing
+  and a review step.
 - Consolidate many small outputs into a few equal-value outputs.
 - Import the full transaction history automatically, with each entry's amount
   and direction (received, sent or internal).
-- Export the reconstructed history as CSV.
+- Manually clear and resynchronize the full transaction history.
+- Export the reconstructed history as TSV.
+- Replace the official ElectrumX server list with one custom `wss://` server.
+- Switch between light and dark themes.
+- Prevent screen capture and protect sensitive iOS application-switcher
+  previews.
 - Use the interface in nine languages.
 
 Private Orchard/Bech32x functionality is intentionally not exposed until its
