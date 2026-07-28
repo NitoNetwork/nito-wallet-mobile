@@ -1,7 +1,11 @@
 import { describe, expect, it } from 'vitest';
 
 import type { ElectrumHistoryEntry } from '../network/electrum';
-import { normalizeWalletHistory } from './walletHistory';
+import {
+  mergeWalletHistoryPublication,
+  needsHistoryEnrichment,
+  normalizeWalletHistory,
+} from './walletHistory';
 
 const cached: ElectrumHistoryEntry = {
   txid: 'a'.repeat(64),
@@ -71,5 +75,57 @@ describe('normalizeWalletHistory', () => {
 
     expect(merged).toHaveLength(1);
     expect(merged[0]?.height).toBe(951_729);
+  });
+
+  it('never lets a partial publication regress enriched fields', () => {
+    const published = mergeWalletHistoryPublication(
+      [{
+        ...cached,
+        counterparty: 'sender',
+        blockTime: 1_753_000_123,
+      }],
+      [freshScan],
+      'partial',
+    );
+
+    expect(published).toEqual([
+      expect.objectContaining({
+        direction: 'received',
+        amountSats: 120_000,
+        feeSats: 0,
+        counterparty: 'sender',
+        blockTime: 1_753_000_123,
+      }),
+    ]);
+  });
+
+  it('lets an authoritative scan drop absent mempool rows and accept a lower reorg height', () => {
+    const droppedTxid = 'b'.repeat(64);
+    const published = mergeWalletHistoryPublication(
+      [
+        {
+          ...cached,
+          height: 102,
+          counterparty: 'sender',
+          blockTime: 1_753_000_123,
+        },
+        { txid: droppedTxid, height: 0, address: 'nito1qmempool' },
+      ],
+      [{ ...freshScan, height: 101 }],
+      'authoritative',
+    );
+
+    expect(published).toHaveLength(1);
+    expect(published[0]).toMatchObject({
+      txid: cached.txid,
+      height: 101,
+      direction: 'received',
+      amountSats: 120_000,
+      feeSats: 0,
+      counterparty: 'sender',
+      provisional: true,
+    });
+    expect(published[0]?.blockTime).toBeUndefined();
+    expect(needsHistoryEnrichment(published[0]!)).toBe(true);
   });
 });

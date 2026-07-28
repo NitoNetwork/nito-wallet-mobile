@@ -10,11 +10,17 @@ export type EnrichedHistoryRecord = {
   blockTime: number | null;
 };
 
+export type WalletHistoryPublicationMode = 'partial' | 'authoritative';
+
+export const needsHistoryEnrichment = (
+  entry: { direction?: unknown; provisional?: boolean },
+): boolean => entry.direction === undefined || entry.provisional === true;
+
 const mergeEnrichment = (
   base: ElectrumHistoryEntry,
   other: ElectrumHistoryEntry | undefined,
 ): ElectrumHistoryEntry => {
-  if (!other || (base.direction !== undefined && !base.provisional)) return base;
+  if (!other || !needsHistoryEnrichment(base)) return base;
   if (other.direction === undefined) return base;
 
   // Same height: both describe the same confirmed state, take it as final.
@@ -76,4 +82,21 @@ export const normalizeWalletHistory = (history: ElectrumHistoryEntry[]) => {
 
     return a.txid.localeCompare(b.txid);
   });
+};
+
+export const mergeWalletHistoryPublication = (
+  current: readonly ElectrumHistoryEntry[],
+  incoming: readonly ElectrumHistoryEntry[],
+  mode: WalletHistoryPublicationMode,
+): ElectrumHistoryEntry[] => {
+  if (mode === 'partial') {
+    return normalizeWalletHistory([...current, ...incoming]);
+  }
+
+  const currentByTxid = new Map(
+    normalizeWalletHistory([...current]).map((entry) => [entry.txid, entry]),
+  );
+  return normalizeWalletHistory([...incoming]).map((entry) => (
+    mergeEnrichment(entry, currentByTxid.get(entry.txid))
+  ));
 };

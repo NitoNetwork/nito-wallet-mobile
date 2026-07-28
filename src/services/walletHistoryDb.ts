@@ -6,7 +6,10 @@ import type { CachedTransactionOutput } from './historyExport';
 import { isDuplicateColumnError, retrySqliteWrite } from './sqliteReliability';
 import { runWalletStorageOperation } from './walletStorageError';
 import { normalizeWalletHistory } from './walletHistory';
-import type { EnrichedHistoryRecord } from './walletHistory';
+import type {
+  EnrichedHistoryRecord,
+  WalletHistoryPublicationMode,
+} from './walletHistory';
 
 export { normalizeWalletHistory } from './walletHistory';
 export type { EnrichedHistoryRecord } from './walletHistory';
@@ -30,6 +33,9 @@ type HistoryRow = {
   block_time: number | null;
 };
 
+type HistoryIdentityRow = {
+  txid: string;
+};
 
 type SyncStateRow = {
   full_history_height: number;
@@ -297,6 +303,7 @@ export const saveWalletHistoryCache = async (
   walletId: string,
   history: ElectrumHistoryEntry[],
   fullHistoryHeight: number,
+  historyMode: WalletHistoryPublicationMode = 'partial',
 ): Promise<void> => runWalletStorageOperation('wallet history cache write', async () => {
   const db = await openHistoryDb();
   const now = new Date().toISOString();
@@ -321,17 +328,69 @@ export const saveWalletHistoryCache = async (
            (wallet_id, txid, height, address, first_seen_at)
          VALUES ${values}
          ON CONFLICT(wallet_id, txid) DO UPDATE SET
+           amount_sats = CASE
+             WHEN wallet_transactions.height = excluded.height THEN wallet_transactions.amount_sats
+             ELSE NULL
+           END,
+           direction = CASE
+             WHEN wallet_transactions.height = excluded.height THEN wallet_transactions.direction
+             ELSE NULL
+           END,
+           fee_sats = CASE
+             WHEN wallet_transactions.height = excluded.height THEN wallet_transactions.fee_sats
+             ELSE NULL
+           END,
+           counterparty = CASE
+             WHEN wallet_transactions.height = excluded.height THEN wallet_transactions.counterparty
+             ELSE NULL
+           END,
+           block_time = CASE
+             WHEN wallet_transactions.height = excluded.height THEN wallet_transactions.block_time
+             ELSE NULL
+           END,
+           enriched_at = CASE
+             WHEN wallet_transactions.height = excluded.height THEN wallet_transactions.enriched_at
+             ELSE NULL
+           END,
            height = excluded.height,
            address = excluded.address`,
         bindings,
       );
     }
 
+    if (historyMode === 'authoritative') {
+      const currentTxids = new Set(normalized.map((entry) => entry.txid));
+      const storedHistory = await db.getAllAsync<HistoryIdentityRow>(
+        'SELECT txid FROM wallet_transactions WHERE wallet_id = ?',
+        walletId,
+      );
+      const staleTxids = storedHistory
+        .map((row) => row.txid)
+        .filter((txid) => !currentTxids.has(txid));
+      for (
+        let offset = 0;
+        offset < staleTxids.length;
+        offset += SQLITE_TXID_QUERY_CHUNK_SIZE
+      ) {
+        const chunk = staleTxids.slice(offset, offset + SQLITE_TXID_QUERY_CHUNK_SIZE);
+        const placeholders = chunk.map(() => '?').join(', ');
+        await db.runAsync(
+          `DELETE FROM wallet_transactions
+           WHERE wallet_id = ? AND txid IN (${placeholders})`,
+          walletId,
+          ...chunk,
+        );
+      }
+    }
+
+    const watermarkUpdate = historyMode === 'authoritative'
+      ? 'excluded.full_history_height'
+      : 'MAX(wallet_sync_state.full_history_height, excluded.full_history_height)';
     await db.runAsync(
       `INSERT INTO wallet_sync_state (wallet_id, full_history_height, updated_at)
        VALUES (?, ?, ?)
        ON CONFLICT(wallet_id) DO UPDATE SET
-         full_history_height = MAX(wallet_sync_state.full_history_height, excluded.full_history_height),
+         full_history_height = ${watermarkUpdate},
          updated_at = excluded.updated_at`,
       walletId,
       Math.max(0, fullHistoryHeight),

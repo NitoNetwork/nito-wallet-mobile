@@ -6,6 +6,7 @@ import type { TransparentWalletSnapshot } from '../wallet/transparentScan';
 import {
   WalletNetworkController,
   canUseFreshHistoryCache,
+  mergeHistoryEnrichment,
   mergeWalletNetworkPublication,
   synchronizeWalletNetwork,
 } from './walletNetworkController';
@@ -472,6 +473,112 @@ describe('wallet network publication invariant', () => {
         counterparty: 'recipient-address',
       }),
     ]);
+  });
+
+  it('lets only an authoritative publication remove stale mempool and apply a lower height', () => {
+    const staleMempool = {
+      txid: 'c'.repeat(64),
+      height: 0,
+      address: wallet.address,
+    };
+    const current: NetworkState = {
+      ...enrichedNetwork,
+      snapshot: {
+        ...snapshot,
+        history: [
+          { ...enrichedEntry, height: 105 },
+          staleMempool,
+        ],
+      },
+    };
+    const incoming: NetworkState = {
+      ...network,
+      snapshot: {
+        ...snapshot,
+        history: [{ txid, height: 103, address: wallet.address }],
+      },
+    };
+
+    const partial = mergeWalletNetworkPublication(current, incoming);
+    expect(partial.snapshot?.history).toEqual(expect.arrayContaining([
+      expect.objectContaining({ txid, height: 105 }),
+      staleMempool,
+    ]));
+
+    const authoritative = mergeWalletNetworkPublication(
+      current,
+      incoming,
+      true,
+      'authoritative',
+    );
+    expect(authoritative.snapshot?.history).toEqual([
+      expect.objectContaining({
+        txid,
+        height: 103,
+        direction: 'sent',
+        amountSats: 42_000_000,
+        feeSats: 12_345,
+        counterparty: 'recipient-address',
+        provisional: true,
+      }),
+    ]);
+  });
+
+  it('clears provisional data only after enrichment at a confirmed height', () => {
+    const provisional = {
+      ...enrichedEntry,
+      height: 0,
+      provisional: true,
+    };
+    const mempoolSnapshot = mergeHistoryEnrichment(
+      { ...snapshot, history: [provisional] },
+      [{
+        txid,
+        status: 'pending',
+        blockHeight: 0,
+        blockTime: null,
+        direction: 'sent',
+        counterparty: 'recipient-address',
+        amountSats: 42_000_000,
+        feeSats: 12_345,
+      }],
+    );
+    expect(mempoolSnapshot.history[0]?.provisional).toBe(true);
+
+    const confirmedBase = mergeWalletNetworkPublication(
+      { ...network, snapshot: mempoolSnapshot },
+      {
+        ...network,
+        snapshot: {
+          ...snapshot,
+          history: [{ txid, height: 103, address: wallet.address }],
+        },
+      },
+      true,
+      'authoritative',
+    );
+    const confirmed = mergeHistoryEnrichment(
+      confirmedBase.snapshot!,
+      [{
+        txid,
+        status: 'confirmed',
+        blockHeight: 103,
+        blockTime: 1_753_000_456,
+        direction: 'sent',
+        counterparty: 'recipient-address',
+        amountSats: 42_000_000,
+        feeSats: 12_345,
+      }],
+    );
+
+    expect(confirmed.history[0]).toMatchObject({
+      txid,
+      height: 103,
+      direction: 'sent',
+      amountSats: 42_000_000,
+      blockTime: 1_753_000_456,
+    });
+    expect(confirmed.history[0]?.provisional).toBeUndefined();
   });
 
   it('never carries history across different wallet owners', () => {

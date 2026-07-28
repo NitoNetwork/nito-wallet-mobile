@@ -161,6 +161,10 @@ import {
 } from './src/services/vault';
 import type { WalletSessionToken } from './src/services/walletSession';
 import {
+  needsHistoryEnrichment,
+  type WalletHistoryPublicationMode,
+} from './src/services/walletHistory';
+import {
   WalletNetworkController,
   createEmptyNetworkState,
   enrichHistorySnapshot,
@@ -415,11 +419,13 @@ function WalletApp({ theme, onSelectTheme }: {
   const publishNetworkState = useCallback((
     incoming: NetworkState,
     walletAddress = walletRef.current?.address ?? null,
+    historyMode: WalletHistoryPublicationMode = 'partial',
   ): NetworkState => {
     const nextNetwork = mergeWalletNetworkPublication(
       networkRef.current,
       incoming,
       walletAddress !== null && networkOwnerAddressRef.current === walletAddress,
+      historyMode,
     );
     networkOwnerAddressRef.current = walletAddress;
     networkRef.current = nextNetwork;
@@ -984,8 +990,12 @@ function WalletApp({ theme, onSelectTheme }: {
       readHistoryCache: (address) => readOptionalCache(() => loadWalletHistoryCache(address)),
       saveHistory: saveWalletHistoryCache,
       saveSnapshot: saveWalletSnapshotCache,
-      publishNetwork: (nextNetwork) => {
-        const publishedNetwork = publishNetworkState(nextNetwork);
+      publishNetwork: (nextNetwork, historyMode) => {
+        const publishedNetwork = publishNetworkState(
+          nextNetwork,
+          walletRef.current?.address ?? null,
+          historyMode,
+        );
         if (
           publishedNetwork.status === 'connected'
           && releaseFailedHistoryEnrichmentAttempts(
@@ -1015,7 +1025,7 @@ function WalletApp({ theme, onSelectTheme }: {
   useEffect(() => {
     if (screen !== 'wallet' || !network.snapshot) return;
     const hasPending = network.snapshot.history.some(
-      (entry) => (entry.direction === undefined || entry.provisional)
+      (entry) => needsHistoryEnrichment(entry)
         && !enrichAttemptedRef.current.has(enrichKey(entry)),
     );
     if (hasPending) {
@@ -2217,7 +2227,7 @@ function WalletApp({ theme, onSelectTheme }: {
         try {
           const snapshot = networkRef.current.snapshot;
           if (!snapshot || !walletNetworkController.isCurrent(session)) return;
-          const missing = snapshot.history.filter((entry) => entry.direction === undefined);
+          const missing = snapshot.history.filter(needsHistoryEnrichment);
 
           if (missing.length > 0) {
             const client = electrumClientRef.current || createElectrumClient();
@@ -2354,7 +2364,7 @@ function WalletApp({ theme, onSelectTheme }: {
         }
         if (!walletNetworkController.isCurrent(session)) return;
         const remaining = networkRef.current.snapshot?.history.some(
-          (entry) => entry.direction === undefined,
+          needsHistoryEnrichment,
         );
         if (networkRef.current.status === 'connected' && !remaining) {
           setStatus(t('status.historyResynchronized'));

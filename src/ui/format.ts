@@ -1,5 +1,6 @@
 import type { LanguageCode } from '../i18n';
 import { formatNitoAmount } from '../i18n.amounts';
+import { needsHistoryEnrichment } from '../services/walletHistory';
 
 /**
  * Quotes a cell only when it has to be. A tab file whose every field is wrapped
@@ -24,13 +25,13 @@ export const canShowHistoryExport = ({
   historySyncing,
   networkStatus,
 }: {
-  entries: readonly { direction?: unknown }[];
+  entries: readonly { direction?: unknown; provisional?: boolean }[];
   historyProgress: { done: number; total: number } | null;
   historySyncing: boolean;
   networkStatus: string;
 }): boolean =>
   entries.length > 0
-  && entries.every((entry) => entry.direction !== undefined)
+  && entries.every((entry) => !needsHistoryEnrichment(entry))
   && historyProgress === null
   && !historySyncing
   && networkStatus !== 'syncing';

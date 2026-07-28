@@ -23,7 +23,12 @@ import {
   DirtySyncQueue,
   type DirtySyncOptions,
 } from './syncDirtyQueue';
-import { normalizeWalletHistory } from './walletHistory';
+import {
+  mergeWalletHistoryPublication,
+  needsHistoryEnrichment,
+  normalizeWalletHistory,
+  type WalletHistoryPublicationMode,
+} from './walletHistory';
 import {
   WalletSessionGuard,
   type WalletSessionToken,
@@ -52,6 +57,7 @@ export const mergeWalletNetworkPublication = (
   current: NetworkState,
   incoming: NetworkState,
   sameWallet = true,
+  historyMode: WalletHistoryPublicationMode = 'partial',
 ): NetworkState => {
   if (!sameWallet || !current.snapshot || !incoming.snapshot) {
     return incoming;
@@ -61,10 +67,11 @@ export const mergeWalletNetworkPublication = (
     ...incoming,
     snapshot: {
       ...incoming.snapshot,
-      history: normalizeWalletHistory([
-        ...current.snapshot.history,
-        ...incoming.snapshot.history,
-      ]),
+      history: mergeWalletHistoryPublication(
+        current.snapshot.history,
+        incoming.snapshot.history,
+        historyMode,
+      ),
     },
   };
 };
@@ -239,8 +246,7 @@ export const mergeHistoryEnrichment = (
   const byTxid = new Map(records.map((record) => [record.txid, record]));
   const history = snapshot.history.map((entry) => {
     const record = byTxid.get(entry.txid);
-    const alreadyFinal = entry.direction !== undefined && !entry.provisional;
-    if (!record || alreadyFinal || record.blockHeight !== entry.height) {
+    if (!record || !needsHistoryEnrichment(entry) || record.blockHeight !== entry.height) {
       return entry;
     }
     // Enrichment at the entry's own height is authoritative: it clears the
@@ -252,7 +258,7 @@ export const mergeHistoryEnrichment = (
       feeSats: record.feeSats,
       counterparty: record.counterparty,
       blockTime: record.blockTime ?? undefined,
-      provisional: undefined,
+      provisional: record.blockHeight > 0 ? undefined : entry.provisional,
     };
   });
   return { ...snapshot, history };
@@ -327,13 +333,17 @@ type WalletNetworkSyncPorts = {
     walletAddress: string,
     history: TransparentWalletSnapshot['history'],
     height: number,
+    historyMode: WalletHistoryPublicationMode,
   ) => Promise<void>;
   saveSnapshot: (
     walletAddress: string,
     snapshot: TransparentWalletSnapshot,
     height: number,
   ) => Promise<void>;
-  publishNetwork: (network: NetworkState) => void;
+  publishNetwork: (
+    network: NetworkState,
+    historyMode?: WalletHistoryPublicationMode,
+  ) => void;
   setError: (message: string) => void;
   setStatus: (message: string) => void;
   setHistorySyncing: (syncing: boolean) => void;
@@ -354,11 +364,21 @@ export const synchronizeWalletNetwork = async (
 ): Promise<void> => {
   const activeWallet = ports.getWallet();
   const currentNetwork = ports.getNetwork();
-  const publishNetwork = (incoming: NetworkState) => {
-    ports.publishNetwork(mergeWalletNetworkPublication(
+  const publishNetwork = (
+    incoming: NetworkState,
+    historyMode: WalletHistoryPublicationMode = 'partial',
+  ) => {
+    const merged = mergeWalletNetworkPublication(
       ports.getNetwork(),
       incoming,
-    ));
+      true,
+      historyMode,
+    );
+    if (historyMode === 'authoritative') {
+      ports.publishNetwork(merged, historyMode);
+    } else {
+      ports.publishNetwork(merged);
+    }
   };
   if (!activeWallet) {
     ports.setError(ports.messages.noActiveWallet);
@@ -405,11 +425,11 @@ export const synchronizeWalletNetwork = async (
       !cacheReadFailed
       && wantsFullHistory
       && knownHeight > 0
-      && cache.fullHistoryHeight >= knownHeight
+      && cache.fullHistoryHeight === knownHeight
     );
     const heightUnchanged = (
       knownHeight > 0
-      && currentNetwork.height >= knownHeight
+      && currentNetwork.height === knownHeight
       && Boolean(currentNetwork.snapshot)
     );
 
@@ -492,16 +512,30 @@ export const synchronizeWalletNetwork = async (
     });
     if (!ports.controller.isCurrent(session)) return;
     requireConnectedSession();
-    const mergedHistory = normalizeWalletHistory([
+    const historyMode: WalletHistoryPublicationMode = (
+      wantsFullHistory
+      && !options.pendingOnly
+      && options.onlyAddresses === undefined
+    ) ? 'authoritative' : 'partial';
+    const previousHistory = normalizeWalletHistory([
       ...cache.history,
       ...(ports.getNetwork().snapshot?.history ?? []),
-      ...snapshot.history,
     ]);
+    const mergedHistory = mergeWalletHistoryPublication(
+      previousHistory,
+      snapshot.history,
+      historyMode,
+    );
     if (wantsFullHistory) {
       snapshot = { ...snapshot, history: mergedHistory };
       if (!cacheAlreadyFresh || options.force || options.rescanGap) {
         requireConnectedSession();
-        await ports.saveHistory(activeWallet.address, mergedHistory, knownHeight);
+        await ports.saveHistory(
+          activeWallet.address,
+          mergedHistory,
+          historyMode === 'authoritative' ? knownHeight : cache.fullHistoryHeight,
+          historyMode,
+        );
         if (!ports.controller.isCurrent(session)) return;
       }
     }
@@ -518,7 +552,7 @@ export const synchronizeWalletNetwork = async (
     await ports.saveSnapshot(activeWallet.address, toQuickWalletSnapshot(snapshot), knownHeight);
     if (!ports.controller.isCurrent(session)) return;
     requireConnectedSession();
-    publishNetwork(nextNetwork);
+    publishNetwork(nextNetwork, historyMode);
   } catch (caught) {
     if (!ports.controller.isCurrent(session)) return;
     const fallbackNetwork = ports.getNetwork();

@@ -9,6 +9,7 @@ import {
   recordHistoryEnrichmentBatchOutcome,
   releaseFailedHistoryEnrichmentAttempts,
 } from './historyEnrichmentQueue';
+import { needsHistoryEnrichment } from './walletHistory';
 
 const history = Array.from({ length: 48 }, (_, index): ElectrumHistoryEntry => ({
   txid: `tx-${index}`,
@@ -17,6 +18,19 @@ const history = Array.from({ length: 48 }, (_, index): ElectrumHistoryEntry => (
 }));
 
 describe('HistoryEnrichmentQueue', () => {
+  it('uses one lifecycle predicate for raw, provisional, and final entries', () => {
+    expect(needsHistoryEnrichment(history[0]!)).toBe(true);
+    expect(needsHistoryEnrichment({
+      ...history[0]!,
+      direction: 'received',
+      provisional: true,
+    })).toBe(true);
+    expect(needsHistoryEnrichment({
+      ...history[0]!,
+      direction: 'received',
+    })).toBe(false);
+  });
+
   it('serves the visible page first and reprioritizes a page opened during enrichment', () => {
     const queue = new HistoryEnrichmentQueue(history, {
       initialPage: 2,

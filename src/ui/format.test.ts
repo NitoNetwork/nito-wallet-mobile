@@ -53,6 +53,10 @@ describe('ui format helpers', () => {
 
     expect(canShowHistoryExport(completeState)).toBe(true);
     expect(canShowHistoryExport({ ...completeState, entries: [{ direction: undefined }] })).toBe(false);
+    expect(canShowHistoryExport({
+      ...completeState,
+      entries: [{ direction: 'received', provisional: true }],
+    })).toBe(false);
     expect(canShowHistoryExport({ ...completeState, entries: [] })).toBe(false);
     expect(canShowHistoryExport({ ...completeState, historyProgress: { done: 1, total: 2 } })).toBe(false);
     expect(canShowHistoryExport({ ...completeState, historySyncing: true })).toBe(false);

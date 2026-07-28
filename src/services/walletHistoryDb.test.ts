@@ -15,7 +15,7 @@ vi.mock('./diagnostics', () => diagnostics);
 
 const db = {
   execAsync: vi.fn(async (_sql: string) => undefined),
-  getAllAsync: vi.fn(async (_sql: string, ..._params: unknown[]) => []),
+  getAllAsync: vi.fn(async (_sql: string, ..._params: unknown[]): Promise<unknown[]> => []),
   getFirstAsync: vi.fn(async (sql: string) => (
     sql === 'PRAGMA user_version' ? { user_version: 1 } : null
   )),
@@ -211,17 +211,27 @@ describe('wallet transaction output cache', () => {
         height: 1,
         address: 'old-address',
         firstSeenAt: 'original-first-seen',
-        amountSats: null,
-        direction: null,
-        feeSats: null,
-        counterparty: null,
+        amountSats: 999,
+        direction: 'received',
+        feeSats: 1,
+        counterparty: 'stale-counterparty',
+        blockTime: 1_700_000_000,
+      }],
+      ['wallet-address:stale-mempool', {
+        height: 0,
+        address: 'mempool-address',
+        firstSeenAt: 'mempool-first-seen',
+        amountSats: 500,
+        direction: 'received',
+        feeSats: 0,
+        counterparty: 'mempool-counterparty',
         blockTime: null,
       }],
     ]);
     const outputs = new Map<string, number>([
       ['wallet-address:existing:0:wallet-address', 1],
     ]);
-    let fullHistoryHeight = 0;
+    let fullHistoryHeight = 953_000;
     const finalized = vi.fn(async () => undefined);
     const bindingsFrom = (params: unknown[]): unknown[] => (
       params.length === 1 && Array.isArray(params[0]) ? params[0] : params
@@ -255,6 +265,13 @@ describe('wallet transaction output cache', () => {
     db.getFirstAsync.mockImplementation(async (sql: string) => (
       sql === 'PRAGMA user_version' ? { user_version: 2 } : null
     ));
+    db.getAllAsync.mockImplementation(async (sql: string) => (
+      String(sql).includes('SELECT txid FROM wallet_transactions')
+        ? [...transactions.entries()]
+            .filter(([key]) => key.startsWith('wallet-address:'))
+            .map(([key]) => ({ txid: key.slice('wallet-address:'.length) }))
+        : []
+    ));
     db.runAsync.mockImplementation(async (sql: string, ...params: unknown[]) => {
       const source = String(sql);
       const bindings = bindingsFrom(params);
@@ -273,6 +290,13 @@ describe('wallet transaction output cache', () => {
             ...existing,
             height: Number(height),
             address: String(address),
+            ...(existing.height === Number(height) ? {} : {
+              amountSats: null,
+              direction: null,
+              feeSats: null,
+              counterparty: null,
+              blockTime: null,
+            }),
           } : {
             height: Number(height),
             address: String(address),
@@ -286,8 +310,15 @@ describe('wallet transaction output cache', () => {
         }
       } else if (source.includes('UPDATE wallet_transactions')) {
         applyEnrichment(bindings);
+      } else if (source.includes('DELETE FROM wallet_transactions')) {
+        const [walletId, ...txids] = bindings.map(String);
+        for (const txid of txids) {
+          transactions.delete(`${walletId}:${txid}`);
+        }
       } else if (source.includes('INSERT INTO wallet_sync_state')) {
-        fullHistoryHeight = Math.max(fullHistoryHeight, Number(bindings[1]));
+        fullHistoryHeight = source.includes('MAX(wallet_sync_state.full_history_height')
+          ? Math.max(fullHistoryHeight, Number(bindings[1]))
+          : Number(bindings[1]);
       } else if (source.includes('INSERT INTO wallet_transaction_outputs')) {
         for (let offset = 0; offset < bindings.length; offset += 5) {
           const [walletId, txid, outputIndex, valueSats, address] = bindings.slice(
@@ -324,7 +355,19 @@ describe('wallet transaction output cache', () => {
         { txid: 'inserted', height: 20, address: 'inserted-address' },
       ],
       952_900,
+      'authoritative',
     );
+    expect(transactions.get('wallet-address:existing')).toMatchObject({
+      height: 30,
+      amountSats: null,
+      direction: null,
+      feeSats: null,
+      counterparty: null,
+      blockTime: null,
+    });
+    expect(transactions.has('wallet-address:stale-mempool')).toBe(false);
+    expect(fullHistoryHeight).toBe(952_900);
+
     await saveHistoryEnrichmentBatch(
       'wallet-address',
       [
@@ -490,10 +533,9 @@ describe('wallet transaction output cache', () => {
     ));
     expect(historyInsertCalls).toHaveLength(3);
     expect(String(historyInsertCalls[0]?.[0])).toContain(
-      `ON CONFLICT(wallet_id, txid) DO UPDATE SET
-           height = excluded.height,
-           address = excluded.address`,
+      'WHEN wallet_transactions.height = excluded.height THEN wallet_transactions.amount_sats',
     );
+    expect(String(historyInsertCalls[0]?.[0])).toContain('height = excluded.height');
     expect(historyInsertCalls.map((call) => {
       const params = call.slice(1);
       return params.length === 1 && Array.isArray(params[0]) ? params[0].length : params.length;
