@@ -13,8 +13,17 @@ export type EnrichedHistoryRecord = {
 export type WalletHistoryPublicationMode = 'partial' | 'authoritative';
 
 export const needsHistoryEnrichment = (
-  entry: { direction?: unknown; provisional?: boolean },
-): boolean => entry.direction === undefined || entry.provisional === true;
+  entry: {
+    height?: number;
+    direction?: unknown;
+    provisional?: boolean;
+    blockTime?: number | null;
+  },
+): boolean => (
+  entry.direction === undefined
+  || entry.provisional === true
+  || (typeof entry.height === 'number' && entry.height > 0 && entry.blockTime == null)
+);
 
 const mergeEnrichment = (
   base: ElectrumHistoryEntry,

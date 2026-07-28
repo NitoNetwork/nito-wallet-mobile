@@ -28,6 +28,7 @@ describe('HistoryEnrichmentQueue', () => {
     expect(needsHistoryEnrichment({
       ...history[0]!,
       direction: 'received',
+      blockTime: 1_700_000_000,
     })).toBe(false);
   });
 
@@ -57,7 +58,15 @@ describe('HistoryEnrichmentQueue', () => {
   it('excludes already attempted or enriched entries without duplicating work', () => {
     const attempted = new Set(['tx-1:9999']);
     const mixed = history.slice(0, 14).map((entry, index) => (
-      index === 2 ? { ...entry, direction: 'received' as const, amountSats: 1, feeSats: 0 } : entry
+      index === 2
+        ? {
+            ...entry,
+            direction: 'received' as const,
+            amountSats: 1,
+            feeSats: 0,
+            blockTime: 1_700_000_000,
+          }
+        : entry
     ));
     const queue = new HistoryEnrichmentQueue(mixed, {
       attempted,

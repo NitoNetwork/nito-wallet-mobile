@@ -77,6 +77,18 @@ describe('normalizeWalletHistory', () => {
     expect(merged[0]?.height).toBe(951_729);
   });
 
+  it('re-enriches a confirmed cached row whose block time is missing on the next scan', () => {
+    expect(needsHistoryEnrichment({
+      ...cached,
+      blockTime: undefined,
+    })).toBe(true);
+    expect(needsHistoryEnrichment({
+      ...cached,
+      height: 0,
+      blockTime: undefined,
+    })).toBe(false);
+  });
+
   it('never lets a partial publication regress enriched fields', () => {
     const published = mergeWalletHistoryPublication(
       [{
