@@ -39,7 +39,7 @@ const translations: Record<LanguageCode, ConsolidationCopy> = {
     successTitle: 'Consolidation sent',
     successBody: 'Consolidation sent. Returned funds are shown as pending until confirmed.',
     partialTitle: 'Partially sent',
-    partialBody: 'Some transactions were sent. The remaining transactions are still ready for review.',
+    partialBody: 'Some transactions were sent. The remaining transactions are ready to review and send.',
     unavailable: 'More confirmed spendable outputs are required to consolidate.',
   },
   zh: {
@@ -79,7 +79,7 @@ const translations: Record<LanguageCode, ConsolidationCopy> = {
     successTitle: 'Konsolidierung gesendet',
     successBody: 'Die Konsolidierung wurde gesendet. Die zurückkommenden Mittel erscheinen bis zur Bestätigung als ausstehend.',
     partialTitle: 'Teilweise gesendet',
-    partialBody: 'Ein Teil der Transaktionen wurde gesendet. Die übrigen stehen weiterhin zur Prüfung bereit.',
+    partialBody: 'Ein Teil der Transaktionen wurde gesendet. Die übrigen können geprüft und gesendet werden.',
     unavailable: 'Für eine Konsolidierung werden mehr bestätigte, ausgabefähige Ausgänge benötigt.',
   },
   es: {
@@ -99,7 +99,7 @@ const translations: Record<LanguageCode, ConsolidationCopy> = {
     successTitle: 'Consolidación enviada',
     successBody: 'Consolidación enviada. Los fondos devueltos aparecerán pendientes hasta su confirmación.',
     partialTitle: 'Envío parcial',
-    partialBody: 'Se enviaron algunas transacciones. Las restantes siguen listas para revisión.',
+    partialBody: 'Se enviaron algunas transacciones. Las restantes están listas para revisar y enviar.',
     unavailable: 'Se necesitan más salidas confirmadas y disponibles para consolidar.',
   },
   fr: {
@@ -119,7 +119,7 @@ const translations: Record<LanguageCode, ConsolidationCopy> = {
     successTitle: 'Consolidation envoyée',
     successBody: 'Consolidation envoyée. Les fonds retournés apparaissent en attente jusqu’à leur confirmation.',
     partialTitle: 'Envoi partiel',
-    partialBody: 'Certaines transactions ont été envoyées. Les autres restent prêtes à être vérifiées.',
+    partialBody: 'Certaines transactions ont été envoyées. Les autres restent prêtes à être vérifiées et envoyées.',
     unavailable: 'Il faut davantage de sorties confirmées et disponibles pour consolider.',
   },
   ja: {
@@ -139,7 +139,7 @@ const translations: Record<LanguageCode, ConsolidationCopy> = {
     successTitle: '統合を送信しました',
     successBody: '統合を送信しました。戻ってくる資金は承認されるまで未確定として表示されます。',
     partialTitle: '一部を送信しました',
-    partialBody: '一部のトランザクションを送信しました。残りは引き続き確認待ちです。',
+    partialBody: '一部のトランザクションを送信しました。残りは引き続き確認して送信できます。',
     unavailable: '統合するには、承認済みで使用可能な出力がさらに必要です。',
   },
   tr: {
@@ -159,7 +159,7 @@ const translations: Record<LanguageCode, ConsolidationCopy> = {
     successTitle: 'Birleştirme gönderildi',
     successBody: 'Birleştirme gönderildi. Geri dönen fonlar onaylanana kadar bekliyor olarak görünecek.',
     partialTitle: 'Kısmen gönderildi',
-    partialBody: 'İşlemlerin bir kısmı gönderildi. Kalanlar hâlâ incelemeye hazır.',
+    partialBody: 'İşlemlerin bir kısmı gönderildi. Kalanlar incelenmeye ve gönderilmeye hazır.',
     unavailable: 'Birleştirme için daha fazla onaylanmış, harcanabilir çıktı gerekir.',
   },
   pt: {
@@ -179,7 +179,7 @@ const translations: Record<LanguageCode, ConsolidationCopy> = {
     successTitle: 'Consolidação enviada',
     successBody: 'Consolidação enviada. Os fundos devolvidos aparecem como pendentes até serem confirmados.',
     partialTitle: 'Envio parcial',
-    partialBody: 'Algumas transações foram enviadas. As restantes continuam prontas para revisão.',
+    partialBody: 'Algumas transações foram enviadas. As restantes continuam prontas para revisão e envio.',
     unavailable: 'São necessárias mais saídas confirmadas e disponíveis para consolidar.',
   },
   ru: {
@@ -199,7 +199,7 @@ const translations: Record<LanguageCode, ConsolidationCopy> = {
     successTitle: 'Консолидация отправлена',
     successBody: 'Консолидация отправлена. Возвращённые средства будут отображаться как ожидающие до подтверждения.',
     partialTitle: 'Отправлено частично',
-    partialBody: 'Часть транзакций отправлена. Остальные по-прежнему готовы к проверке.',
+    partialBody: 'Часть транзакций отправлена. Остальные готовы к проверке и отправке.',
     unavailable: 'Для консолидации требуется больше подтверждённых доступных выходов.',
   },
 };

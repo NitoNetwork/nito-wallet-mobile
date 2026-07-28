@@ -28,6 +28,41 @@ export const NITO_SIGNER_NETWORK = {
 export const DEFAULT_FEE_PER_VBYTE = 2n;
 export const DUST_LIMIT_SATS = 546n;
 
+export type TransparentSendErrorCode =
+  | 'invalid-amount-format'
+  | 'amount-not-positive'
+  | 'amount-below-dust'
+  | 'signing-material-unavailable'
+  | 'legacy-signing-data-unavailable'
+  | 'no-spendable-utxo'
+  | 'change-address-unavailable'
+  | 'recipient-required'
+  | 'recipient-address-required'
+  | 'recipient-output-dust'
+  | 'max-recipient-unavailable'
+  | 'insufficient-funds'
+  | 'consolidation-not-enough-utxos'
+  | 'consolidation-unavailable'
+  | 'consolidation-too-large';
+
+export class TransparentSendError extends Error {
+  readonly code: TransparentSendErrorCode;
+  readonly detail?: unknown;
+
+  constructor(code: TransparentSendErrorCode, detail?: unknown) {
+    super(code);
+    this.name = 'TransparentSendError';
+    this.code = code;
+    this.detail = detail;
+  }
+}
+
+export const assertTransparentSendFitsAvailable = (fitsAvailable: boolean): void => {
+  if (!fitsAvailable) {
+    throw new TransparentSendError('insufficient-funds');
+  }
+};
+
 export type PreparedTransparentTx = {
   txid: string;
   hex: string;
@@ -75,18 +110,18 @@ export const parseNitoAmountToSats = (amount: string) => {
   const normalized = amount.trim().replace(/[\s\u00a0\u202f']/g, '').replace(',', '.');
 
   if (!/^\d+(\.\d{1,8})?$/.test(normalized)) {
-    throw new Error('Montant invalide. Utilise au maximum 8 decimales.');
+    throw new TransparentSendError('invalid-amount-format');
   }
 
   const [whole = '0', fraction = ''] = normalized.split('.');
   const sats = BigInt(whole) * 100_000_000n + BigInt(fraction.padEnd(8, '0'));
 
   if (sats <= 0n) {
-    throw new Error('Le montant doit etre superieur a zero.');
+    throw new TransparentSendError('amount-not-positive');
   }
 
   if (sats < DUST_LIMIT_SATS) {
-    throw new Error('Montant trop faible.');
+    throw new TransparentSendError('amount-below-dust');
   }
 
   return sats;
@@ -163,7 +198,10 @@ const prepareSpendableInputs = async (
   for (const { utxo, owner } of candidates) {
     const material = materialByPath.get(owner.path);
     if (!material) {
-      throw new Error(`Native HD material unavailable for ${owner.path}.`);
+      throw new TransparentSendError(
+        'signing-material-unavailable',
+        new Error(`Native HD material unavailable for ${owner.path}.`),
+      );
     }
     const spend = spendForMaterial(material);
 
@@ -175,7 +213,7 @@ const prepareSpendableInputs = async (
 
     if (owner.scriptType === 'p2pkh') {
       if (!utxo.rawTx) {
-        throw new Error('Fonds legacy visibles mais donnees de signature indisponibles. Reessaie apres synchronisation.');
+        throw new TransparentSendError('legacy-signing-data-unavailable');
       }
 
       input.nonWitnessUtxo = utxo.rawTx;
@@ -200,7 +238,7 @@ const prepareSpendableInputs = async (
   }
 
   if (spendable.length === 0) {
-    throw new Error('No confirmed UTXO available for this send.');
+    throw new TransparentSendError('no-spendable-utxo');
   }
 
   return {
@@ -216,7 +254,7 @@ const resolveChangeAddress = (snapshot: TransparentWalletSnapshot, changeAddress
   const resolvedChangeAddress = changeAddress || primaryChange;
 
   if (!resolvedChangeAddress) {
-    throw new Error('Change address unavailable.');
+    throw new TransparentSendError('change-address-unavailable');
   }
 
   return resolvedChangeAddress;
@@ -270,16 +308,16 @@ type CalculateMaxTransparentSendAmountArgs = {
 
 const normalizeSendOutputs = (outputs: TransparentSendOutput[]) => {
   if (outputs.length === 0) {
-    throw new Error('At least one recipient is required.');
+    throw new TransparentSendError('recipient-required');
   }
 
   return outputs.map((output) => {
     const address = output.address.trim();
     if (!address) {
-      throw new Error('A recipient address is required.');
+      throw new TransparentSendError('recipient-address-required');
     }
     if (output.amountSats < DUST_LIMIT_SATS) {
-      throw new Error('A recipient output is dust.');
+      throw new TransparentSendError('recipient-output-dust');
     }
     return { address, amountSats: output.amountSats };
   });
@@ -308,7 +346,7 @@ export const calculateMaxTransparentSendAmount = (
     || targetIndex >= candidateOutputs.length
     || !candidateOutputs[targetIndex]?.address
   ) {
-    throw new Error('Max recipient is unavailable.');
+    throw new TransparentSendError('max-recipient-unavailable');
   }
   const fixedOutputs = candidateOutputs.filter((_, index) => index !== targetIndex);
   if (fixedOutputs.length > 0) {
@@ -346,7 +384,7 @@ export const calculateMaxTransparentSendAmount = (
   }
 
   if (!best) {
-    throw new Error('Fonds insuffisants pour le montant et les frais.');
+    throw new TransparentSendError('insufficient-funds');
   }
 
   return best;
@@ -492,7 +530,7 @@ export const buildTransparentConsolidation = async ({
     .filter(isTransparentUtxoSpendable)
     .sort((left, right) => left.valueSats - right.valueSats);
   if (confirmedUtxos.length < CONSOLIDATION_MIN_UTXOS) {
-    throw new Error(`At least ${CONSOLIDATION_MIN_UTXOS} confirmed spendable outputs are required for consolidation.`);
+    throw new TransparentSendError('consolidation-not-enough-utxos');
   }
 
   const scriptTypes = new Map(
@@ -517,7 +555,7 @@ export const buildTransparentConsolidation = async ({
 
   const usefulBatches = batches.filter((candidate) => candidate.length >= 2);
   if (usefulBatches.length === 0) {
-    throw new Error('No useful consolidation transaction can be created.');
+    throw new TransparentSendError('consolidation-unavailable');
   }
 
   const transactions: PreparedTransparentTx[] = [];
@@ -557,7 +595,7 @@ export const buildTransparentConsolidation = async ({
         continue;
       }
       if (transaction.hex.length / 2 > 100_000) {
-        throw new Error('A consolidation transaction exceeds the standard size limit.');
+        throw new TransparentSendError('consolidation-too-large');
       }
 
       built = transaction;
@@ -565,7 +603,7 @@ export const buildTransparentConsolidation = async ({
     }
 
     if (!built) {
-      throw new Error('No useful consolidation transaction can be created.');
+      throw new TransparentSendError('consolidation-unavailable');
     }
     transactions.push(built);
   }
@@ -604,7 +642,7 @@ const buildTransparentTx = ({
   });
 
   if (!selected || !selected.tx) {
-    throw new Error('Fonds insuffisants pour le montant et les frais.');
+    throw new TransparentSendError('insufficient-funds');
   }
 
   const signed = await crypto.signPsbt({

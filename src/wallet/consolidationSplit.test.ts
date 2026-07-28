@@ -100,6 +100,9 @@ describe('consolidation multi-output', () => {
 
     await expect(
       buildTransparentConsolidation({ mnemonic, snapshot, toAddress: primary, crypto }),
-    ).rejects.toThrow('confirmed spendable outputs are required');
+    ).rejects.toMatchObject({
+      name: 'TransparentSendError',
+      code: 'consolidation-not-enough-utxos',
+    });
   });
 });

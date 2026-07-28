@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  LANGUAGES,
   auditTranslationCoverage,
   auditTranslationQuality,
   makeTranslator,
@@ -90,6 +91,26 @@ describe('i18n coverage', () => {
       expect(message).not.toContain('NativeDatabase');
       if (code !== 'en') {
         expect(message).not.toBe(english);
+      }
+    }
+  });
+
+  it('translates transparent send domain errors in every language', () => {
+    const keys = [
+      'errors.sendInsufficientFunds',
+      'errors.sendNoSpendableFunds',
+      'errors.sendLegacyDataUnavailable',
+    ] as const;
+
+    for (const { code } of LANGUAGES) {
+      const t = makeTranslator(code);
+      for (const key of keys) {
+        const message = t(key);
+        expect(message).not.toBe(key);
+        expect(message).not.toMatch(/Fonds insuffisants|No confirmed UTXO|Montant invalide/);
+        if (code !== 'en') {
+          expect(message).not.toBe(makeTranslator('en')(key));
+        }
       }
     }
   });

@@ -4,6 +4,8 @@ import type { TransparentWalletSnapshot } from './transparentScan';
 import { deriveP2wpkhAddress } from './transparentScan';
 import { createNitoWalletCryptoTestDouble } from '../test/nitoWalletCryptoTestDouble';
 import {
+  TransparentSendError,
+  assertTransparentSendFitsAvailable,
   buildTransparentMultiSend,
   buildTransparentSend,
   calculateMaxTransparentSendAmount,
@@ -55,7 +57,12 @@ describe('transparent send builder', () => {
     expect(parseNitoAmountToSats('1')).toBe(100_000_000n);
     expect(parseNitoAmountToSats('0,12345678')).toBe(12_345_678n);
     expect(parseNitoAmountToSats('99 993,87651555')).toBe(9_999_387_651_555n);
-    expect(() => parseNitoAmountToSats('0.000000001')).toThrow('Montant invalide');
+    expect(() => parseNitoAmountToSats('0.000000001')).toThrowError(
+      expect.objectContaining({
+        name: 'TransparentSendError',
+        code: 'invalid-amount-format',
+      }),
+    );
   });
 
   it('builds and signs a local P2WPKH transaction without broadcasting', async () => {
@@ -122,7 +129,10 @@ describe('transparent send builder', () => {
         amountSats: parseNitoAmountToSats('0.25'),
         crypto,
       }),
-    ).rejects.toThrow('No confirmed UTXO');
+    ).rejects.toMatchObject({
+      name: 'TransparentSendError',
+      code: 'no-spendable-utxo',
+    });
   });
 
   it('refuses the complete send when one spendable legacy UTXO lacks raw transaction data', async () => {
@@ -157,7 +167,10 @@ describe('transparent send builder', () => {
       toAddress: 'nito1qcr8te4kr609gcawutmrza0j4xv80jy8z540c02',
       amountSats: parseNitoAmountToSats('0.25'),
       crypto,
-    })).rejects.toThrow('legacy');
+    })).rejects.toMatchObject({
+      name: 'TransparentSendError',
+      code: 'legacy-signing-data-unavailable',
+    });
   });
 
   it('builds two recipients and applies Max to the second while keeping the first fixed', async () => {
@@ -250,7 +263,10 @@ describe('transparent send builder', () => {
         },
       ],
       crypto,
-    })).rejects.toThrow('dust');
+    })).rejects.toMatchObject({
+      name: 'TransparentSendError',
+      code: 'recipient-output-dust',
+    });
   });
 
   it('keeps duplicate recipients as distinct valid outputs', async () => {
@@ -309,5 +325,13 @@ describe('transparent send builder', () => {
     expect(quote.amountSats).toBe(BigInt(snapshot.spendableSats));
     expect(quote.totalSats).toBeGreaterThan(BigInt(snapshot.spendableSats));
     expect(quote.fitsAvailable).toBe(false);
+    expect(() => assertTransparentSendFitsAvailable(quote.fitsAvailable)).toThrowError(
+      expect.objectContaining({
+        name: 'TransparentSendError',
+        code: 'insufficient-funds',
+      }),
+    );
+    expect(() => assertTransparentSendFitsAvailable(true)).not.toThrow();
+    expect(new TransparentSendError('insufficient-funds').message).toBe('insufficient-funds');
   });
 });

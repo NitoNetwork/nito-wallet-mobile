@@ -128,6 +128,7 @@ import {
   type TransparentWalletSnapshot,
 } from './src/wallet/transparentScan';
 import {
+  assertTransparentSendFitsAvailable,
   buildTransparentConsolidation,
   buildTransparentMultiSend,
   calculateMaxTransparentSendAmount,
@@ -142,6 +143,10 @@ import { useAutoLockTimeout } from './src/hooks/useAutoLockTimeout';
 import { useLanguage } from './src/hooks/useLanguage';
 import { useWalletSubscriptions } from './src/hooks/useWalletSubscriptions';
 import { AutoLock } from './src/services/session';
+import {
+  reportUnexpectedTransparentSendFailure,
+  translatedTransparentSendError,
+} from './src/services/transparentSendError';
 import { prepareVaultUpgradeCommit } from './src/services/vaultMigration';
 import { userFacingErrorMessage } from './src/services/walletStorageError';
 import {
@@ -523,6 +528,9 @@ function WalletApp({ theme, onSelectTheme }: {
 
     let outputs: TransparentSendOutput[];
     try {
+      sendRecipients.forEach((recipient) => {
+        scriptPubKeyForNitoAddress(recipient.address);
+      });
       outputs = sendRecipients.map((recipient) => ({
         address: recipient.address,
         amountSats: parseNitoAmountToSats(recipient.amount),
@@ -560,8 +568,11 @@ function WalletApp({ theme, onSelectTheme }: {
           totalSats: summary.totalSats,
           fitsAvailable: estimate.fitsAvailable && summary.fitsAvailable,
         });
-      }).catch(() => {
-        if (!cancelled) setSendEstimate(null);
+      }).catch((caught) => {
+        if (!cancelled) {
+          setSendEstimate(null);
+          reportUnexpectedTransparentSendFailure('transparent send estimate', caught);
+        }
       }).finally(() => {
         if (!cancelled) setSendEstimatePending(false);
       });
@@ -1746,9 +1757,7 @@ function WalletApp({ theme, onSelectTheme }: {
         BigInt(estimate.feeSats),
         BigInt(network.snapshot.spendableSats),
       );
-      if (!estimate.fitsAvailable || !summary.fitsAvailable) {
-        throw new Error('Fonds insuffisants pour le montant total et les frais.');
-      }
+      assertTransparentSendFitsAvailable(estimate.fitsAvailable && summary.fitsAvailable);
       const tx = await buildTransparentMultiSend({
         mnemonic: wallet.mnemonic,
         snapshot: network.snapshot,
@@ -1761,7 +1770,12 @@ function WalletApp({ theme, onSelectTheme }: {
       setStatus(t('status.transactionReady', { fee: satoshisToNito(tx.feeSats, language) }));
     } catch (caught) {
       setPreparedTx(null);
-      setError(caught instanceof Error ? caught.message : t('errors.txPrepareFailed'));
+      setError(translatedTransparentSendError(
+        caught,
+        t,
+        t('errors.txPrepareFailed'),
+        'transparent send prepare',
+      ));
     }
   
     });
@@ -1806,7 +1820,12 @@ function WalletApp({ theme, onSelectTheme }: {
       } catch (caught) {
         setPreparedTx(null);
         setPreparedConsolidation(null);
-        setError(caught instanceof Error ? caught.message : t('errors.txPrepareFailed'));
+        setError(translatedTransparentSendError(
+          caught,
+          t,
+          t('errors.txPrepareFailed'),
+          'transparent send max',
+        ));
       }
     });
   };
@@ -1937,7 +1956,8 @@ function WalletApp({ theme, onSelectTheme }: {
         setPreparedConsolidation(plan);
         setWalletTab('send');
         setStatus(consolidationT('review'));
-      } catch {
+      } catch (caught) {
+        reportUnexpectedTransparentSendFailure('transparent consolidation prepare', caught);
         setPreparedConsolidation(null);
         setError(consolidationT('unavailable'));
       }
