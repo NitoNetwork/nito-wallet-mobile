@@ -17,25 +17,229 @@ import componentsSource from './components.tsx?raw';
 import settingsSource from './settings.tsx?raw';
 import appSource from '../../App.tsx?raw';
 
-const relativeLuminance = (color: string): number => {
-  const channels = color.slice(1).match(/.{2}/g);
-  if (!channels || channels.length !== 3) throw new Error(`Invalid RGB colour: ${color}`);
-  const [red, green, blue] = channels.map((channel) => {
-    const normalized = Number.parseInt(channel, 16) / 255;
+type RgbaColor = {
+  red: number;
+  green: number;
+  blue: number;
+  alpha: number;
+};
+
+const parseColor = (color: string): RgbaColor => {
+  const hexChannels = color.match(/^#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i);
+  if (hexChannels) {
+    return {
+      red: Number.parseInt(hexChannels[1]!, 16),
+      green: Number.parseInt(hexChannels[2]!, 16),
+      blue: Number.parseInt(hexChannels[3]!, 16),
+      alpha: 1,
+    };
+  }
+
+  const rgbaChannels = color.match(
+    /^rgba\(\s*(\d+),\s*(\d+),\s*(\d+),\s*(0(?:\.\d+)?|1(?:\.0+)?)\s*\)$/i,
+  );
+  if (rgbaChannels) {
+    return {
+      red: Number(rgbaChannels[1]),
+      green: Number(rgbaChannels[2]),
+      blue: Number(rgbaChannels[3]),
+      alpha: Number(rgbaChannels[4]),
+    };
+  }
+
+  throw new Error(`Unsupported colour: ${color}`);
+};
+
+const compositeColor = (foreground: RgbaColor, background: RgbaColor): RgbaColor => {
+  const alpha = foreground.alpha + (background.alpha * (1 - foreground.alpha));
+  const compositeChannel = (foregroundChannel: number, backgroundChannel: number) => (
+    ((foregroundChannel * foreground.alpha)
+      + (backgroundChannel * background.alpha * (1 - foreground.alpha))) / alpha
+  );
+  return {
+    red: compositeChannel(foreground.red, background.red),
+    green: compositeChannel(foreground.green, background.green),
+    blue: compositeChannel(foreground.blue, background.blue),
+    alpha,
+  };
+};
+
+const relativeLuminance = (color: RgbaColor): number => {
+  const channels = [color.red, color.green, color.blue].map((channel) => {
+    const normalized = channel / 255;
     return normalized <= 0.04045
       ? normalized / 12.92
       : ((normalized + 0.055) / 1.055) ** 2.4;
   });
+  const [red, green, blue] = channels;
   return (0.2126 * red!) + (0.7152 * green!) + (0.0722 * blue!);
 };
 
-const contrastRatio = (foreground: string, background: string): number => {
+const contrastRatio = (foreground: RgbaColor, background: RgbaColor): number => {
   const foregroundLuminance = relativeLuminance(foreground);
   const backgroundLuminance = relativeLuminance(background);
   const lighter = Math.max(foregroundLuminance, backgroundLuminance);
   const darker = Math.min(foregroundLuminance, backgroundLuminance);
   return (lighter + 0.05) / (darker + 0.05);
 };
+
+type StyleMap = Record<string, Record<string, unknown>>;
+type StyleName = keyof typeof RAW_STYLES & string;
+
+const BASE_SURFACE_STYLE_NAMES = [
+  'screen',
+  'balanceCard',
+  'tabs',
+] as const satisfies readonly StyleName[];
+type BaseSurfaceStyleName = typeof BASE_SURFACE_STYLE_NAMES[number];
+
+/**
+ * Text normally has to clear all three paper surfaces. These entries add the
+ * tinted or opaque container that the rendered component actually supplies.
+ * The audit composes every translucent container over its permitted bases.
+ */
+const TEXT_CONTAINER_CONTEXTS: Partial<Record<StyleName, readonly StyleName[]>> = {
+  languageCurrent: ['languageSettingsButton'],
+  languageChevron: ['languageSettingsButton'],
+  languageOptionCode: ['languageOption'],
+  languageOptionCodeActive: ['languageOptionActive'],
+  languageOptionName: ['languageOption'],
+  loadingOverlayTitle: ['loadingOverlay'],
+  loadingOverlayText: ['loadingOverlay'],
+  title: ['hero'],
+  sectionTitle: ['card'],
+  refreshButtonText: ['refreshButton'],
+  body: ['card'],
+  helper: ['card', 'settingsOptionPanel', 'historyRow'],
+  label: ['card', 'txBox'],
+  buttonText: ['button'],
+  buttonTextSecondary: ['buttonSecondary'],
+  buttonTextGhost: ['buttonGhost'],
+  buttonTextDanger: ['buttonDanger'],
+  recipientRemoveText: ['recipientCard'],
+  addRecipientText: ['addRecipientButton'],
+  scanButtonText: ['scanButton'],
+  maxButtonText: ['maxButton'],
+  passwordInput: ['passwordField'],
+  passwordToggleText: ['passwordToggle'],
+  seedVisibilityButtonText: ['seedVisibilityButton'],
+  noticeTitle: ['notice'],
+  noticeText: ['notice'],
+  tabText: ['tabs'],
+  tabTextActive: ['tabActive'],
+  balance: ['balanceCard'],
+  pendingBalance: ['balanceCard'],
+  immatureCoinbaseBalance: ['balanceCard'],
+  balanceUpdatingText: ['balanceCard'],
+  previewAddress: ['preview', 'txBox'],
+  emptyTitle: ['empty'],
+  historyPageButtonText: ['historyPageButton'],
+  historyPageTotal: ['card'],
+  historyLoadingTitle: ['card', 'empty'],
+  historyLoadingCount: ['card', 'empty'],
+  historyTxid: ['historyRow'],
+  viewTxText: ['viewTxBadge'],
+  tileValue: ['tile'],
+  settingsBackText: ['settingsBackButton'],
+  settingsNavigationLabel: ['settingsNavigationRow'],
+  settingsNavigationLabelDanger: ['settingsNavigationRowDanger'],
+  settingsChevron: ['settingsNavigationRow'],
+  settingsExternalLink: ['settingsNavigationRow'],
+  settingsValueText: ['settingsValue'],
+  networkStatusConnected: ['settingsValue'],
+  networkStatusSyncing: ['settingsValue'],
+  networkStatusError: ['settingsValue'],
+  settingsWarning: ['settingsOptionPanel'],
+  settingsChoiceText: ['settingsChoice'],
+  settingsChoiceTextActive: ['settingsChoiceActive'],
+  scannerTitle: ['scannerSafeArea'],
+  scannerHint: ['scannerSafeArea'],
+  scannerError: ['scannerSafeArea'],
+  scannerCloseButtonText: ['scannerCloseButton'],
+};
+
+/**
+ * Component structure narrows these translucent containers to one real base.
+ * settingsChoice/Active deliberately use the panel surface: both are rendered
+ * inside settingsOptionPanel, which is the marginal amber/blue case.
+ */
+const CONTAINER_BASE_SURFACE_RESTRICTIONS: Partial<
+  Record<StyleName, readonly BaseSurfaceStyleName[]>
+> = {
+  languageSettingsButton: ['balanceCard'],
+  languageOption: ['balanceCard'],
+  languageOptionActive: ['balanceCard'],
+  loadingOverlay: ['screen'],
+  hero: ['screen'],
+  card: ['screen'],
+  refreshButton: ['balanceCard'],
+  recipientCard: ['balanceCard'],
+  addRecipientButton: ['balanceCard'],
+  scanButton: ['balanceCard'],
+  maxButton: ['balanceCard'],
+  passwordField: ['balanceCard'],
+  passwordToggle: ['balanceCard'],
+  seedVisibilityButton: ['balanceCard'],
+  notice: ['balanceCard'],
+  balanceCard: ['screen'],
+  preview: ['balanceCard'],
+  txBox: ['balanceCard'],
+  empty: ['balanceCard'],
+  historyPageButton: ['balanceCard'],
+  historyRow: ['balanceCard'],
+  viewTxBadge: ['balanceCard'],
+  tile: ['balanceCard'],
+  settingsBackButton: ['balanceCard'],
+  settingsNavigationRow: ['balanceCard'],
+  settingsNavigationRowDanger: ['balanceCard'],
+  settingsValue: ['balanceCard'],
+  settingsOptionPanel: ['balanceCard'],
+  settingsChoice: ['tabs'],
+  settingsChoiceActive: ['tabs'],
+  scannerSafeArea: ['screen'],
+  scannerCloseButton: ['screen'],
+};
+
+/**
+ * These are real rendering restrictions, not contrast bypasses:
+ * - Feedback.error is a direct ScrollView child in App.tsx, so its red tint can
+ *   only composite over the page, never over a card or inset panel.
+ * - seedWordError exists only inside ImportScreen's card.
+ * - the danger navigation row exists only in the settings card, not a panel.
+ */
+const TEXT_BASE_SURFACE_RESTRICTIONS: Partial<
+  Record<StyleName, readonly BaseSurfaceStyleName[]>
+> = {
+  error: ['screen'],
+  seedWordError: ['balanceCard'],
+  settingsNavigationLabelDanger: ['balanceCard'],
+};
+
+/**
+ * WCAG 1.4.3 excludes inactive controls, so buttonTextDisabled is intentionally
+ * not measured. The opacity-only disabled containers (refresh, scan, max,
+ * history pagination and settings choices) reuse text styles whose enabled
+ * rendering is still measured here.
+ *
+ * balanceHourglass is purely decorative: the adjacent localized
+ * balanceUpdatingText conveys the complete status without the glyph.
+ */
+const CONTRAST_EXEMPT_TEXT_STYLES = new Set<StyleName>([
+  'buttonTextDisabled',
+  'balanceHourglass',
+]);
+
+const TEXT_STYLES_WITHOUT_BASE_SURFACES = new Set<StyleName>([
+  // White active-tab text is rendered only on tabActive's opaque blue fill.
+  'tabTextActive',
+]);
+
+const BASE_SURFACE_TEXT_STYLES = new Set<StyleName>([
+  // Field errors are direct siblings of inputs in cards and inset panels.
+  'fieldError',
+  // Settings headers are direct card children with no additional fill.
+  'settingsHeaderTitle',
+]);
 
 describe('theme', () => {
   it('defaults to dark', () => {
@@ -121,17 +325,89 @@ describe('theme', () => {
     expect(Object.keys(createStyles('light'))).toEqual(Object.keys(RAW_STYLES));
   });
 
-  it('keeps amber warning text above the WCAG AA contrast threshold', () => {
-    const amberText = LIGHT_COLOR_MAP['#f6c44f'];
-    const lightSurfaces = [
-      LIGHT_COLOR_MAP['#01040b'],
-      LIGHT_COLOR_MAP['#061020'],
-      LIGHT_COLOR_MAP['#071326'],
-    ];
+  it('keeps every light-sheet text/background pair above WCAG AA contrast', () => {
+    const light = createStyles('light') as unknown as StyleMap;
+    const baseSurfaces = Object.fromEntries(
+      BASE_SURFACE_STYLE_NAMES.map((styleName) => {
+        const background = light[styleName]?.backgroundColor;
+        if (typeof background !== 'string' || background === 'transparent') {
+          throw new Error(`Missing opaque base surface on ${styleName}`);
+        }
+        const parsed = parseColor(background);
+        if (parsed.alpha !== 1) throw new Error(`Base surface ${styleName} is translucent`);
+        return [styleName, parsed];
+      }),
+    ) as Record<BaseSurfaceStyleName, RgbaColor>;
+    const failures: string[] = [];
+    let measuredPairs = 0;
 
-    for (const background of lightSurfaces) {
-      expect(contrastRatio(amberText!, background!)).toBeGreaterThanOrEqual(4.5);
+    const measure = (
+      textStyleName: StyleName,
+      foreground: RgbaColor,
+      contextName: string,
+      background: RgbaColor,
+    ) => {
+      measuredPairs += 1;
+      const ratio = contrastRatio(foreground, background);
+      if (ratio < 4.5) {
+        failures.push(`${textStyleName} on ${contextName}: ${ratio.toFixed(2)}:1`);
+      }
+    };
+
+    for (const [textStyleName, declarations] of Object.entries(light)) {
+      const foregroundValue = declarations.color;
+      if (typeof foregroundValue !== 'string') continue;
+      if (CONTRAST_EXEMPT_TEXT_STYLES.has(textStyleName as StyleName)) continue;
+
+      const styleName = textStyleName as StyleName;
+      const foreground = parseColor(foregroundValue);
+      const permittedBaseNames = TEXT_BASE_SURFACE_RESTRICTIONS[styleName]
+        ?? BASE_SURFACE_STYLE_NAMES;
+      const containerNames = new Set<StyleName>(TEXT_CONTAINER_CONTEXTS[styleName] ?? []);
+      const ownBackground = declarations.backgroundColor;
+      const hasOwnBackground = typeof ownBackground === 'string'
+        && ownBackground !== 'transparent';
+      if (
+        containerNames.size === 0
+        && !hasOwnBackground
+        && !BASE_SURFACE_TEXT_STYLES.has(styleName)
+      ) {
+        failures.push(`${styleName}: unresolved text background`);
+      }
+
+      if (!TEXT_STYLES_WITHOUT_BASE_SURFACES.has(styleName)) {
+        for (const baseName of permittedBaseNames) {
+          measure(styleName, foreground, baseName, baseSurfaces[baseName]);
+        }
+      }
+
+      if (hasOwnBackground) {
+        containerNames.add(styleName);
+      }
+
+      for (const containerName of containerNames) {
+        const backgroundValue = light[containerName]?.backgroundColor;
+        if (typeof backgroundValue !== 'string' || backgroundValue === 'transparent') continue;
+        const backgroundLayer = parseColor(backgroundValue);
+        const containerBaseNames = CONTAINER_BASE_SURFACE_RESTRICTIONS[containerName]
+          ?? permittedBaseNames;
+        if (backgroundLayer.alpha === 1) {
+          measure(styleName, foreground, containerName, backgroundLayer);
+          continue;
+        }
+        for (const baseName of containerBaseNames) {
+          measure(
+            styleName,
+            foreground,
+            `${containerName} over ${baseName}`,
+            compositeColor(backgroundLayer, baseSurfaces[baseName]),
+          );
+        }
+      }
     }
+
+    expect(measuredPairs).toBeGreaterThan(Object.keys(light).length);
+    expect(failures).toEqual([]);
   });
 });
 

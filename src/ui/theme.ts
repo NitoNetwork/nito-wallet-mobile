@@ -13,8 +13,9 @@ export const isThemeName = (value: unknown): value is ThemeName =>
  * no second copy of the styles to drift out of sync.
  *
  * The light palette is a warm paper look rather than a clinical white: cream
- * surfaces, warm grey borders, near-black-but-not-black text. Amber warning
- * text is checked against every light surface by the theme tests.
+ * surfaces, warm grey borders, near-black-but-not-black text. Theme tests
+ * derive every text/background pair, composite translucent fills over their
+ * real surfaces, and enforce WCAG AA contrast.
  */
 export const LIGHT_COLOR_MAP: Readonly<Record<string, string>> = {
   // Surfaces — page, cards, inset panels, overlays.
@@ -108,20 +109,20 @@ export const LIGHT_COLOR_MAP: Readonly<Record<string, string>> = {
   '#0b101d': '#1c1a17',
 
   // Text — accent blue.
-  '#dbeaff': '#1663c7',
-  '#8cc6ff': '#1663c7',
-  '#7fb9ff': '#1663c7',
-  '#73b9ff': '#1663c7',
+  '#dbeaff': '#0d51aa',
+  '#8cc6ff': '#0d51aa',
+  '#7fb9ff': '#0d51aa',
+  '#73b9ff': '#0d51aa',
 
   // Text — amber, success, danger.
-  '#f6c44f': '#8a5600',
-  '#ffc52f': '#8a5600',
-  '#ffc66d': '#8a5600',
-  '#ffdc81': '#8a5600',
+  '#f6c44f': '#805000',
+  '#ffc52f': '#805000',
+  '#ffc66d': '#805000',
+  '#ffdc81': '#805000',
   '#fff4d6': '#1c1a17',
   '#d3c7a1': '#6b6459',
-  '#55d99a': '#1b7a4b',
-  '#d8ffef': '#1b7a4b',
+  '#55d99a': '#146138',
+  '#d8ffef': '#146138',
   '#ff7f92': '#b3261e',
   '#ff97a7': '#b3261e',
   '#ff9baa': '#b3261e',
