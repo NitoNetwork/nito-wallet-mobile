@@ -546,7 +546,6 @@ function WalletApp({ theme, onSelectTheme }: {
         && seedBackupConfirmationStep < seedBackupChallenges.length
       ),
     }),
-    theme,
   });
 
   useLayoutEffect(() => {

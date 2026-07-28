@@ -28,7 +28,6 @@ import exclusiveActionGateSource from './services/exclusiveActionGate.ts?raw';
 import vaultSessionMachineSource from './services/vaultSessionMachine.ts?raw';
 import expoConfig from '../app.config.js?raw';
 import androidLintFixesSource from '../plugins/withNitoAndroidLintFixes.cjs?raw';
-import screenCapturePatchSource from '../patches/expo-screen-capture+57.0.1.patch?raw';
 
 describe('mobile wallet UX and security invariants', () => {
   it('keeps password encryption when biometric quick unlock is enabled', () => {
@@ -130,21 +129,13 @@ describe('mobile wallet UX and security invariants', () => {
   it('blocks screen capture and protects iOS app-switcher snapshots', () => {
     expect(appSource).toContain('protectIosAppSwitcher: shouldProtectIosAppSwitcher({');
     expect(screenProtectionSource).toContain('preventScreenCaptureAsync(SCREEN_CAPTURE_KEY)');
-    expect(screenProtectionSource).toContain(
-      'enableAppSwitcherProtectionAsync(1, activeTheme)',
-    );
+    expect(screenProtectionSource).toContain('enableAppSwitcherProtectionAsync(1)');
     expect(screenProtectionSource).toContain('allowScreenCaptureAsync(SCREEN_CAPTURE_KEY)');
     expect(screenProtectionPolicySource).toContain("screen === 'wallet'");
     expect(screenProtectionPolicySource).toContain(
       "screen === 'persist' && seedBackupInProgress",
     );
     expect(screenProtectionPolicySource).not.toContain("screen === 'unlock'");
-    expect(screenCapturePatchSource).toContain(
-      'self.blurStyle = colorScheme == "dark" ? .dark : .light',
-    );
-    expect(screenCapturePatchSource).toContain(
-      'AnimatedBlurEffectView(style: self.blurStyle, intensity: self.blurIntensity)',
-    );
   });
 
   it('removes unused photo-library permissions without disabling screen protection', () => {

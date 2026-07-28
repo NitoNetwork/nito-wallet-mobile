@@ -2,7 +2,6 @@
 
 *.bat text eol=crlf
 *.cmd text eol=crlf
-*.patch -whitespace
 
 *.png binary
 *.jpg binary

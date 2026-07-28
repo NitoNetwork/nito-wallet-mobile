@@ -3,7 +3,6 @@ import { useCallback, useEffect, useRef } from 'react';
 import { Platform } from 'react-native';
 
 import { reportNonFinancialFailure } from '../services/diagnostics';
-import type { ThemeName } from '../ui/theme';
 
 const SCREEN_CAPTURE_KEY = 'nito-wallet-sensitive-content';
 
@@ -13,20 +12,15 @@ const SCREEN_CAPTURE_KEY = 'nito-wallet-sensitive-content';
  */
 export const useWalletScreenProtection = ({
   protectIosAppSwitcher,
-  theme,
 }: {
   protectIosAppSwitcher: boolean;
-  theme: ThemeName;
 }): void => {
   const appSwitcherUpdateRef = useRef<Promise<void>>(Promise.resolve());
-  const queueAppSwitcherUpdate = useCallback((
-    enabled: boolean,
-    activeTheme: ThemeName,
-  ) => {
+  const queueAppSwitcherUpdate = useCallback((enabled: boolean) => {
     appSwitcherUpdateRef.current = appSwitcherUpdateRef.current
       .then(() => (
         enabled
-          ? ScreenCapture.enableAppSwitcherProtectionAsync(1, activeTheme)
+          ? ScreenCapture.enableAppSwitcherProtectionAsync(1)
           : ScreenCapture.disableAppSwitcherProtectionAsync()
       ))
       .catch((caught) => {
@@ -48,13 +42,13 @@ export const useWalletScreenProtection = ({
 
   useEffect(() => {
     if (Platform.OS === 'ios') {
-      queueAppSwitcherUpdate(protectIosAppSwitcher, theme);
+      queueAppSwitcherUpdate(protectIosAppSwitcher);
     }
-  }, [protectIosAppSwitcher, queueAppSwitcherUpdate, theme]);
+  }, [protectIosAppSwitcher, queueAppSwitcherUpdate]);
 
   useEffect(() => () => {
     if (Platform.OS === 'ios') {
-      queueAppSwitcherUpdate(false, theme);
+      queueAppSwitcherUpdate(false);
     }
-  }, [queueAppSwitcherUpdate, theme]);
+  }, [queueAppSwitcherUpdate]);
 };
