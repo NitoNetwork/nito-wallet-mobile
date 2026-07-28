@@ -7,6 +7,7 @@ import {
   makeTranslator,
   type LanguageCode,
 } from './i18n';
+import { tr } from './i18n/tr';
 
 describe('i18n coverage', () => {
   it('does not fall back to English for critical visible wallet copy', () => {
@@ -70,6 +71,21 @@ describe('i18n coverage', () => {
       const t = makeTranslator(code);
       expect([t('actions.showSeed'), t('actions.hideSeed')]).toEqual(expected[code]);
     }
+  });
+
+  it('resolves the corrected reward and history copy without placeholder grammar', () => {
+    expect(makeTranslator('de')('home.coinbaseBlocksRemaining', { blocks: 3 }))
+      .toBe('Nächste Belohnung reift in 3 Blöcken');
+    expect(makeTranslator('fr')('home.coinbaseBlocksRemaining', { blocks: 3 }))
+      .toBe('La prochaine récompense sera disponible dans 3 blocs');
+    expect(makeTranslator('ja')('history.moreOutputs', { count: 3 }))
+      .toBe('+ 他 3 件');
+  });
+
+  it('uses one BIP39 phrase name throughout the Turkish translation', () => {
+    expect(Object.values(tr).filter((message) => /tohum/i.test(message))).toEqual([]);
+    expect(makeTranslator('tr')('actions.importSeed')).toBe('BIP39 ifadesini içe aktar');
+    expect(makeTranslator('tr')('import.title')).toBe('BIP39 ifadesini içe aktar');
   });
 
   it('translates the local wallet storage failure in every language', () => {

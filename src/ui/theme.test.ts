@@ -14,7 +14,28 @@ import {
 import tabsSource from './tabs.tsx?raw';
 import screensSource from './screens.tsx?raw';
 import componentsSource from './components.tsx?raw';
+import settingsSource from './settings.tsx?raw';
 import appSource from '../../App.tsx?raw';
+
+const relativeLuminance = (color: string): number => {
+  const channels = color.slice(1).match(/.{2}/g);
+  if (!channels || channels.length !== 3) throw new Error(`Invalid RGB colour: ${color}`);
+  const [red, green, blue] = channels.map((channel) => {
+    const normalized = Number.parseInt(channel, 16) / 255;
+    return normalized <= 0.04045
+      ? normalized / 12.92
+      : ((normalized + 0.055) / 1.055) ** 2.4;
+  });
+  return (0.2126 * red!) + (0.7152 * green!) + (0.0722 * blue!);
+};
+
+const contrastRatio = (foreground: string, background: string): number => {
+  const foregroundLuminance = relativeLuminance(foreground);
+  const backgroundLuminance = relativeLuminance(background);
+  const lighter = Math.max(foregroundLuminance, backgroundLuminance);
+  const darker = Math.min(foregroundLuminance, backgroundLuminance);
+  return (lighter + 0.05) / (darker + 0.05);
+};
 
 describe('theme', () => {
   it('defaults to dark', () => {
@@ -99,13 +120,26 @@ describe('theme', () => {
   it('keeps the same style keys in both themes', () => {
     expect(Object.keys(createStyles('light'))).toEqual(Object.keys(RAW_STYLES));
   });
+
+  it('keeps amber warning text above the WCAG AA contrast threshold', () => {
+    const amberText = LIGHT_COLOR_MAP['#f6c44f'];
+    const lightSurfaces = [
+      LIGHT_COLOR_MAP['#01040b'],
+      LIGHT_COLOR_MAP['#061020'],
+      LIGHT_COLOR_MAP['#071326'],
+    ];
+
+    for (const background of lightSurfaces) {
+      expect(contrastRatio(amberText!, background!)).toBeGreaterThanOrEqual(4.5);
+    }
+  });
 });
 
 describe('inline theme colours', () => {
   // Colours passed as props rather than through the stylesheet escape the
   // coverage check above. Scanning the sources keeps them under the same rule:
   // an unmapped literal would silently stay dark on paper.
-  const sources = [tabsSource, screensSource, componentsSource].join('\n');
+  const sources = [tabsSource, screensSource, componentsSource, settingsSource].join('\n');
 
   it('maps every colour passed through themeColor()', () => {
     const literals = [...sources.matchAll(/themeColor\('(#[0-9a-fA-F]{3,8})'\)/g)]

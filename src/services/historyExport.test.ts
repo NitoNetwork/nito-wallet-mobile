@@ -4,7 +4,7 @@ import type { ElectrumHistoryEntry, ElectrumVerboseTransaction } from '../networ
 import {
   buildHistoryExportBatch,
   buildHistoryExportRecords,
-  historyExportCsvRows,
+  historyExportTsvRows,
   historyRecordsFromEntries,
 } from './historyExport';
 
@@ -56,7 +56,7 @@ describe('wallet history export', () => {
       counterparty: 'wallet-address',
       amountSats: 990_000_000,
     });
-    const rows = historyExportCsvRows(records, 'en');
+    const rows = historyExportTsvRows(records, 'en');
     expect(rows[0]).toEqual([
       'date', 'direction', 'amount_nito', 'fee_nito', 'status', 'block_height', 'address', 'txid',
     ]);
@@ -87,7 +87,7 @@ describe('wallet history export', () => {
     });
 
     expect(record).toMatchObject({ direction: 'self', amountSats: 950_000_000, feeSats: 50_000_000 });
-    expect(historyExportCsvRows([record!], 'en')[1]?.[0]).toBe('10:26 AM · 07/20/2025');
+    expect(historyExportTsvRows([record!], 'en')[1]?.[0]).toBe('10:26 AM · 07/20/2025');
   });
 
   it('rebuilds records from cached entries without any network call', () => {

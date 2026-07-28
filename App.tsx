@@ -85,7 +85,7 @@ import {
 } from './src/network/electrum';
 import {
   buildHistoryExportBatch,
-  historyExportCsvRows,
+  historyExportTsvRows,
   historyRecordsFromEntries,
 } from './src/services/historyExport';
 import { readOptionalCache } from './src/services/cachePolicy';
@@ -1018,7 +1018,6 @@ function WalletApp({ theme, onSelectTheme }: {
         }
       },
       setError,
-      setStatus,
       setHistorySyncing,
       setHistoryProgress,
       setBalanceRefreshing,
@@ -2321,7 +2320,7 @@ function WalletApp({ theme, onSelectTheme }: {
 
         if (!walletNetworkController.isCurrent(session)) return;
         const records = historyRecordsFromEntries(networkRef.current.snapshot?.history ?? []);
-        const rows = historyExportCsvRows(records, language);
+        const rows = historyExportTsvRows(records, language);
         // Tab separated rather than comma: a comma file collapses into a single
         // column wherever the spreadsheet list separator is a semicolon, which
         // is the default on French and German Windows. Tabs split everywhere.
@@ -2437,8 +2436,6 @@ function WalletApp({ theme, onSelectTheme }: {
     });
     if (!walletNetworkController.isCurrent(session)) return;
     await syncTransparentNetwork(false, { force: true, silent: true });
-    if (walletNetworkController.isCurrent(session) && networkRef.current.status === 'connected') {
-    }
   };
 
   const openQrScanner = async (recipientId: number) => {
@@ -2544,7 +2541,6 @@ function WalletApp({ theme, onSelectTheme }: {
     resynchronizeHistory: t('loading.history'),
     reveal: t('loading.reveal'),
     delete: t('loading.delete'),
-    lock: t('loading.lock'),
   } satisfies Record<PendingAction, string>)[pendingAction] : '';
   const loadingRotation = loadingSpin.interpolate({ inputRange: [0, 1], outputRange: ['0deg', '360deg'] });
 

@@ -20,8 +20,7 @@ export type PendingAction =
   | 'history'
   | 'resynchronizeHistory'
   | 'reveal'
-  | 'delete'
-  | 'lock';
+  | 'delete';
 
 export type Wallet = {
   mnemonic: string;

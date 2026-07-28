@@ -143,7 +143,6 @@ describe('WalletNetworkController', () => {
       saveSnapshot,
       publishNetwork,
       setError: vi.fn(),
-      setStatus: vi.fn(),
       setHistorySyncing: vi.fn(),
       setHistoryProgress: vi.fn(),
       setBalanceRefreshing: vi.fn(),
@@ -183,7 +182,6 @@ describe('WalletNetworkController', () => {
       saveSnapshot: vi.fn(async () => undefined),
       publishNetwork,
       setError: vi.fn(),
-      setStatus: vi.fn(),
       setHistorySyncing: (value) => {
         if (!value) settlement.push('history-idle');
       },
@@ -243,7 +241,6 @@ describe('WalletNetworkController', () => {
       saveSnapshot: vi.fn(),
       publishNetwork,
       setError: vi.fn(),
-      setStatus: vi.fn(),
       setHistorySyncing: vi.fn(),
       setHistoryProgress: vi.fn(),
       setBalanceRefreshing: vi.fn(),
@@ -283,7 +280,6 @@ describe('WalletNetworkController', () => {
       }),
       publishNetwork,
       setError,
-      setStatus: vi.fn(),
       setHistorySyncing: vi.fn(),
       setHistoryProgress: vi.fn(),
       setBalanceRefreshing: vi.fn(),
@@ -349,7 +345,6 @@ describe('WalletNetworkController', () => {
         currentNetwork = next;
       },
       setError: vi.fn(),
-      setStatus: vi.fn(),
       setHistorySyncing: vi.fn(),
       setHistoryProgress: vi.fn(),
       setBalanceRefreshing: vi.fn(),

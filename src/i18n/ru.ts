@@ -161,7 +161,6 @@ export const ru: TranslationSet = {
   'loading.history': 'Синхронизация полной истории...',
   'loading.reveal': 'Проверка...',
   'loading.delete': 'Удаление кошелька...',
-  'loading.lock': 'Блокировка кошелька...',
   'status.seedHidden': 'Фраза скрыта.',
   'status.seedHiddenAuto': 'Фраза скрыта автоматически.',
   'status.seedVisibleTemporary': 'Фраза временно отображается.',

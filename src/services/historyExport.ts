@@ -317,7 +317,7 @@ export const historyRecordsFromEntries = (entries: ElectrumHistoryEntry[]): Hist
     } satisfies HistoryExportRecord];
   });
 
-export const historyExportCsvRows = (
+export const historyExportTsvRows = (
   records: HistoryExportRecord[],
   language: LanguageCode,
 ) => [

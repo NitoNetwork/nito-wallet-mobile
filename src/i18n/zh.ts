@@ -161,7 +161,6 @@ export const zh: TranslationSet = {
   'loading.history': '正在同步完整历史记录...',
   'loading.reveal': '正在检查...',
   'loading.delete': '正在删除钱包...',
-  'loading.lock': '正在锁定...',
   'status.seedHidden': '助记词已隐藏。',
   'status.seedHiddenAuto': '助记词已自动隐藏。',
   'status.seedVisibleTemporary': '助记词暂时可见。',

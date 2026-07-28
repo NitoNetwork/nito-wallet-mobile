@@ -13,8 +13,8 @@ export const isThemeName = (value: unknown): value is ThemeName =>
  * no second copy of the styles to drift out of sync.
  *
  * The light palette is a warm paper look rather than a clinical white: cream
- * surfaces, warm grey borders, near-black-but-not-black text. Every text pair
- * clears 4.5:1 contrast and every interface element clears 3:1.
+ * surfaces, warm grey borders, near-black-but-not-black text. Amber warning
+ * text is checked against every light surface by the theme tests.
  */
 export const LIGHT_COLOR_MAP: Readonly<Record<string, string>> = {
   // Surfaces — page, cards, inset panels, overlays.
@@ -114,10 +114,10 @@ export const LIGHT_COLOR_MAP: Readonly<Record<string, string>> = {
   '#73b9ff': '#1663c7',
 
   // Text — amber, success, danger.
-  '#f6c44f': '#a86a00',
-  '#ffc52f': '#a86a00',
-  '#ffc66d': '#a86a00',
-  '#ffdc81': '#a86a00',
+  '#f6c44f': '#8a5600',
+  '#ffc52f': '#8a5600',
+  '#ffc66d': '#8a5600',
+  '#ffdc81': '#8a5600',
   '#fff4d6': '#1c1a17',
   '#d3c7a1': '#6b6459',
   '#55d99a': '#1b7a4b',

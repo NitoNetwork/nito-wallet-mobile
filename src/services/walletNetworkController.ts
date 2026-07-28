@@ -345,7 +345,6 @@ type WalletNetworkSyncPorts = {
     historyMode?: WalletHistoryPublicationMode,
   ) => void;
   setError: (message: string) => void;
-  setStatus: (message: string) => void;
   setHistorySyncing: (syncing: boolean) => void;
   setHistoryProgress: (progress: { done: number; total: number } | null) => void;
   setBalanceRefreshing: (refreshing: boolean) => void;

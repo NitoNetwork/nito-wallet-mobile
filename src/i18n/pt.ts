@@ -161,7 +161,6 @@ export const pt: TranslationSet = {
   'loading.history': 'Sincronizando histórico completo...',
   'loading.reveal': 'Verificando...',
   'loading.delete': 'Excluindo carteira...',
-  'loading.lock': 'Bloqueando carteira...',
   'status.seedHidden': 'Frase ocultada.',
   'status.seedHiddenAuto': 'Frase ocultada automaticamente.',
   'status.seedVisibleTemporary': 'Frase visível temporariamente.',

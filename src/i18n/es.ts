@@ -161,7 +161,6 @@ export const es: TranslationSet = {
   'loading.history': 'Sincronizando historial completo...',
   'loading.reveal': 'Comprobando...',
   'loading.delete': 'Eliminando wallet...',
-  'loading.lock': 'Bloqueando wallet...',
   'status.seedHidden': 'Frase oculta.',
   'status.seedHiddenAuto': 'Frase ocultada automáticamente.',
   'status.seedVisibleTemporary': 'Frase visible temporalmente.',

@@ -163,7 +163,6 @@ export const en = {
   'loading.history': 'Syncing full history...',
   'loading.reveal': 'Checking...',
   'loading.delete': 'Deleting wallet...',
-  'loading.lock': 'Locking...',
   'status.seedHidden': 'Seed hidden.',
   'status.seedHiddenAuto': 'Seed hidden automatically.',
   'status.seedVisibleTemporary': 'Seed visible temporarily.',
