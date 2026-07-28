@@ -857,7 +857,11 @@ function WalletApp({ theme, onSelectTheme }: {
     setPreparedTx(null);
     setPreparedConsolidation(null);
     setScreen('wallet');
-    if (lockWalletIfAppStateInactive(appStateRef.current, lockWalletRef.current)) return;
+    if (lockWalletIfAppStateInactive(
+      appStateRef.current,
+      systemPromptActiveRef.current,
+      lockWalletRef.current,
+    )) return;
     setStatus(message);
   };
 
@@ -1356,7 +1360,11 @@ function WalletApp({ theme, onSelectTheme }: {
       setPersistConfirmPassword('');
       setShowMnemonic(false);
       setScreen('persist');
-      if (lockWalletIfAppStateInactive(appStateRef.current, lockWalletRef.current)) return;
+      if (lockWalletIfAppStateInactive(
+        appStateRef.current,
+        systemPromptActiveRef.current,
+        lockWalletRef.current,
+      )) return;
       setStatus(t('status.seedCreated'));
     } catch (caught) {
       setError(translatedErrorMessage(
@@ -1405,7 +1413,11 @@ function WalletApp({ theme, onSelectTheme }: {
       setImportText('');
       setShowImportSeed(false);
       setScreen('persist');
-      if (lockWalletIfAppStateInactive(appStateRef.current, lockWalletRef.current)) return;
+      if (lockWalletIfAppStateInactive(
+        appStateRef.current,
+        systemPromptActiveRef.current,
+        lockWalletRef.current,
+      )) return;
       setStatus(t('status.seedImported'));
     } catch (caught) {
       setError(translatedErrorMessage(
@@ -1422,6 +1434,7 @@ function WalletApp({ theme, onSelectTheme }: {
   const unlockSavedWallet = async (useBiometrics = false, auto = false) => {
     await runExclusiveAction('unlock', async () => {
     resetFeedback();
+    let biometricPromptGuardActive = false;
 
     if (!useBiometrics && unlockPassword.length < PASSWORD_UNLOCK_MIN_LENGTH) {
       setUnlockPasswordError(t('errors.enterVaultPassword'));
@@ -1444,9 +1457,8 @@ function WalletApp({ theme, onSelectTheme }: {
         }
 
         systemPromptActiveRef.current = true;
-        const secret = await loadBiometricSecret().finally(() => {
-          systemPromptActiveRef.current = false;
-        });
+        biometricPromptGuardActive = true;
+        const secret = await loadBiometricSecret();
 
         if (!secret) {
           throw new Error(t('errors.biometricReimport'));
@@ -1549,6 +1561,10 @@ function WalletApp({ theme, onSelectTheme }: {
           t('errors.unlockFailed'),
           'wallet unlock',
         ));
+      }
+    } finally {
+      if (biometricPromptGuardActive) {
+        systemPromptActiveRef.current = false;
       }
     }
 

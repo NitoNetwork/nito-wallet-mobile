@@ -36,9 +36,16 @@ export const shouldLockWalletForAppState = ({
 
 export const lockWalletIfAppStateInactive = (
   appState: string,
+  systemPromptActive: boolean,
   lockWallet: () => void,
 ): boolean => {
-  if (appState === 'active') return false;
+  if (!shouldLockWalletForAppState({
+    nextState: appState,
+    systemPromptActive,
+    sensitiveWalletState: true,
+  })) {
+    return false;
+  }
   lockWallet();
   return true;
 };
