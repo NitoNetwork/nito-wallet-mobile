@@ -1,15 +1,16 @@
-import type { AppScreen } from '../ui/types';
+import type { AppScreen, WalletTab } from '../ui/types';
 
-export const shouldProtectIosAppSwitcher = ({
+export const shouldProtectRecoveryPhrase = ({
   screen,
-  importPhraseVisible,
-  seedBackupInProgress,
+  walletTab,
+  createdPhraseVisible,
+  settingsPhraseVisible,
 }: {
   screen: AppScreen;
-  importPhraseVisible: boolean;
-  seedBackupInProgress: boolean;
+  walletTab: WalletTab;
+  createdPhraseVisible: boolean;
+  settingsPhraseVisible: boolean;
 }): boolean => (
-  screen === 'wallet'
-  || (screen === 'import' && importPhraseVisible)
-  || (screen === 'persist' && seedBackupInProgress)
+  (screen === 'persist' && createdPhraseVisible)
+  || (screen === 'wallet' && walletTab === 'security' && settingsPhraseVisible)
 );

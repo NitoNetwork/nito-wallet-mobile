@@ -26,8 +26,8 @@ transactions and new blocks, and to broadcast signed transactions.
 - Export the reconstructed history as TSV.
 - Replace the official ElectrumX server list with one custom `wss://` server.
 - Switch between light and dark themes.
-- Prevent screen capture and protect sensitive iOS application-switcher
-  previews.
+- Protect recovery-phrase displays from screen capture and iOS
+  application-switcher previews.
 - Use the interface in nine languages.
 
 Private Orchard/Bech32x functionality is intentionally not exposed until its

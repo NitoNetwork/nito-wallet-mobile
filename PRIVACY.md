@@ -34,8 +34,8 @@ Wallet metadata, synchronization checkpoints and optional reconstructed history
 are stored locally. Removing the wallet from the application deletes its local
 vault and cached metadata but does not erase the public blockchain.
 
-The application enables platform screen-capture protection while it is running.
-On iOS, sensitive screens are also protected in application-switcher previews.
+The application blocks screen capture while recovery words are visible. On iOS,
+those phrase displays are also protected in application-switcher previews.
 
 The application does not include advertising or behavioral analytics.
 

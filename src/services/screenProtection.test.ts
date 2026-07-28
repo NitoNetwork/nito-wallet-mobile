@@ -1,18 +1,19 @@
 import { describe, expect, it } from 'vitest';
 
-import { shouldProtectIosAppSwitcher } from './screenProtection';
+import { shouldProtectRecoveryPhrase } from './screenProtection';
 
 const protectionFor = (
-  screen: Parameters<typeof shouldProtectIosAppSwitcher>[0]['screen'],
-  overrides: Partial<Parameters<typeof shouldProtectIosAppSwitcher>[0]> = {},
-) => shouldProtectIosAppSwitcher({
+  screen: Parameters<typeof shouldProtectRecoveryPhrase>[0]['screen'],
+  overrides: Partial<Parameters<typeof shouldProtectRecoveryPhrase>[0]> = {},
+) => shouldProtectRecoveryPhrase({
   screen,
-  importPhraseVisible: false,
-  seedBackupInProgress: false,
+  walletTab: 'home',
+  createdPhraseVisible: false,
+  settingsPhraseVisible: false,
   ...overrides,
 });
 
-describe('iOS app-switcher protection scope', () => {
+describe('recovery phrase screen protection scope', () => {
   it('does not cover loading, landing, unlock, or initialization errors', () => {
     expect(protectionFor('loading')).toBe(false);
     expect(protectionFor('initializationError')).toBe(false);
@@ -20,17 +21,28 @@ describe('iOS app-switcher protection scope', () => {
     expect(protectionFor('unlock')).toBe(false);
   });
 
-  it('covers an open wallet and every active created-seed backup step', () => {
-    expect(protectionFor('wallet')).toBe(true);
-    expect(protectionFor('persist', { seedBackupInProgress: true })).toBe(true);
+  it('covers only the creation step that actually displays the phrase', () => {
+    expect(protectionFor('persist', { createdPhraseVisible: true })).toBe(true);
+    expect(protectionFor('persist', { createdPhraseVisible: false })).toBe(false);
   });
 
-  it('is removed before biometric opt-in after the created seed is confirmed', () => {
-    expect(protectionFor('persist', { seedBackupInProgress: false })).toBe(false);
+  it('covers the phrase revealed from security settings and no other wallet tab', () => {
+    expect(protectionFor('wallet', {
+      walletTab: 'security',
+      settingsPhraseVisible: true,
+    })).toBe(true);
+    expect(protectionFor('wallet', {
+      walletTab: 'history',
+      settingsPhraseVisible: true,
+    })).toBe(false);
+    expect(protectionFor('wallet', {
+      walletTab: 'security',
+      settingsPhraseVisible: false,
+    })).toBe(false);
   });
 
-  it('covers an imported phrase only while the user reveals it', () => {
-    expect(protectionFor('import', { importPhraseVisible: false })).toBe(false);
-    expect(protectionFor('import', { importPhraseVisible: true })).toBe(true);
+  it('allows captures on import and ordinary wallet screens', () => {
+    expect(protectionFor('import')).toBe(false);
+    expect(protectionFor('wallet')).toBe(false);
   });
 });

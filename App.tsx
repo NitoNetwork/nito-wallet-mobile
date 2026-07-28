@@ -156,7 +156,7 @@ import { useAutoLockTimeout } from './src/hooks/useAutoLockTimeout';
 import { useLanguage } from './src/hooks/useLanguage';
 import { useWalletScreenProtection } from './src/hooks/useWalletScreenProtection';
 import { useWalletSubscriptions } from './src/hooks/useWalletSubscriptions';
-import { shouldProtectIosAppSwitcher } from './src/services/screenProtection';
+import { shouldProtectRecoveryPhrase } from './src/services/screenProtection';
 import { AutoLock } from './src/services/session';
 import {
   reportUnexpectedTransparentSendFailure,
@@ -413,9 +413,13 @@ function WalletApp({ theme, onSelectTheme }: {
     screenRef.current = nextScreen;
     setScreenState(nextScreen);
   }, [clearFieldErrors]);
+  const [showMnemonic, setShowMnemonic] = useState(false);
   const [walletTab, setWalletTabState] = useState<WalletTab>('home');
   const setWalletTab = useCallback((nextTab: WalletTab) => {
     clearFieldErrors();
+    if (nextTab !== 'security') {
+      setShowMnemonic(false);
+    }
     setWalletTabState(nextTab);
   }, [clearFieldErrors]);
   const [wallet, setWallet] = useState<Wallet | null>(null);
@@ -506,7 +510,6 @@ function WalletApp({ theme, onSelectTheme }: {
   }, []);
   const [error, setError] = useState('');
   const [status, setStatus] = useState('');
-  const [showMnemonic, setShowMnemonic] = useState(false);
   const [sensitivePassword, setSensitivePassword] = useState('');
   const [showSensitivePassword, setShowSensitivePassword] = useState(false);
   const [sensitiveAction, setSensitiveAction] = useState<'reveal' | 'delete' | 'enableBiometrics' | 'disableBiometrics' | null>(null);
@@ -542,13 +545,15 @@ function WalletApp({ theme, onSelectTheme }: {
     [pendingWallet, pendingWalletRequiresSeedBackup, seedBackupAttemptToken],
   );
   useWalletScreenProtection({
-    protectIosAppSwitcher: shouldProtectIosAppSwitcher({
+    protectRecoveryPhrase: shouldProtectRecoveryPhrase({
       screen,
-      importPhraseVisible: showImportSeed && importText.trim().length > 0,
-      seedBackupInProgress: (
-        pendingWalletRequiresSeedBackup
-        && seedBackupConfirmationStep < seedBackupChallenges.length
+      walletTab,
+      createdPhraseVisible: Boolean(
+        pendingWallet
+        && pendingWalletRequiresSeedBackup
+        && seedBackupConfirmationStep < 0
       ),
+      settingsPhraseVisible: showMnemonic,
     }),
   });
 

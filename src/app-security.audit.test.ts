@@ -134,15 +134,22 @@ describe('mobile wallet UX and security invariants', () => {
     );
   });
 
-  it('blocks screen capture and protects iOS app-switcher snapshots', () => {
-    expect(appSource).toContain('protectIosAppSwitcher: shouldProtectIosAppSwitcher({');
+  it('protects recovery phrase displays without blocking ordinary wallet captures', () => {
+    expect(appSource).toContain('protectRecoveryPhrase: shouldProtectRecoveryPhrase({');
+    expect(appSource).toContain('seedBackupConfirmationStep < 0');
+    expect(appSource).toMatch(
+      /if \(nextTab !== 'security'\) \{\s*setShowMnemonic\(false\);/,
+    );
     expect(screenProtectionSource).toContain('preventScreenCaptureAsync(SCREEN_CAPTURE_KEY)');
     expect(screenProtectionSource).toContain('enableAppSwitcherProtectionAsync(1)');
     expect(screenProtectionSource).toContain('allowScreenCaptureAsync(SCREEN_CAPTURE_KEY)');
-    expect(screenProtectionPolicySource).toContain("screen === 'wallet'");
     expect(screenProtectionPolicySource).toContain(
-      "screen === 'persist' && seedBackupInProgress",
+      "screen === 'persist' && createdPhraseVisible",
     );
+    expect(screenProtectionPolicySource).toContain(
+      "screen === 'wallet' && walletTab === 'security' && settingsPhraseVisible",
+    );
+    expect(screenProtectionPolicySource).not.toContain("screen === 'import'");
     expect(screenProtectionPolicySource).not.toContain("screen === 'unlock'");
   });
 
