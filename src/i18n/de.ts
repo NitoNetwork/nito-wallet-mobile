@@ -12,6 +12,7 @@ export const de: TranslationSet = {
   'actions.importSeed': 'Seed importieren',
   'actions.continue': 'Weiter',
   'actions.back': 'Zurück',
+  'actions.retry': 'Erneut versuchen',
   'actions.cancel': 'Abbrechen',
   'actions.confirm': 'Bestätigen',
   'actions.copyAddress': 'Adresse kopieren',

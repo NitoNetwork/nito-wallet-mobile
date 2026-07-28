@@ -1,5 +1,5 @@
-import { readFileSync, writeFileSync } from "node:fs";
-import { releaseVersion } from "./release-version.mjs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { releaseBuildCode, releaseVersion } from "./release-version.mjs";
 
 const root = new URL("../", import.meta.url);
 const checkOnly = process.argv.includes("--check");
@@ -70,6 +70,23 @@ const results = [
     ),
   ),
   update("assets/version-badge.svg", () => badge),
+  existsSync(new URL("android/app/build.gradle", root))
+    ? update("android/app/build.gradle", (content) => {
+        const versionCodePattern = /(versionCode\s*=\s*)\d+/;
+        if (!versionCodePattern.test(content)) {
+          throw new Error("Version code field not found in android/app/build.gradle.");
+        }
+        const withVersionCode = content.replace(
+          versionCodePattern,
+          `$1${releaseBuildCode}`,
+        );
+        return replaceVersion(
+          withVersionCode,
+          /(versionName\s*=\s*")[^"]+(")/,
+          "android/app/build.gradle",
+        );
+      })
+    : true,
 ];
 
 const packageLock = JSON.parse(readFileSync(new URL("package-lock.json", root), "utf8"));

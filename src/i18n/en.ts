@@ -14,6 +14,7 @@ export const en = {
   'actions.importSeed': 'Import seed',
   'actions.continue': 'Continue',
   'actions.back': 'Back',
+  'actions.retry': 'Retry',
   'actions.cancel': 'Cancel',
   'actions.confirm': 'Confirm',
   'actions.copyAddress': 'Copy address',

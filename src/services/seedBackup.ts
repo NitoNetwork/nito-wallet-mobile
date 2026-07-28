@@ -1,6 +1,6 @@
 import { wordlist } from '@scure/bip39/wordlists/english.js';
 
-export const SEED_BACKUP_CHALLENGE_WORD_INDEXES = [2, 11, 23] as const;
+export const SEED_BACKUP_CHALLENGE_COUNT = 3;
 
 export type SeedBackupChallenge = Readonly<{
   wordIndex: number;
@@ -19,10 +19,11 @@ const stableHash = (value: string): number => {
 
 const shuffledOptions = (
   mnemonic: string,
+  attemptToken: string,
   wordIndex: number,
   correctWord: string,
 ): readonly string[] => {
-  let state = stableHash(`${mnemonic}:${wordIndex}`);
+  let state = stableHash(`${mnemonic}:${attemptToken}:options:${wordIndex}`);
   const options = new Set<string>([correctWord]);
 
   while (options.size < 4) {
@@ -39,19 +40,37 @@ const shuffledOptions = (
   return shuffled;
 };
 
-export const createSeedBackupChallenges = (mnemonic: string): readonly SeedBackupChallenge[] => {
+const challengeWordIndexes = (
+  mnemonic: string,
+  attemptToken: string,
+  wordCount: number,
+): readonly number[] => {
+  let state = stableHash(`${mnemonic}:${attemptToken}:indexes`);
+  const indexes = new Set<number>();
+
+  while (indexes.size < SEED_BACKUP_CHALLENGE_COUNT) {
+    state = (Math.imul(state, 1_664_525) + 1_013_904_223) >>> 0;
+    indexes.add(state % wordCount);
+  }
+
+  return [...indexes];
+};
+
+export const createSeedBackupChallenges = (
+  mnemonic: string,
+  attemptToken = 'initial',
+): readonly SeedBackupChallenge[] => {
   const words = mnemonic.trim().toLowerCase().split(/\s+/u);
-  const lastRequiredIndex = SEED_BACKUP_CHALLENGE_WORD_INDEXES.at(-1)!;
-  if (words.length <= lastRequiredIndex) {
+  if (words.length !== 24) {
     throw new Error('A 24-word recovery phrase is required for backup verification.');
   }
 
-  return SEED_BACKUP_CHALLENGE_WORD_INDEXES.map((wordIndex) => {
+  return challengeWordIndexes(mnemonic, attemptToken, words.length).map((wordIndex) => {
     const correctWord = words[wordIndex]!;
     return {
       wordIndex,
       correctWord,
-      options: shuffledOptions(mnemonic, wordIndex, correctWord),
+      options: shuffledOptions(mnemonic, attemptToken, wordIndex, correctWord),
     };
   });
 };
@@ -60,3 +79,13 @@ export const isSeedBackupChallengeAnswerCorrect = (
   challenge: SeedBackupChallenge,
   answer: string,
 ): boolean => answer === challenge.correctWord;
+
+export const nextSeedBackupConfirmationStep = (
+  currentStep: number,
+  challenge: SeedBackupChallenge,
+  answer: string,
+): number => (
+  isSeedBackupChallengeAnswerCorrect(challenge, answer)
+    ? currentStep + 1
+    : -1
+);

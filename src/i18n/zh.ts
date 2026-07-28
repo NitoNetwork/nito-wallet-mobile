@@ -12,6 +12,7 @@ export const zh: TranslationSet = {
   'actions.importSeed': '导入助记词',
   'actions.continue': '继续',
   'actions.back': '返回',
+  'actions.retry': '重试',
   'actions.cancel': '取消',
   'actions.confirm': '确认',
   'actions.copyAddress': '复制地址',

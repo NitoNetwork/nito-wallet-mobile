@@ -6,6 +6,7 @@ const ELECTRUM_PROTOCOL_VERSION = '1.4';
 const DEFAULT_TIMEOUT_MS = 30_000;
 const ELECTRUM_REQUEST_MAX_ATTEMPTS = 3;
 const ELECTRUM_REQUEST_RETRY_DELAY_MS = 100;
+const ELECTRUM_RECONNECT_MAX_DELAY_MS = 10_000;
 export const DEFAULT_ELECTRUM_MAX_CONCURRENT_REQUESTS = 6;
 
 export type ElectrumServer = {
@@ -94,6 +95,7 @@ export type ElectrumRequestMetrics = Readonly<{
 export type NitoElectrumClientOptions = {
   timeoutMs?: number;
   maxConcurrentRequests?: number;
+  reconnectDelayMs?: number;
 };
 
 export class ElectrumSessionUnhealthyError extends Error {
@@ -107,6 +109,23 @@ export class ElectrumSessionUnhealthyError extends Error {
   }
 }
 
+export class ElectrumInvalidResponseError extends Error {
+  constructor(method: string, detail: string) {
+    super(`ElectrumX returned an invalid ${method} response: ${detail}.`);
+    this.name = 'ElectrumInvalidResponseError';
+  }
+}
+
+export class ElectrumRpcError extends Error {
+  readonly code: number | undefined;
+
+  constructor(message: string, code?: number) {
+    super(message);
+    this.name = 'ElectrumRpcError';
+    this.code = code;
+  }
+}
+
 type JsonRpcResponse = {
   id?: number;
   method?: string;
@@ -117,6 +136,270 @@ type JsonRpcResponse = {
 
 type ScripthashStatusListener = (status: string | null) => void;
 type BlockHeightListener = (height: number, previousHeight: number) => void;
+export type ElectrumConnectionState = Readonly<{
+  connected: boolean;
+  serverUrl: string;
+  reconnected: boolean;
+  error?: Error;
+}>;
+type ConnectionStateListener = (state: ElectrumConnectionState) => void;
+
+const isRecord = (value: unknown): value is Record<string, unknown> => (
+  typeof value === 'object' && value !== null && !Array.isArray(value)
+);
+const isSafeInteger = (value: unknown, minimum = 0): value is number => (
+  typeof value === 'number'
+  && Number.isSafeInteger(value)
+  && value >= minimum
+);
+const isTxid = (value: unknown): value is string => (
+  typeof value === 'string' && /^[0-9a-f]{64}$/iu.test(value)
+);
+const isTransactionHex = (value: unknown): value is string => (
+  typeof value === 'string'
+  && value.length > 0
+  && value.length % 2 === 0
+  && /^[0-9a-f]+$/iu.test(value)
+);
+const isSubscriptionStatus = (value: unknown): value is string | null => (
+  value === null || typeof value === 'string'
+);
+
+const validateHeader = (
+  value: unknown,
+  method = 'blockchain.headers.subscribe',
+): { height: number; hex?: string } => {
+  if (!isRecord(value) || !isSafeInteger(value.height)) {
+    throw new ElectrumInvalidResponseError(method, 'height must be a non-negative safe integer');
+  }
+  if (
+    value.hex !== undefined
+    && (
+      typeof value.hex !== 'string'
+      || value.hex.length === 0
+      || value.hex.length % 2 !== 0
+      || !/^[0-9a-f]+$/iu.test(value.hex)
+    )
+  ) {
+    throw new ElectrumInvalidResponseError(method, 'hex must be an even-length hexadecimal string');
+  }
+  return {
+    height: value.height,
+    ...(typeof value.hex === 'string' ? { hex: value.hex.toLowerCase() } : {}),
+  };
+};
+
+const validateBalance = (value: unknown): { confirmed: number; unconfirmed: number } => {
+  if (
+    !isRecord(value)
+    || !isSafeInteger(value.confirmed)
+    || !isSafeInteger(value.unconfirmed, Number.MIN_SAFE_INTEGER)
+  ) {
+    throw new ElectrumInvalidResponseError(
+      'blockchain.scripthash.get_balance',
+      'confirmed and unconfirmed must be safe integers',
+    );
+  }
+  return { confirmed: value.confirmed, unconfirmed: value.unconfirmed };
+};
+
+const validateUtxos = (
+  value: unknown,
+): readonly { tx_hash: string; tx_pos: number; value: number; height: number }[] => {
+  if (!Array.isArray(value)) {
+    throw new ElectrumInvalidResponseError(
+      'blockchain.scripthash.listunspent',
+      'result must be an array',
+    );
+  }
+  let aggregateValue = 0;
+  return value.map((entry, index) => {
+    if (
+      !isRecord(entry)
+      || !isTxid(entry.tx_hash)
+      || !isSafeInteger(entry.tx_pos)
+      || !isSafeInteger(entry.value)
+      || !isSafeInteger(entry.height)
+    ) {
+      throw new ElectrumInvalidResponseError(
+        'blockchain.scripthash.listunspent',
+        `entry ${index} has invalid fields`,
+      );
+    }
+    aggregateValue += entry.value;
+    if (!Number.isSafeInteger(aggregateValue)) {
+      throw new ElectrumInvalidResponseError(
+        'blockchain.scripthash.listunspent',
+        'aggregate value exceeds the safe integer range',
+      );
+    }
+    return {
+      tx_hash: entry.tx_hash.toLowerCase(),
+      tx_pos: entry.tx_pos,
+      value: entry.value,
+      height: entry.height,
+    };
+  });
+};
+
+const validateHistory = (
+  value: unknown,
+): readonly { tx_hash: string; height: number }[] => {
+  if (!Array.isArray(value)) {
+    throw new ElectrumInvalidResponseError(
+      'blockchain.scripthash.get_history',
+      'result must be an array',
+    );
+  }
+  return value.map((entry, index) => {
+    if (
+      !isRecord(entry)
+      || !isTxid(entry.tx_hash)
+      || !isSafeInteger(entry.height, -1)
+    ) {
+      throw new ElectrumInvalidResponseError(
+        'blockchain.scripthash.get_history',
+        `entry ${index} has invalid fields`,
+      );
+    }
+    return { tx_hash: entry.tx_hash.toLowerCase(), height: entry.height };
+  });
+};
+
+const validateVerboseTransaction = (
+  value: unknown,
+  requestedTxid: string,
+): ElectrumVerboseTransaction => {
+  if (!isRecord(value) || !Array.isArray(value.vin) || !Array.isArray(value.vout)) {
+    throw new ElectrumInvalidResponseError(
+      'blockchain.transaction.get',
+      `transaction ${requestedTxid} is not an object with vin and vout arrays`,
+    );
+  }
+  if (value.txid !== undefined && !isTxid(value.txid)) {
+    throw new ElectrumInvalidResponseError(
+      'blockchain.transaction.get',
+      `transaction ${requestedTxid} has an invalid txid`,
+    );
+  }
+  for (const field of ['time', 'blocktime'] as const) {
+    if (value[field] !== undefined && !isSafeInteger(value[field])) {
+      throw new ElectrumInvalidResponseError(
+        'blockchain.transaction.get',
+        `transaction ${requestedTxid} has an invalid ${field}`,
+      );
+    }
+  }
+
+  const vin = value.vin.map((input, index) => {
+    if (!isRecord(input)) {
+      throw new ElectrumInvalidResponseError(
+        'blockchain.transaction.get',
+        `transaction ${requestedTxid} input ${index} is invalid`,
+      );
+    }
+    const coinbase = input.coinbase;
+    const inputTxid = input.txid;
+    const inputVout = input.vout;
+    const hasCoinbase = typeof coinbase === 'string' && coinbase.length > 0;
+    const hasOutpoint = isTxid(inputTxid) && isSafeInteger(inputVout);
+    if (!hasCoinbase && !hasOutpoint) {
+      throw new ElectrumInvalidResponseError(
+        'blockchain.transaction.get',
+        `transaction ${requestedTxid} input ${index} has no valid outpoint`,
+      );
+    }
+    return {
+      ...(hasOutpoint ? { txid: (inputTxid as string).toLowerCase(), vout: inputVout as number } : {}),
+      ...(hasCoinbase ? { coinbase } : {}),
+    };
+  });
+
+  const vout = value.vout.map((output, index) => {
+    if (!isRecord(output)) {
+      throw new ElectrumInvalidResponseError(
+        'blockchain.transaction.get',
+        `transaction ${requestedTxid} output ${index} is invalid`,
+      );
+    }
+    const numericValue = typeof output.value === 'number'
+      ? output.value
+      : typeof output.value === 'string' && output.value.trim() !== ''
+        ? Number(output.value)
+        : Number.NaN;
+    if (!Number.isFinite(numericValue) || numericValue < 0) {
+      throw new ElectrumInvalidResponseError(
+        'blockchain.transaction.get',
+        `transaction ${requestedTxid} output ${index} has an invalid value`,
+      );
+    }
+    if (!Number.isSafeInteger(Math.round(numericValue * 100_000_000))) {
+      throw new ElectrumInvalidResponseError(
+        'blockchain.transaction.get',
+        `transaction ${requestedTxid} output ${index} exceeds the safe integer range`,
+      );
+    }
+    if (output.n !== undefined && !isSafeInteger(output.n)) {
+      throw new ElectrumInvalidResponseError(
+        'blockchain.transaction.get',
+        `transaction ${requestedTxid} output ${index} has an invalid index`,
+      );
+    }
+    if (output.scriptPubKey !== undefined && !isRecord(output.scriptPubKey)) {
+      throw new ElectrumInvalidResponseError(
+        'blockchain.transaction.get',
+        `transaction ${requestedTxid} output ${index} has an invalid script`,
+      );
+    }
+    const scriptPubKey = output.scriptPubKey as Record<string, unknown> | undefined;
+    if (
+      scriptPubKey?.address !== undefined
+      && typeof scriptPubKey.address !== 'string'
+    ) {
+      throw new ElectrumInvalidResponseError(
+        'blockchain.transaction.get',
+        `transaction ${requestedTxid} output ${index} has an invalid address`,
+      );
+    }
+    if (
+      scriptPubKey?.addresses !== undefined
+      && (
+        !Array.isArray(scriptPubKey.addresses)
+        || scriptPubKey.addresses.some((address) => typeof address !== 'string')
+      )
+    ) {
+      throw new ElectrumInvalidResponseError(
+        'blockchain.transaction.get',
+        `transaction ${requestedTxid} output ${index} has invalid addresses`,
+      );
+    }
+    return {
+      ...(isSafeInteger(output.n) ? { n: output.n } : {}),
+      value: output.value as number | string,
+      ...(scriptPubKey ? {
+        scriptPubKey: {
+          ...(typeof scriptPubKey.address === 'string' ? { address: scriptPubKey.address } : {}),
+          ...(Array.isArray(scriptPubKey.addresses)
+            ? { addresses: scriptPubKey.addresses as string[] }
+            : {}),
+        },
+      } : {}),
+    };
+  });
+
+  return {
+    ...(typeof value.txid === 'string' ? { txid: value.txid.toLowerCase() } : {}),
+    ...(typeof value.time === 'number' ? { time: value.time } : {}),
+    ...(typeof value.blocktime === 'number' ? { blocktime: value.blocktime } : {}),
+    vin,
+    vout,
+  };
+};
+
+export const isElectrumTransactionNotFoundError = (error: unknown): boolean => (
+  error instanceof ElectrumRpcError
+  && /no such mempool|not found|unknown transaction|transaction.*unknown/iu.test(error.message)
+);
 
 export const NITO_ELECTRUM_SERVERS: ElectrumServer[] = [
   { host: 'electrum1.nito.network', port: 50005, protocol: 'wss', priority: 1 },
@@ -211,6 +494,7 @@ export class NitoElectrumClient {
   private readonly servers: ElectrumServer[];
   private readonly timeoutMs: number;
   private readonly maxConcurrentRequests: number;
+  private readonly reconnectDelayMs: number;
   private currentServerIndex = 0;
   private requestId = 1;
   private socket: WebSocket | null = null;
@@ -228,6 +512,12 @@ export class NitoElectrumClient {
   };
   private scripthashListeners = new Map<string, Set<ScripthashStatusListener>>();
   private blockHeightListeners = new Set<BlockHeightListener>();
+  private connectionStateListeners = new Set<ConnectionStateListener>();
+  private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  private reconnectAttempt = 0;
+  private reconnectEnabled = false;
+  private hasConnectedBefore = false;
+  private blockHeaderFingerprint = '';
 
   connected = false;
   blockHeight = 0;
@@ -244,9 +534,18 @@ export class NitoElectrumClient {
     if (!Number.isInteger(maxConcurrentRequests) || maxConcurrentRequests < 1) {
       throw new Error('Electrum concurrency must be a positive integer.');
     }
+    const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+    const reconnectDelayMs = options.reconnectDelayMs ?? 500;
+    if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
+      throw new Error('Electrum timeout must be a positive number.');
+    }
+    if (!Number.isFinite(reconnectDelayMs) || reconnectDelayMs < 0) {
+      throw new Error('Electrum reconnect delay must be a non-negative number.');
+    }
     this.servers = [...servers].sort((a, b) => a.priority - b.priority);
-    this.timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+    this.timeoutMs = timeoutMs;
     this.maxConcurrentRequests = maxConcurrentRequests;
+    this.reconnectDelayMs = reconnectDelayMs;
   }
 
   getRequestMetrics(): ElectrumRequestMetrics {
@@ -274,6 +573,11 @@ export class NitoElectrumClient {
   }
 
   async connect() {
+    this.reconnectEnabled = true;
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
     if (this.connectPromise) {
       await this.connectPromise;
       return;
@@ -313,13 +617,25 @@ export class NitoElectrumClient {
         ) {
           throw new Error('ElectrumX returned an invalid server.version response.');
         }
-        const header = await this.requestRaw<{ height?: number }>('blockchain.headers.subscribe', []);
-        this.blockHeight = Number(header?.height || 0);
+        const header = validateHeader(
+          await this.requestRaw<unknown>('blockchain.headers.subscribe', []),
+        );
+        this.blockHeight = header.height;
+        this.blockHeaderFingerprint = header.hex ?? '';
+        await this.restoreScripthashSubscriptions();
+        const reconnected = this.hasConnectedBefore;
+        this.hasConnectedBefore = true;
+        this.reconnectAttempt = 0;
+        this.emitConnectionState({
+          connected: true,
+          serverUrl: attemptedServerUrl,
+          reconnected,
+        });
         return;
       } catch (caught) {
         const failure = caught instanceof Error ? caught : new Error('ElectrumX connection failed.');
         lastError = new Error(`ElectrumX server unavailable: ${attemptedServerUrl}. ${failure.message}`);
-        this.disconnect();
+        this.closeSocket(lastError);
         this.currentServerIndex = (this.currentServerIndex + 1) % this.servers.length;
       }
     }
@@ -328,11 +644,106 @@ export class NitoElectrumClient {
   }
 
   disconnect(reason: Error = new Error('ElectrumX connection closed.')) {
+    this.reconnectEnabled = false;
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
+    this.closeSocket(reason);
+  }
+
+  private closeSocket(reason: Error) {
     const socket = this.socket;
     this.socket = null;
     this.connected = false;
     socket?.close();
     this.rejectOutstandingRequests(reason);
+  }
+
+  private markSessionUnhealthy(reason: ElectrumSessionUnhealthyError) {
+    const wasConnected = this.connected;
+    this.closeSocket(reason);
+    if (this.servers.length > 1) {
+      this.currentServerIndex = (this.currentServerIndex + 1) % this.servers.length;
+    }
+    if (wasConnected) {
+      this.emitConnectionState({
+        connected: false,
+        serverUrl: this.currentServerUrl,
+        reconnected: false,
+        error: reason,
+      });
+    }
+    this.scheduleReconnect();
+  }
+
+  private scheduleReconnect() {
+    const hasLiveObservers = (
+      this.connectionStateListeners.size > 0
+      || this.blockHeightListeners.size > 0
+      || this.scripthashListeners.size > 0
+    );
+    if (
+      !this.reconnectEnabled
+      || !hasLiveObservers
+      || this.reconnectTimer
+      || this.connected
+      || this.connectPromise
+    ) {
+      return;
+    }
+    const delayMs = Math.min(
+      ELECTRUM_RECONNECT_MAX_DELAY_MS,
+      this.reconnectDelayMs * (2 ** Math.min(this.reconnectAttempt, 5)),
+    );
+    this.reconnectAttempt += 1;
+    this.reconnectTimer = setTimeout(() => {
+      this.reconnectTimer = null;
+      void this.connect().catch((caught) => {
+        const error = caught instanceof Error ? caught : new Error(String(caught));
+        this.emitConnectionState({
+          connected: false,
+          serverUrl: this.currentServerUrl,
+          reconnected: false,
+          error,
+        });
+        this.scheduleReconnect();
+      });
+    }, delayMs);
+  }
+
+  private emitConnectionState(state: ElectrumConnectionState) {
+    this.connectionStateListeners.forEach((listener) => listener(state));
+  }
+
+  subscribeConnectionState(listener: ConnectionStateListener) {
+    this.connectionStateListeners.add(listener);
+    if (!this.connected && this.hasConnectedBefore) {
+      this.scheduleReconnect();
+    }
+    return () => {
+      this.connectionStateListeners.delete(listener);
+    };
+  }
+
+  private async restoreScripthashSubscriptions() {
+    const scripthashes = [...this.scripthashListeners.keys()];
+    for (let offset = 0; offset < scripthashes.length; offset += this.maxConcurrentRequests) {
+      const batch = scripthashes.slice(offset, offset + this.maxConcurrentRequests);
+      await Promise.all(batch.map(async (scripthash) => {
+        const status = await this.requestRaw<unknown>(
+          'blockchain.scripthash.subscribe',
+          [scripthash],
+        );
+        if (!isSubscriptionStatus(status)) {
+          throw new ElectrumInvalidResponseError(
+            'blockchain.scripthash.subscribe',
+            'status must be a string or null',
+          );
+        }
+        this.scripthashListeners.get(scripthash)?.forEach((listener) => listener(status));
+      }));
+    }
   }
 
   private rejectOutstandingRequests(reason: Error) {
@@ -360,6 +771,12 @@ export class NitoElectrumClient {
         return await this.requestRaw<T>(method, params);
       } catch (caught) {
         lastError = caught;
+        if (
+          method === 'blockchain.transaction.get'
+          && isElectrumTransactionNotFoundError(caught)
+        ) {
+          throw caught;
+        }
         if (!this.connected || caught instanceof ElectrumSessionUnhealthyError) {
           throw caught;
         }
@@ -372,29 +789,40 @@ export class NitoElectrumClient {
     }
 
     const unhealthyError = new ElectrumSessionUnhealthyError(lastError);
-    this.disconnect(unhealthyError);
+    this.markSessionUnhealthy(unhealthyError);
     throw unhealthyError;
   }
 
   async getAddressBalance(address: string): Promise<ElectrumBalance> {
     const scripthash = addressToElectrumScripthash(address);
-    const balance = await this.request<{ confirmed: number; unconfirmed: number }>(
-      'blockchain.scripthash.get_balance',
-      [scripthash],
+    const balance = validateBalance(
+      await this.request<unknown>(
+        'blockchain.scripthash.get_balance',
+        [scripthash],
+      ),
     );
+    const totalSats = balance.confirmed + balance.unconfirmed;
+    if (!Number.isSafeInteger(totalSats) || totalSats < 0) {
+      throw new ElectrumInvalidResponseError(
+        'blockchain.scripthash.get_balance',
+        'aggregate balance exceeds the safe integer range',
+      );
+    }
 
     return {
       confirmedSats: balance.confirmed,
       unconfirmedSats: balance.unconfirmed,
-      totalSats: balance.confirmed + balance.unconfirmed,
+      totalSats,
     };
   }
 
   async getAddressUtxos(address: string): Promise<ElectrumUtxo[]> {
     const scripthash = addressToElectrumScripthash(address);
-    const utxos = await this.request<{ tx_hash: string; tx_pos: number; value: number; height: number }[]>(
-      'blockchain.scripthash.listunspent',
-      [scripthash],
+    const utxos = validateUtxos(
+      await this.request<unknown>(
+        'blockchain.scripthash.listunspent',
+        [scripthash],
+      ),
     );
 
     return utxos.map((utxo) => ({
@@ -409,9 +837,9 @@ export class NitoElectrumClient {
 
   async getAddressHistory(address: string): Promise<ElectrumHistoryEntry[]> {
     const scripthash = addressToElectrumScripthash(address);
-    const history = await this.request<{ tx_hash: string; height: number }[]>('blockchain.scripthash.get_history', [
-      scripthash,
-    ]);
+    const history = validateHistory(
+      await this.request<unknown>('blockchain.scripthash.get_history', [scripthash]),
+    );
 
     return history.map((entry) => ({ txid: entry.tx_hash, height: entry.height, address }));
   }
@@ -436,7 +864,13 @@ export class NitoElectrumClient {
     };
 
     try {
-      const status = await this.request<string | null>('blockchain.scripthash.subscribe', [scripthash]);
+      const status = await this.request<unknown>('blockchain.scripthash.subscribe', [scripthash]);
+      if (!isSubscriptionStatus(status)) {
+        throw new ElectrumInvalidResponseError(
+          'blockchain.scripthash.subscribe',
+          'status must be a string or null',
+        );
+      }
       return { status, unsubscribe };
     } catch (error) {
       unsubscribe();
@@ -444,22 +878,52 @@ export class NitoElectrumClient {
     }
   }
 
-  async broadcastTransaction(txHex: string) {
-    return this.request<string>('blockchain.transaction.broadcast', [txHex]);
+  async broadcastTransaction(txHex: string, expectedTxid?: string) {
+    if (!isTransactionHex(txHex)) {
+      throw new Error('Cannot broadcast an invalid transaction payload.');
+    }
+    if (expectedTxid !== undefined && !isTxid(expectedTxid)) {
+      throw new Error('Cannot broadcast a transaction with an invalid local txid.');
+    }
+    const reportedTxid = await this.request<unknown>('blockchain.transaction.broadcast', [txHex]);
+    if (!isTxid(reportedTxid)) {
+      throw new ElectrumInvalidResponseError(
+        'blockchain.transaction.broadcast',
+        'txid must be 64 hexadecimal characters',
+      );
+    }
+    if (
+      expectedTxid !== undefined
+      && reportedTxid.toLowerCase() !== expectedTxid.toLowerCase()
+    ) {
+      throw new ElectrumInvalidResponseError(
+        'blockchain.transaction.broadcast',
+        'the server txid does not match the locally signed transaction',
+      );
+    }
+    return expectedTxid?.toLowerCase() ?? reportedTxid.toLowerCase();
   }
 
   async getTransactionHex(txid: string) {
-    return this.request<string>('blockchain.transaction.get', [txid]);
+    if (!isTxid(txid)) {
+      throw new Error('Cannot request a transaction with an invalid txid.');
+    }
+    const transactionHex = await this.request<unknown>('blockchain.transaction.get', [txid]);
+    if (!isTransactionHex(transactionHex)) {
+      throw new ElectrumInvalidResponseError(
+        'blockchain.transaction.get',
+        `transaction ${txid} is not valid hexadecimal data`,
+      );
+    }
+    return transactionHex.toLowerCase();
   }
 
   async getVerboseTransaction(txid: string) {
-    const transaction = await this.request<ElectrumVerboseTransaction>('blockchain.transaction.get', [txid, true]);
-
-    if (!transaction || typeof transaction !== 'object' || !Array.isArray(transaction.vin) || !Array.isArray(transaction.vout)) {
-      throw new Error(`ElectrumX returned invalid transaction details for ${txid}.`);
+    if (!isTxid(txid)) {
+      throw new Error('Cannot request a transaction with an invalid txid.');
     }
-
-    return transaction;
+    const transaction = await this.request<unknown>('blockchain.transaction.get', [txid, true]);
+    return validateVerboseTransaction(transaction, txid);
   }
 
   subscribeBlockHeight(listener: BlockHeightListener) {
@@ -472,12 +936,22 @@ export class NitoElectrumClient {
   private openSocket(url: string) {
     return new Promise<void>((resolve, reject) => {
       const socket = new WebSocket(url);
+      let opened = false;
+      let settled = false;
       const timer = setTimeout(() => {
+        if (settled) return;
+        settled = true;
         socket.close();
         reject(new Error(`Timeout ElectrumX: ${url}`));
       }, this.timeoutMs);
 
       socket.onopen = () => {
+        if (settled) {
+          socket.close();
+          return;
+        }
+        settled = true;
+        opened = true;
         clearTimeout(timer);
         this.socket = socket;
         this.connected = true;
@@ -485,17 +959,36 @@ export class NitoElectrumClient {
       };
 
       socket.onerror = () => {
+        if (settled) return;
+        settled = true;
         clearTimeout(timer);
         reject(new Error(`ElectrumX WebSocket error: ${url}`));
       };
 
       socket.onclose = () => {
+        if (!opened && !settled) {
+          settled = true;
+          clearTimeout(timer);
+          reject(new Error(`ElectrumX WebSocket closed during connection: ${url}`));
+          return;
+        }
         if (this.socket === socket) {
           this.socket = null;
           this.connected = false;
-          this.rejectOutstandingRequests(
-            new ElectrumSessionUnhealthyError(new Error('ElectrumX connection closed unexpectedly.')),
+          const error = new ElectrumSessionUnhealthyError(
+            new Error('ElectrumX connection closed unexpectedly.'),
           );
+          this.rejectOutstandingRequests(error);
+          if (this.servers.length > 1) {
+            this.currentServerIndex = (this.currentServerIndex + 1) % this.servers.length;
+          }
+          this.emitConnectionState({
+            connected: false,
+            serverUrl: this.currentServerUrl,
+            reconnected: false,
+            error,
+          });
+          this.scheduleReconnect();
         }
       };
 
@@ -604,12 +1097,28 @@ export class NitoElectrumClient {
     const message = JSON.parse(raw) as JsonRpcResponse;
 
     if (message.method === 'blockchain.headers.subscribe') {
-      const header = Array.isArray(message.params) ? (message.params[0] as { height?: number }) : undefined;
+      if (!Array.isArray(message.params) || message.params.length < 1) {
+        throw new ElectrumInvalidResponseError(
+          'blockchain.headers.subscribe',
+          'notification parameters are missing',
+        );
+      }
+      const header = validateHeader(message.params[0]);
       const previousHeight = this.blockHeight;
-      const nextHeight = Number(header?.height || previousHeight);
+      const previousFingerprint = this.blockHeaderFingerprint;
+      const nextHeight = header.height;
+      const nextFingerprint = header.hex ?? previousFingerprint;
       this.blockHeight = nextHeight;
+      this.blockHeaderFingerprint = nextFingerprint;
 
-      if (nextHeight > previousHeight) {
+      if (
+        nextHeight !== previousHeight
+        || (
+          nextHeight === previousHeight
+          && previousFingerprint !== ''
+          && nextFingerprint !== previousFingerprint
+        )
+      ) {
         this.blockHeightListeners.forEach((listener) => listener(nextHeight, previousHeight));
       }
       return;
@@ -618,10 +1127,14 @@ export class NitoElectrumClient {
     if (message.method === 'blockchain.scripthash.subscribe') {
       const [scripthash, status] = Array.isArray(message.params) ? message.params : [];
 
-      if (typeof scripthash === 'string') {
-        const listeners = this.scripthashListeners.get(scripthash);
-        listeners?.forEach((listener) => listener(typeof status === 'string' ? status : null));
+      if (typeof scripthash !== 'string' || !isSubscriptionStatus(status)) {
+        throw new ElectrumInvalidResponseError(
+          'blockchain.scripthash.subscribe',
+          'notification must contain a scripthash and a string or null status',
+        );
       }
+      const listeners = this.scripthashListeners.get(scripthash);
+      listeners?.forEach((listener) => listener(status));
 
       return;
     }
@@ -639,7 +1152,10 @@ export class NitoElectrumClient {
     this.pending.delete(message.id);
 
     if (message.error) {
-      request.reject(new Error(message.error.message || `ElectrumX error ${message.error.code || ''}`.trim()));
+      request.reject(new ElectrumRpcError(
+        message.error.message || `ElectrumX error ${message.error.code || ''}`.trim(),
+        message.error.code,
+      ));
       return;
     }
 

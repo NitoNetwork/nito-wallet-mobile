@@ -49,6 +49,23 @@ export function LoadingScreen({ t, rotation }: { t: Translator; rotation: Rotati
   );
 }
 
+export function InitializationErrorScreen({
+  t,
+  onRetry,
+}: {
+  t: Translator;
+  onRetry: () => void;
+}) {
+  const styles = useStyles();
+  return (
+    <View style={styles.card}>
+      <Text style={styles.sectionTitle}>{t('errors.initializationFailed')}</Text>
+      <Text style={styles.body}>{t('errors.walletStorageUnavailable')}</Text>
+      <ActionButton label={t('actions.retry')} onPress={onRetry} />
+    </View>
+  );
+}
+
 export function LoadingOverlay({
   title,
   message,
@@ -365,6 +382,11 @@ export function PersistScreen({
         <>
           <Text style={styles.helper}>{t('persist.seedBackupInstruction')}</Text>
           <Text style={styles.mnemonic}>{pendingWallet.mnemonic}</Text>
+          {seedBackupConfirmationError ? (
+            <Text accessibilityLiveRegion="polite" style={styles.fieldError}>
+              {seedBackupConfirmationError}
+            </Text>
+          ) : null}
           <ActionButton
             label={t('actions.confirmSeedBackup')}
             disabled={actionLocked}

@@ -253,7 +253,7 @@ describe('WalletNetworkController', () => {
       snapshot,
       serverUrl: customUrl,
     });
-    expect(currentNetwork.error).toContain(customUrl);
+    expect(currentNetwork.error).toBe(messages.networkUnavailable);
   });
 
   it('never exposes a raw SQLite driver error during synchronization', async () => {

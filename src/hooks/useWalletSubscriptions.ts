@@ -6,8 +6,13 @@ import {
   type WalletSyncOptions,
 } from '../services/walletNetworkController';
 import type { TransparentWalletSnapshot } from '../wallet/transparentScan';
-import { hasPendingWork, pendingRefreshAddresses } from '../wallet/pendingRefresh';
+import { hasPendingWork } from '../wallet/pendingRefresh';
 import type { NetworkState } from '../ui/types';
+import {
+  syncRequestAfterInitialSubscriptions,
+  syncRequestForAddressStatus,
+  syncRequestForBlockStatus,
+} from '../services/walletSubscriptionPolicy';
 
 /**
  * Keeps the ElectrumX subscriptions in sync with the scanned addresses: one
@@ -41,6 +46,7 @@ export const useWalletSubscriptions = ({
   const statusRef = useRef<Map<string, string | null>>(new Map());
   const unsubscribeRef = useRef<Map<string, () => void>>(new Map());
   const blockHeightUnsubscribeRef = useRef<(() => void) | null>(null);
+  const connectionStateUnsubscribeRef = useRef<(() => void) | null>(null);
   const refreshPromiseRef = useRef<Promise<void> | null>(null);
 
   const requestOrQueueSync = useCallback((options: WalletSyncOptions) => {
@@ -67,29 +73,50 @@ export const useWalletSubscriptions = ({
       return undefined;
     }
 
+    connectionStateUnsubscribeRef.current?.();
+    connectionStateUnsubscribeRef.current = client.subscribeConnectionState((connection) => {
+      if (!connection.connected) {
+        onConnectionError(connection.error ?? new Error('ElectrumX connection closed.'));
+        return;
+      }
+      if (connection.reconnected) {
+        requestOrQueueSync({ force: true, silent: true });
+      }
+    });
+
     blockHeightUnsubscribeRef.current = client.subscribeBlockHeight((height) => {
       const current = networkRef.current;
       const currentSnapshot = current.snapshot;
-      if (!currentSnapshot || height <= current.height) return;
+      if (!currentSnapshot) return;
 
-      if (!hasPendingWork(currentSnapshot)) {
+      const syncRequest = syncRequestForBlockStatus({
+        announcedHeight: height,
+        currentHeight: current.height,
+        hasPendingWork: hasPendingWork(currentSnapshot),
+      });
+      if (!syncRequest) {
         onHeightAdvance(height);
         return;
       }
 
-      requestOrQueueSync({
-        force: true,
-        silent: true,
-        pendingOnly: true,
-        onlyAddresses: pendingRefreshAddresses(currentSnapshot),
-      });
+      requestOrQueueSync(syncRequest);
     });
 
     return () => {
       blockHeightUnsubscribeRef.current?.();
       blockHeightUnsubscribeRef.current = null;
+      connectionStateUnsubscribeRef.current?.();
+      connectionStateUnsubscribeRef.current = null;
     };
-  }, [clientRef, enabled, networkRef, onHeightAdvance, requestOrQueueSync, snapshot]);
+  }, [
+    clientRef,
+    enabled,
+    networkRef,
+    onConnectionError,
+    onHeightAdvance,
+    requestOrQueueSync,
+    snapshot,
+  ]);
 
   useEffect(() => () => {
     clearSubscriptions();
@@ -124,6 +151,7 @@ export const useWalletSubscriptions = ({
       }
 
       const refresh = (async () => {
+        let needsAuthoritativeRefresh = false;
         for (const scannedAddress of snapshot.addresses) {
           const address = scannedAddress.address;
 
@@ -140,12 +168,7 @@ export const useWalletSubscriptions = ({
                 const knownAddress = networkRef.current.snapshot?.addresses.find(
                   ({ address: candidate }) => candidate === changedAddress,
                 );
-                requestOrQueueSync({
-                  force: true,
-                  silent: true,
-                  onlyAddresses: knownAddress?.used ? [changedAddress] : undefined,
-                  rescanGap: !knownAddress?.used,
-                });
+                requestOrQueueSync(syncRequestForAddressStatus(Boolean(knownAddress?.used)));
               }
             });
 
@@ -156,6 +179,7 @@ export const useWalletSubscriptions = ({
 
             statusRef.current.set(address, subscription.status);
             unsubscribeRef.current.set(address, subscription.unsubscribe);
+            needsAuthoritativeRefresh ||= scannedAddress.used;
             if (!scannedAddress.used && subscription.status !== null) {
               requestOrQueueSync({ force: true, silent: true, rescanGap: true });
             }
@@ -164,6 +188,13 @@ export const useWalletSubscriptions = ({
             onConnectionError(error);
             return;
           }
+        }
+        const initialSyncRequest = syncRequestAfterInitialSubscriptions(needsAuthoritativeRefresh);
+        if (!cancelled && initialSyncRequest) {
+          // The initial status is not an event. Refresh all known used addresses
+          // so same-height mempool changes that happened while the app was closed
+          // cannot be mistaken for a fresh cache.
+          requestOrQueueSync(initialSyncRequest);
         }
       })();
       refreshPromiseRef.current = refresh;

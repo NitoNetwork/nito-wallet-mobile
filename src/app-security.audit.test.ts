@@ -18,6 +18,7 @@ import sessionSource from './services/session.ts?raw';
 import vaultSource from './services/vault.ts?raw';
 import screensSource from './ui/screens.tsx?raw';
 import subscriptionsSource from './hooks/useWalletSubscriptions.ts?raw';
+import screenProtectionSource from './hooks/useWalletScreenProtection.ts?raw';
 import transparentScanSource from './wallet/transparentScan.ts?raw';
 import coinbaseSource from './wallet/coinbaseMaturity.ts?raw';
 import historyDbSource from './services/walletHistoryDb.ts?raw';
@@ -105,7 +106,25 @@ describe('mobile wallet UX and security invariants', () => {
   });
 
   it('clears the typed vault password when the wallet locks', () => {
-    expect(appSource).toMatch(/const lockWallet = useCallback\(\(\) => \{[\s\S]*?setSensitivePassword\(''\);/);
+    expect(appSource).toMatch(
+      /const lockWallet = useCallback\(\(\) => \{[\s\S]*?setUnlockPassword\(''\);[\s\S]*?setPersistPassword\(''\);[\s\S]*?setSensitivePassword\(''\);/,
+    );
+  });
+
+  it('disconnects Electrum when the wallet locks or is deleted', () => {
+    expect(appSource).toMatch(
+      /const lockWallet = useCallback\(\(\) => \{[\s\S]*?electrumClientRef\.current\?\.disconnect\(new Error\('Wallet locked\.'\)\);[\s\S]*?electrumClientRef\.current = null;/,
+    );
+    expect(appSource).toMatch(
+      /await deleteVault\(\);[\s\S]*?electrumClientRef\.current\?\.disconnect\(new Error\('Wallet deleted\.'\)\);[\s\S]*?electrumClientRef\.current = null;/,
+    );
+  });
+
+  it('blocks screen capture and protects iOS app-switcher snapshots', () => {
+    expect(appSource).toContain('useWalletScreenProtection();');
+    expect(screenProtectionSource).toContain('preventScreenCaptureAsync(SCREEN_CAPTURE_KEY)');
+    expect(screenProtectionSource).toContain('enableAppSwitcherProtectionAsync(1)');
+    expect(screenProtectionSource).toContain('allowScreenCaptureAsync(SCREEN_CAPTURE_KEY)');
   });
 
   it('lets the user turn biometric unlock off again without losing the vault', () => {

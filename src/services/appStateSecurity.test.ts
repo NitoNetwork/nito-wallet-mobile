@@ -69,6 +69,7 @@ describe('shouldLockWalletForAppState', () => {
       biometricDismissedRef: { current: false },
       lockedDuringSessionRef: { current: false },
       lockWalletRef: { current: lockWallet },
+      clearTransientSecretsRef: { current: vi.fn() },
       unlockSavedWalletRef: { current: vi.fn() },
     });
 
@@ -92,6 +93,7 @@ describe('shouldLockWalletForAppState', () => {
       biometricDismissedRef: { current: false },
       lockedDuringSessionRef: { current: false },
       lockWalletRef: { current: lockWallet },
+      clearTransientSecretsRef: { current: vi.fn() },
       unlockSavedWalletRef: { current: vi.fn() },
     });
 
@@ -122,11 +124,54 @@ describe('shouldLockWalletForAppState', () => {
       biometricDismissedRef: { current: false },
       lockedDuringSessionRef: { current: false },
       lockWalletRef: { current: lockWallet },
+      clearTransientSecretsRef: { current: vi.fn() },
       unlockSavedWalletRef: { current: vi.fn() },
     });
 
     handler('inactive');
 
     expect(lockWallet).toHaveBeenCalledOnce();
+  });
+
+  it('clears an imported phrase when its screen leaves the foreground', () => {
+    const clearTransientSecrets = vi.fn();
+    const handler = createWalletAppStateChangeHandler({
+      appStateRef: { current: 'active' },
+      screenRef: { current: 'import' },
+      systemPromptActiveRef: { current: false },
+      vaultBiometricsEnabledRef: { current: false },
+      biometricUnavailableReasonRef: { current: '' },
+      biometricInterruptedRef: { current: false },
+      biometricDismissedRef: { current: false },
+      lockedDuringSessionRef: { current: false },
+      lockWalletRef: { current: vi.fn() },
+      clearTransientSecretsRef: { current: clearTransientSecrets },
+      unlockSavedWalletRef: { current: vi.fn() },
+    });
+
+    handler('inactive');
+
+    expect(clearTransientSecrets).toHaveBeenCalledOnce();
+  });
+
+  it('does not clear an unlock field while the biometric system prompt makes iOS inactive', () => {
+    const clearTransientSecrets = vi.fn();
+    const handler = createWalletAppStateChangeHandler({
+      appStateRef: { current: 'active' },
+      screenRef: { current: 'unlock' },
+      systemPromptActiveRef: { current: true },
+      vaultBiometricsEnabledRef: { current: true },
+      biometricUnavailableReasonRef: { current: '' },
+      biometricInterruptedRef: { current: false },
+      biometricDismissedRef: { current: false },
+      lockedDuringSessionRef: { current: false },
+      lockWalletRef: { current: vi.fn() },
+      clearTransientSecretsRef: { current: clearTransientSecrets },
+      unlockSavedWalletRef: { current: vi.fn() },
+    });
+
+    handler('inactive');
+
+    expect(clearTransientSecrets).not.toHaveBeenCalled();
   });
 });

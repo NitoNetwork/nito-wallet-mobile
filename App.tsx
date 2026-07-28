@@ -59,6 +59,7 @@ import {
   Feedback,
   Hero,
   ImportScreen,
+  InitializationErrorScreen,
   LandingScreen,
   LanguageSettings,
   LoadingOverlay,
@@ -91,6 +92,7 @@ import {
 import { readOptionalCache } from './src/services/cachePolicy';
 import { reportNonFinancialFailure } from './src/services/diagnostics';
 import { ExclusiveActionGate } from './src/services/exclusiveActionGate';
+import { loadWalletBootstrapState } from './src/services/appBootstrap';
 import {
   createWalletAppStateChangeHandler,
   lockWalletIfAppStateInactive,
@@ -117,7 +119,7 @@ import {
 } from './src/services/historyEnrichmentQueue';
 import {
   createSeedBackupChallenges,
-  isSeedBackupChallengeAnswerCorrect,
+  nextSeedBackupConfirmationStep,
 } from './src/services/seedBackup';
 import { type Translator } from './src/i18n';
 import { nitoWalletCrypto } from './src/native/nitoWalletCrypto';
@@ -148,6 +150,7 @@ import {
 import { makeConsolidationTranslator } from './src/i18n.consolidation';
 import { useAutoLockTimeout } from './src/hooks/useAutoLockTimeout';
 import { useLanguage } from './src/hooks/useLanguage';
+import { useWalletScreenProtection } from './src/hooks/useWalletScreenProtection';
 import { useWalletSubscriptions } from './src/hooks/useWalletSubscriptions';
 import { AutoLock } from './src/services/session';
 import {
@@ -231,7 +234,8 @@ const formatCooldownRemaining = (milliseconds: number) => {
 };
 const customElectrumValidationMessage = (caught: unknown, t: Translator): string => {
   if (!(caught instanceof CustomElectrumServerValidationError)) {
-    return caught instanceof Error ? caught.message : t('errors.networkUnavailable');
+    reportNonFinancialFailure('custom Electrum server validation', caught);
+    return t('errors.networkUnavailable');
   }
 
   const keys = {
@@ -246,10 +250,12 @@ const translatedErrorMessage = (
   caught: unknown,
   t: Translator,
   fallback: string,
+  operation: string,
 ): string => userFacingErrorMessage(
   caught,
   fallback,
   t('errors.walletStorageUnavailable'),
+  operation,
 );
 type ImportWordCheck = {
   index: number;
@@ -371,10 +377,16 @@ const requestBiometricGate = async (promptMessage: string) => {
   }
 };
 
+const createSeedBackupAttemptToken = (): string => Array.from(
+  nacl.randomBytes(16),
+  (byte) => byte.toString(16).padStart(2, '0'),
+).join('');
+
 function WalletApp({ theme, onSelectTheme }: {
   theme: ThemeName;
   onSelectTheme: (next: ThemeName) => void;
 }) {
+  useWalletScreenProtection();
   const styles = useStyles();
   const [importFieldError, setImportFieldError] = useState('');
   const [sendRecipientErrors, setSendRecipientErrors] = useState<SendRecipientFieldErrors>({});
@@ -408,6 +420,9 @@ function WalletApp({ theme, onSelectTheme }: {
   const [pendingWallet, setPendingWallet] = useState<Wallet | null>(null);
   const [pendingWalletRequiresSeedBackup, setPendingWalletRequiresSeedBackup] = useState(false);
   const [seedBackupConfirmationStep, setSeedBackupConfirmationStep] = useState(-1);
+  const [seedBackupAttemptToken, setSeedBackupAttemptToken] =
+    useState(createSeedBackupAttemptToken);
+  const seedBackupAnswerLockedRef = useRef(false);
   const [walletNetworkController] = useState(() => new WalletNetworkController());
   const electrumClientRef = useRef<NitoElectrumClient | null>(null);
   const pendingNetworkRef = useRef<{ address: string; snapshot: TransparentWalletSnapshot; height: number } | null>(null);
@@ -423,6 +438,8 @@ function WalletApp({ theme, onSelectTheme }: {
   const lockedDuringSessionRef = useRef(false);
   const walletLockAppliedRef = useRef(false);
   const lockWalletRef = useRef<() => void>(() => undefined);
+  const clearTransientSecretsRef = useRef<() => void>(() => undefined);
+  const transientSecretGenerationRef = useRef(0);
   const enrichAttemptedRef = useRef<Set<string>>(new Set());
   const enrichFailedRef = useRef<Set<string>>(new Set());
   const appStateRef = useRef(AppState.currentState);
@@ -507,6 +524,7 @@ function WalletApp({ theme, onSelectTheme }: {
   const [qrScanHandled, setQrScanHandled] = useState(false);
   const qrScanHandledRef = useRef(false);
   const [qrScannerError, setQrScannerError] = useState('');
+  const [bootstrapAttempt, setBootstrapAttempt] = useState(0);
   const qrRetryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const qrScanAttemptsRef = useRef(0);
   const [cameraPermission, requestCameraPermission] = useCameraPermissions();
@@ -514,11 +532,15 @@ function WalletApp({ theme, onSelectTheme }: {
   const seedBackupChallenges = useMemo(
     () => (
       pendingWalletRequiresSeedBackup && pendingWallet
-        ? createSeedBackupChallenges(pendingWallet.mnemonic)
+        ? createSeedBackupChallenges(pendingWallet.mnemonic, seedBackupAttemptToken)
         : []
     ),
-    [pendingWallet, pendingWalletRequiresSeedBackup],
+    [pendingWallet, pendingWalletRequiresSeedBackup, seedBackupAttemptToken],
   );
+
+  useLayoutEffect(() => {
+    seedBackupAnswerLockedRef.current = false;
+  }, [seedBackupAttemptToken, seedBackupConfirmationStep]);
 
   useEffect(() => {
     tRef.current = t;
@@ -700,42 +722,44 @@ function WalletApp({ theme, onSelectTheme }: {
 
     const bootstrap = async () => {
       try {
-        const [
+        const {
           vault,
-          hasHardware,
-          isEnrolled,
-          method,
-          savedRefreshUntil,
-          savedElectrumServerPreference,
-        ] = await Promise.all([
-          loadVault(),
-          LocalAuthentication.hasHardwareAsync(),
-          LocalAuthentication.isEnrolledAsync(),
-          getBiometricMethod(),
-          SecureStore.getItemAsync(BALANCE_REFRESH_COOLDOWN_KEY).catch((caught) => {
-            reportNonFinancialFailure('balance refresh cooldown read', caught);
-            return null;
-          }),
-          loadElectrumServerPreference(),
-        ]);
+          hasBiometricHardware,
+          isBiometricEnrolled,
+          biometricMethod: method,
+          savedRefreshCooldown,
+          electrumPreference: savedElectrumServerPreference,
+        } = await loadWalletBootstrapState({
+          loadVault,
+          hasBiometricHardware: LocalAuthentication.hasHardwareAsync,
+          isBiometricEnrolled: LocalAuthentication.isEnrolledAsync,
+          getBiometricMethod,
+          loadRefreshCooldown: () => SecureStore.getItemAsync(BALANCE_REFRESH_COOLDOWN_KEY),
+          loadElectrumPreference: loadElectrumServerPreference,
+          reportAncillaryFailure: reportNonFinancialFailure,
+        });
 
         if (!mounted) {
           return;
         }
 
-        setBiometricMethod(method);
-        setElectrumServerPreference(savedElectrumServerPreference);
+        if (method) {
+          setBiometricMethod(method);
+        }
+        if (savedElectrumServerPreference) {
+          setElectrumServerPreference(savedElectrumServerPreference);
+        }
         applyVaultTransition({ type: 'load', vault });
 
 
-        const savedCooldown = Number(savedRefreshUntil);
+        const savedCooldown = Number(savedRefreshCooldown);
         if (Number.isFinite(savedCooldown) && savedCooldown > Date.now()) {
           setRefreshCooldownUntil(Math.min(savedCooldown, Date.now() + BALANCE_REFRESH_COOLDOWN_MS));
         }
 
-        if (!hasHardware) {
+        if (hasBiometricHardware === false) {
           setBiometricUnavailableReason(tRef.current('errors.biometricNoHardware'));
-        } else if (!isEnrolled) {
+        } else if (isBiometricEnrolled === false) {
           setBiometricUnavailableReason(tRef.current('errors.biometricNotEnrolled'));
         }
 
@@ -745,8 +769,9 @@ function WalletApp({ theme, onSelectTheme }: {
           return;
         }
 
-        setError(caught instanceof Error ? caught.message : tRef.current('errors.initializationFailed'));
-        setScreen('landing');
+        reportNonFinancialFailure('wallet bootstrap vault read', caught);
+        setError('');
+        setScreen('initializationError');
       }
     };
 
@@ -755,7 +780,12 @@ function WalletApp({ theme, onSelectTheme }: {
     return () => {
       mounted = false;
     };
-  }, [applyVaultTransition, setBiometricUnavailableReason, setScreen]);
+  }, [
+    applyVaultTransition,
+    bootstrapAttempt,
+    setBiometricUnavailableReason,
+    setScreen,
+  ]);
 
   useEffect(() => {
     if (refreshCooldownUntil <= Date.now()) {
@@ -846,7 +876,12 @@ function WalletApp({ theme, onSelectTheme }: {
     } catch (caught) {
       if (walletNetworkController.isCurrentPrefetch(generation)) {
         pendingNetworkRef.current = null;
-        setError(caught instanceof Error ? caught.message : t('errors.networkUnavailable'));
+        setError(translatedErrorMessage(
+          caught,
+          t,
+          t('errors.networkUnavailable'),
+          'wallet network prefetch',
+        ));
       }
     }
   }, [t, walletNetworkController]);
@@ -977,7 +1012,12 @@ function WalletApp({ theme, onSelectTheme }: {
       );
       activeBatchKeys = [];
       if (sessionCurrent) {
-        const message = translatedErrorMessage(caught, t, t('errors.networkUnavailable'));
+        const message = translatedErrorMessage(
+          caught,
+          t,
+          t('errors.networkUnavailable'),
+          'history enrichment',
+        );
         const current = networkRef.current;
         const nextNetwork: NetworkState = {
           ...current,
@@ -1075,7 +1115,7 @@ function WalletApp({ theme, onSelectTheme }: {
       isCurrent: () => walletNetworkController.isCurrent(session),
     });
     if (found) {
-      await syncTransparentNetwork(false, { force: true, silent: true, pendingOnly: true });
+      await syncTransparentNetwork(false, { force: true, silent: true });
     }
   }, [syncTransparentNetwork, walletNetworkController]);
 
@@ -1092,7 +1132,12 @@ function WalletApp({ theme, onSelectTheme }: {
   }, [syncTransparentNetwork]);
 
   const reportNetworkFailure = useCallback((caught: unknown) => {
-    const message = caught instanceof Error ? caught.message : t('errors.networkUnavailable');
+    const message = translatedErrorMessage(
+      caught,
+      t,
+      t('errors.networkUnavailable'),
+      'wallet network connection',
+    );
     const current = networkRef.current;
     const nextNetwork: NetworkState = {
       ...current,
@@ -1196,7 +1241,12 @@ function WalletApp({ theme, onSelectTheme }: {
         if (caught instanceof CustomElectrumServerValidationError) {
           onValidationError(customElectrumValidationMessage(caught, t));
         } else {
-          setError(caught instanceof Error ? caught.message : t('errors.networkUnavailable'));
+          setError(translatedErrorMessage(
+            caught,
+            t,
+            t('errors.networkUnavailable'),
+            'custom Electrum server configuration',
+          ));
         }
       }
     });
@@ -1298,6 +1348,7 @@ function WalletApp({ theme, onSelectTheme }: {
       setPendingWallet(nextWallet);
       setPendingWalletRequiresSeedBackup(true);
       setSeedBackupConfirmationStep(-1);
+      setSeedBackupAttemptToken(createSeedBackupAttemptToken());
       setSeedBackupConfirmationError('');
       void prefetchWalletNetwork(nextWallet);
       setWallet(null);
@@ -1308,7 +1359,12 @@ function WalletApp({ theme, onSelectTheme }: {
       if (lockWalletIfAppStateInactive(appStateRef.current, lockWalletRef.current)) return;
       setStatus(t('status.seedCreated'));
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : t('errors.walletCreationFailed'));
+      setError(translatedErrorMessage(
+        caught,
+        t,
+        t('errors.walletCreationFailed'),
+        'wallet creation',
+      ));
     }
   
     });
@@ -1317,6 +1373,7 @@ function WalletApp({ theme, onSelectTheme }: {
   const importWallet = async () => {
     await runExclusiveAction('import', async () => {
     resetFeedback();
+    const transientSecretGeneration = transientSecretGenerationRef.current;
 
     let mnemonic: string;
     try {
@@ -1328,10 +1385,17 @@ function WalletApp({ theme, onSelectTheme }: {
 
     try {
       const nextWallet = await derivePrimaryAddress(mnemonic);
+      if (
+        transientSecretGeneration !== transientSecretGenerationRef.current
+        || screenRef.current !== 'import'
+      ) {
+        return;
+      }
       walletLockAppliedRef.current = false;
       setPendingWallet(nextWallet);
       setPendingWalletRequiresSeedBackup(false);
       setSeedBackupConfirmationStep(-1);
+      setSeedBackupAttemptToken(createSeedBackupAttemptToken());
       setSeedBackupConfirmationError('');
       void prefetchWalletNetwork(nextWallet);
       setWallet(null);
@@ -1344,7 +1408,12 @@ function WalletApp({ theme, onSelectTheme }: {
       if (lockWalletIfAppStateInactive(appStateRef.current, lockWalletRef.current)) return;
       setStatus(t('status.seedImported'));
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : t('errors.importFailed'));
+      setError(translatedErrorMessage(
+        caught,
+        t,
+        t('errors.importFailed'),
+        'wallet import derivation',
+      ));
     }
   
     });
@@ -1428,7 +1497,12 @@ function WalletApp({ theme, onSelectTheme }: {
           );
         })().catch((caught) => {
           if (walletNetworkController.isCurrent(unlockedSession)) {
-            setError(translatedErrorMessage(caught, t, t('errors.networkUnavailable')));
+            setError(translatedErrorMessage(
+              caught,
+              t,
+              t('errors.networkUnavailable'),
+              'wallet snapshot cache upgrade',
+            ));
           }
         });
       }
@@ -1469,7 +1543,12 @@ function WalletApp({ theme, onSelectTheme }: {
       ) {
         setUnlockPasswordError(caught.message);
       } else {
-        setError(caught instanceof Error ? caught.message : t('errors.unlockFailed'));
+        setError(translatedErrorMessage(
+          caught,
+          t,
+          t('errors.unlockFailed'),
+          'wallet unlock',
+        ));
       }
     }
 
@@ -1562,7 +1641,8 @@ function WalletApp({ theme, onSelectTheme }: {
         try {
           await enableBiometricUnlock(persistPassword, walletToPersist.mnemonic);
           biometricNotice = t('status.biometricEnabled', { method: biometricMethod });
-        } catch {
+        } catch (caught) {
+          reportNonFinancialFailure('biometric opt-in', caught);
           biometricNotice = t('errors.biometricUnavailable');
         }
       }
@@ -1574,7 +1654,12 @@ function WalletApp({ theme, onSelectTheme }: {
       setSeedBackupConfirmationError('');
       enterWallet(walletToPersist, true, biometricNotice || t('status.walletOpened'));
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : t('errors.saveFailed'));
+      setError(translatedErrorMessage(
+        caught,
+        t,
+        t('errors.saveFailed'),
+        'wallet persistence',
+      ));
     } finally {
       setPersistBusy(false);
     }
@@ -1583,26 +1668,37 @@ function WalletApp({ theme, onSelectTheme }: {
   };
 
   const startSeedBackupConfirmation = () => {
+    seedBackupAnswerLockedRef.current = false;
     setSeedBackupConfirmationError('');
     setSeedBackupConfirmationStep(0);
   };
 
   const showSeedBackupAgain = () => {
+    seedBackupAnswerLockedRef.current = false;
     setSeedBackupConfirmationError('');
     setSeedBackupConfirmationStep(-1);
+    setSeedBackupAttemptToken(createSeedBackupAttemptToken());
   };
 
   const confirmSeedBackupWord = (answer: string) => {
+    if (seedBackupAnswerLockedRef.current) return;
     const challenge = seedBackupChallenges[seedBackupConfirmationStep];
     if (!challenge) return;
+    seedBackupAnswerLockedRef.current = true;
 
-    if (!isSeedBackupChallengeAnswerCorrect(challenge, answer)) {
+    const nextStep = nextSeedBackupConfirmationStep(
+      seedBackupConfirmationStep,
+      challenge,
+      answer,
+    );
+    if (nextStep < 0) {
       setSeedBackupConfirmationError(t('errors.seedBackupWordMismatch'));
+      setSeedBackupConfirmationStep(-1);
+      setSeedBackupAttemptToken(createSeedBackupAttemptToken());
       return;
     }
 
     setSeedBackupConfirmationError('');
-    const nextStep = seedBackupConfirmationStep + 1;
     setSeedBackupConfirmationStep(nextStep);
     if (nextStep >= seedBackupChallenges.length) {
       setStatus(t('status.seedBackupVerified'));
@@ -1629,6 +1725,9 @@ function WalletApp({ theme, onSelectTheme }: {
                 await deleteBiometricSecret();
                 await deleteVault();
                 walletNetworkController.cancel();
+                clearAddressSubscriptions();
+                electrumClientRef.current?.disconnect(new Error('Wallet deleted.'));
+                electrumClientRef.current = null;
                 pendingNetworkRef.current = null;
                 walletRef.current = null;
                 applyVaultTransition({ type: 'delete' });
@@ -1649,7 +1748,12 @@ function WalletApp({ theme, onSelectTheme }: {
                 setScreen('landing');
                 setStatus(t('status.walletDeleted'));
               } catch (caught) {
-                setError(translatedErrorMessage(caught, t, t('errors.deleteFailed')));
+                setError(translatedErrorMessage(
+                  caught,
+                  t,
+                  t('errors.deleteFailed'),
+                  'wallet deletion',
+                ));
               }
             })();
           },
@@ -1657,6 +1761,23 @@ function WalletApp({ theme, onSelectTheme }: {
       ],
     );
   };
+
+  const clearTransientEntrySecrets = useCallback(() => {
+    transientSecretGenerationRef.current += 1;
+    setImportText('');
+    setShowImportSeed(false);
+    setImportFieldError('');
+    setUnlockPassword('');
+    setShowUnlockPassword(false);
+    setUnlockPasswordError('');
+
+    if (screenRef.current === 'import') {
+      setScreen(vaultSessionStateRef.current.status !== 'absent' ? 'unlock' : 'landing');
+    }
+  }, [setScreen]);
+  useLayoutEffect(() => {
+    clearTransientSecretsRef.current = clearTransientEntrySecrets;
+  }, [clearTransientEntrySecrets]);
 
   const lockWallet = useCallback(() => {
     if (walletLockAppliedRef.current) return;
@@ -1668,6 +1789,8 @@ function WalletApp({ theme, onSelectTheme }: {
     walletRef.current = null;
     resetFeedback();
     clearAddressSubscriptions();
+    electrumClientRef.current?.disconnect(new Error('Wallet locked.'));
+    electrumClientRef.current = null;
     setWallet(null);
     setPendingWallet(null);
     setPendingWalletRequiresSeedBackup(false);
@@ -1678,6 +1801,12 @@ function WalletApp({ theme, onSelectTheme }: {
     setHistoryPage(0);
     setImportText('');
     setShowImportSeed(false);
+    setUnlockPassword('');
+    setShowUnlockPassword(false);
+    setPersistPassword('');
+    setPersistConfirmPassword('');
+    setShowPersistPassword(false);
+    setShowPersistConfirmPassword(false);
     resetSendDraft();
     setPreparedTx(null);
     setPreparedConsolidation(null);
@@ -1725,6 +1854,7 @@ function WalletApp({ theme, onSelectTheme }: {
         biometricDismissedRef,
         lockedDuringSessionRef,
         lockWalletRef,
+        clearTransientSecretsRef,
         unlockSavedWalletRef,
       }),
     );
@@ -1966,7 +2096,7 @@ function WalletApp({ theme, onSelectTheme }: {
       const client = electrumClientRef.current || createElectrumClient();
       electrumClientRef.current = client;
       const transaction = preparedTx;
-      const txid = await client.broadcastTransaction(transaction.hex);
+      const txid = await client.broadcastTransaction(transaction.hex, transaction.txid);
       if (!walletNetworkController.isCurrent(session)) return;
 
       const currentNetwork = networkRef.current;
@@ -2002,7 +2132,12 @@ function WalletApp({ theme, onSelectTheme }: {
       startBroadcastReconciliation([txid], session);
     } catch (caught) {
       if (walletNetworkController.isCurrent(session)) {
-        setError(caught instanceof Error ? caught.message : t('errors.sendFailed'));
+        setError(translatedErrorMessage(
+          caught,
+          t,
+          t('errors.sendFailed'),
+          'transparent transaction broadcast',
+        ));
       }
     } finally {
       if (walletNetworkController.isCurrent(session)) {
@@ -2072,7 +2207,7 @@ function WalletApp({ theme, onSelectTheme }: {
       try {
         for (const transaction of preparedConsolidation.transactions) {
           if (!walletNetworkController.isCurrent(session)) return;
-          const txid = await client.broadcastTransaction(transaction.hex);
+          const txid = await client.broadcastTransaction(transaction.hex, transaction.txid);
           if (!walletNetworkController.isCurrent(session)) return;
           txids.push(txid);
           sentCount += 1;
@@ -2091,8 +2226,9 @@ function WalletApp({ theme, onSelectTheme }: {
         Alert.alert(consolidationT('successTitle'), consolidationT('successBody'), [
           { text: t('actions.ok'), style: 'cancel' },
         ]);
-      } catch {
+      } catch (caught) {
         if (!walletNetworkController.isCurrent(session)) return;
+        reportNonFinancialFailure('transparent consolidation broadcast', caught);
         const remaining = preparedConsolidation.transactions.slice(sentCount);
         setPreparedConsolidation(remaining.length > 0 ? {
           transactions: remaining,
@@ -2244,7 +2380,7 @@ function WalletApp({ theme, onSelectTheme }: {
       setSensitiveAction(null);
       setSensitivePassword('');
     } catch (caught) {
-      const message = caught instanceof Error ? caught.message : t('errors.validationFailed');
+      const caughtMessage = caught instanceof Error ? caught.message : '';
       const passwordFieldVisible = vaultUnlockMode === 'password'
         || sensitiveAction === 'disableBiometrics';
       if (
@@ -2253,11 +2389,16 @@ function WalletApp({ theme, onSelectTheme }: {
           t('errors.enterVaultPassword'),
           t('errors.invalidPasswordOrVault'),
           t('errors.passwordDoesNotMatchWallet'),
-        ].includes(message)
+        ].includes(caughtMessage)
       ) {
-        setSensitivePasswordError(message);
+        setSensitivePasswordError(caughtMessage);
       } else {
-        setError(message);
+        setError(translatedErrorMessage(
+          caught,
+          t,
+          t('errors.validationFailed'),
+          'sensitive wallet action',
+        ));
       }
     } finally {
       setSensitiveBusy(false);
@@ -2414,7 +2555,12 @@ function WalletApp({ theme, onSelectTheme }: {
         setStatus(t('status.historyExported'));
       } catch (caught) {
         if (!session || walletNetworkController.isCurrent(session)) {
-          setError(translatedErrorMessage(caught, t, t('errors.historyExportFailed')));
+          setError(translatedErrorMessage(
+            caught,
+            t,
+            t('errors.historyExportFailed'),
+            'history export',
+          ));
         }
       }
     });
@@ -2468,7 +2614,12 @@ function WalletApp({ theme, onSelectTheme }: {
         }
       } catch (caught) {
         if (walletNetworkController.isCurrent(session)) {
-          setError(translatedErrorMessage(caught, t, t('errors.networkUnavailable')));
+          setError(translatedErrorMessage(
+            caught,
+            t,
+            t('errors.networkUnavailable'),
+            'history resynchronization',
+          ));
         }
       }
     });
@@ -2774,6 +2925,19 @@ function WalletApp({ theme, onSelectTheme }: {
   const activeScreen = () => {
     if (screen === 'loading') {
       return <LoadingScreen t={t} rotation={loadingRotation} />;
+    }
+
+    if (screen === 'initializationError') {
+      return (
+        <InitializationErrorScreen
+          t={t}
+          onRetry={() => {
+            resetFeedback();
+            setScreen('loading');
+            setBootstrapAttempt((current) => current + 1);
+          }}
+        />
+      );
     }
 
     if (screen === 'import') {

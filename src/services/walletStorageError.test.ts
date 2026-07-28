@@ -44,6 +44,11 @@ describe('wallet storage errors', () => {
       new Error('Ordinary error'),
       'Fallback error',
       'Localized storage error',
-    )).toBe('Ordinary error');
+      'ordinary operation',
+    )).toBe('Fallback error');
+    expect(diagnostics.reportNonFinancialFailure).toHaveBeenCalledWith(
+      'ordinary operation',
+      expect.objectContaining({ message: 'Ordinary error' }),
+    );
   });
 });

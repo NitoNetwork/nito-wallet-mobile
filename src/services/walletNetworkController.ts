@@ -1,5 +1,6 @@
 import {
   ElectrumSessionUnhealthyError,
+  isElectrumTransactionNotFoundError,
   type NitoElectrumClient,
 } from '../network/electrum';
 import type { NetworkState, Wallet } from '../ui/types';
@@ -596,11 +597,18 @@ export const reconcileBroadcastTransactions = async ({
   for (const delayMs of [250, 750, 1_500, 3_000]) {
     await new Promise<void>((resolve) => setTimeout(resolve, delayMs));
     if (!isCurrent()) return false;
-    await mapWithConcurrency(txids, BROADCAST_RECONCILIATION_CONCURRENCY, async (txid) => {
-      await client.getTransactionHex(txid);
-    });
-    if (!isCurrent()) return false;
-    return true;
+    try {
+      await mapWithConcurrency(txids, BROADCAST_RECONCILIATION_CONCURRENCY, async (txid) => {
+        await client.getTransactionHex(txid);
+      });
+      if (!isCurrent()) return false;
+      return true;
+    } catch (caught) {
+      if (!isElectrumTransactionNotFoundError(caught)) {
+        throw caught;
+      }
+      if (!isCurrent()) return false;
+    }
   }
   return false;
 };

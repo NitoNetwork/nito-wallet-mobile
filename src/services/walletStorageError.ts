@@ -26,9 +26,11 @@ export const userFacingErrorMessage = (
   caught: unknown,
   fallback: string,
   walletStorageUnavailable: string,
+  operation = 'wallet operation',
 ): string => {
   if (caught instanceof WalletStorageError) {
     return walletStorageUnavailable;
   }
-  return caught instanceof Error ? caught.message : fallback;
+  reportNonFinancialFailure(operation, caught);
+  return fallback;
 };

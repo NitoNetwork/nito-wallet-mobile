@@ -12,6 +12,7 @@ export const ja: TranslationSet = {
   'actions.importSeed': 'シードをインポート',
   'actions.continue': '続ける',
   'actions.back': '戻る',
+  'actions.retry': '再試行',
   'actions.cancel': 'キャンセル',
   'actions.confirm': '確認',
   'actions.copyAddress': 'アドレスをコピー',

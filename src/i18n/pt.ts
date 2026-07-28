@@ -12,6 +12,7 @@ export const pt: TranslationSet = {
   'actions.importSeed': 'Importar seed',
   'actions.continue': 'Continuar',
   'actions.back': 'Voltar',
+  'actions.retry': 'Tentar novamente',
   'actions.cancel': 'Cancelar',
   'actions.confirm': 'Confirmar',
   'actions.copyAddress': 'Copiar endereço',

@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
   addressToElectrumScripthash,
+  ElectrumInvalidResponseError,
   electrumScripthashFromScript,
   NitoElectrumClient,
   scriptPubKeyForNitoAddress,
@@ -30,20 +31,88 @@ describe('Nito Electrum helpers', () => {
     expect(addressToElectrumScripthash(address)).toBe('6e4f16236139f15046b38f399a683fb2aa8edf5fd128b3e5db017fb0ac74078a');
   });
 
-  it('notifies listeners exactly once for each strictly newer block height', () => {
+  it('notifies listeners for advances, lower reorg heights and same-height header changes', () => {
     const client = new NitoElectrumClient();
     client.blockHeight = 100;
     const updates: [number, number][] = [];
     const unsubscribe = client.subscribeBlockHeight((height, previous) => updates.push([height, previous]));
     const handleMessage = (client as unknown as { handleMessage(raw: string): void }).handleMessage.bind(client);
 
-    handleMessage(JSON.stringify({ method: 'blockchain.headers.subscribe', params: [{ height: 100 }] }));
-    handleMessage(JSON.stringify({ method: 'blockchain.headers.subscribe', params: [{ height: 101 }] }));
-    handleMessage(JSON.stringify({ method: 'blockchain.headers.subscribe', params: [{ height: 101 }] }));
+    handleMessage(JSON.stringify({
+      method: 'blockchain.headers.subscribe',
+      params: [{ height: 100, hex: 'aa' }],
+    }));
+    handleMessage(JSON.stringify({
+      method: 'blockchain.headers.subscribe',
+      params: [{ height: 101, hex: 'bb' }],
+    }));
+    handleMessage(JSON.stringify({
+      method: 'blockchain.headers.subscribe',
+      params: [{ height: 101, hex: 'cc' }],
+    }));
+    handleMessage(JSON.stringify({
+      method: 'blockchain.headers.subscribe',
+      params: [{ height: 99, hex: 'dd' }],
+    }));
     unsubscribe();
     handleMessage(JSON.stringify({ method: 'blockchain.headers.subscribe', params: [{ height: 102 }] }));
 
-    expect(updates).toEqual([[101, 100]]);
+    expect(updates).toEqual([[101, 100], [101, 101], [99, 101]]);
+  });
+
+  it('rejects malformed financial RPC responses instead of converting them to values', async () => {
+    const client = new NitoElectrumClient();
+    vi.spyOn(client, 'request').mockResolvedValue({ confirmed: '100', unconfirmed: 0 });
+
+    await expect(client.getAddressBalance(address)).rejects.toBeInstanceOf(
+      ElectrumInvalidResponseError,
+    );
+
+    vi.mocked(client.request).mockResolvedValueOnce([
+      { tx_hash: 'not-a-txid', tx_pos: 0, value: 1, height: 1 },
+    ]);
+    await expect(client.getAddressUtxos(address)).rejects.toBeInstanceOf(
+      ElectrumInvalidResponseError,
+    );
+
+    vi.mocked(client.request).mockResolvedValueOnce([
+      { tx_hash: 'ab'.repeat(32), height: Number.NaN },
+    ]);
+    await expect(client.getAddressHistory(address)).rejects.toBeInstanceOf(
+      ElectrumInvalidResponseError,
+    );
+
+    vi.mocked(client.request).mockResolvedValueOnce('not-transaction-hex');
+    await expect(client.getTransactionHex('ab'.repeat(32))).rejects.toBeInstanceOf(
+      ElectrumInvalidResponseError,
+    );
+
+    vi.mocked(client.request).mockResolvedValueOnce({
+      vin: [{ txid: 'not-a-txid', vout: 0 }],
+      vout: [{ n: 0, value: 1 }],
+    });
+    await expect(client.getVerboseTransaction('ab'.repeat(32))).rejects.toBeInstanceOf(
+      ElectrumInvalidResponseError,
+    );
+
+    const handleMessage = (client as unknown as { handleMessage(raw: string): void })
+      .handleMessage.bind(client);
+    expect(() => handleMessage(JSON.stringify({
+      method: 'blockchain.headers.subscribe',
+      params: [{}],
+    }))).toThrow(ElectrumInvalidResponseError);
+  });
+
+  it('uses the locally signed txid and rejects a conflicting broadcast response', async () => {
+    const client = new NitoElectrumClient();
+    vi.spyOn(client, 'request').mockResolvedValue('ab'.repeat(32));
+
+    await expect(
+      client.broadcastTransaction('00', 'ab'.repeat(32)),
+    ).resolves.toBe('ab'.repeat(32));
+    await expect(
+      client.broadcastTransaction('00', 'cd'.repeat(32)),
+    ).rejects.toBeInstanceOf(ElectrumInvalidResponseError);
   });
 
   it('shares one socket handshake across concurrent connect calls', async () => {
@@ -182,6 +251,118 @@ describe('Nito Electrum helpers', () => {
     await expect(client.request('failing.read')).resolves.toEqual([]);
     expect(RecoveringFakeWebSocket.instances).toBe(2);
     expect(client.connected).toBe(true);
+    client.disconnect();
+  });
+
+  it('rotates to the secondary server after a primary session fails during a read', async () => {
+    class FailingPrimaryWebSocket {
+      static urls: string[] = [];
+
+      readonly url: string;
+      onopen: (() => void) | null = null;
+      onerror: (() => void) | null = null;
+      onclose: (() => void) | null = null;
+      onmessage: ((event: { data: string }) => void) | null = null;
+
+      constructor(url: string) {
+        this.url = url;
+        FailingPrimaryWebSocket.urls.push(url);
+        queueMicrotask(() => this.onopen?.());
+      }
+
+      send(raw: string) {
+        const request = JSON.parse(raw) as { id: number; method: string };
+        const primary = this.url.includes('primary.invalid');
+        const response = request.method === 'server.version'
+          ? { id: request.id, result: ['Nito-ElectrumX', '1.4'] }
+          : request.method === 'blockchain.headers.subscribe'
+            ? { id: request.id, result: { height: 123 } }
+            : primary
+              ? { id: request.id, error: { code: -32000, message: 'primary read failed' } }
+              : { id: request.id, result: ['secondary-result'] };
+        queueMicrotask(() => this.onmessage?.({ data: JSON.stringify(response) }));
+      }
+
+      close() {
+        this.onclose?.();
+      }
+    }
+
+    vi.stubGlobal('WebSocket', FailingPrimaryWebSocket);
+    const client = new NitoElectrumClient([
+      { host: 'primary.invalid', port: 50005, protocol: 'wss', priority: 1 },
+      { host: 'secondary.invalid', port: 50005, protocol: 'wss', priority: 2 },
+    ]);
+    await client.connect();
+
+    await expect(client.request('wallet.read')).rejects.toThrow('primary read failed');
+    await expect(client.request('wallet.read')).resolves.toEqual(['secondary-result']);
+
+    expect(FailingPrimaryWebSocket.urls).toEqual([
+      'wss://primary.invalid:50005',
+      'wss://secondary.invalid:50005',
+    ]);
+    client.disconnect();
+  });
+
+  it('reconnects automatically and restores address subscriptions after an unexpected close', async () => {
+    vi.useFakeTimers();
+    class ReconnectingWebSocket {
+      static instances: ReconnectingWebSocket[] = [];
+
+      readonly generation: number;
+      onopen: (() => void) | null = null;
+      onerror: (() => void) | null = null;
+      onclose: (() => void) | null = null;
+      onmessage: ((event: { data: string }) => void) | null = null;
+
+      constructor(_url: string) {
+        this.generation = ReconnectingWebSocket.instances.length + 1;
+        ReconnectingWebSocket.instances.push(this);
+        queueMicrotask(() => this.onopen?.());
+      }
+
+      send(raw: string) {
+        const request = JSON.parse(raw) as { id: number; method: string };
+        const result = request.method === 'server.version'
+          ? ['Nito-ElectrumX', '1.4']
+          : request.method === 'blockchain.headers.subscribe'
+            ? { height: 123, hex: 'aa' }
+            : request.method === 'blockchain.scripthash.subscribe'
+              ? `status-${this.generation}`
+              : [];
+        queueMicrotask(() => this.onmessage?.({
+          data: JSON.stringify({ id: request.id, result }),
+        }));
+      }
+
+      close() {
+        this.onclose?.();
+      }
+    }
+
+    vi.stubGlobal('WebSocket', ReconnectingWebSocket);
+    const client = new NitoElectrumClient(
+      [{ host: 'reconnect.invalid', port: 50005, protocol: 'wss', priority: 1 }],
+      { reconnectDelayMs: 1 },
+    );
+    const connectionStates: boolean[] = [];
+    client.subscribeConnectionState((state) => connectionStates.push(state.connected));
+    await client.connect();
+    const replayedStatuses: (string | null)[] = [];
+    const subscription = await client.subscribeAddressStatus(
+      address,
+      (status) => replayedStatuses.push(status),
+    );
+
+    ReconnectingWebSocket.instances[0]?.onclose?.();
+    await vi.advanceTimersByTimeAsync(1);
+
+    expect(ReconnectingWebSocket.instances).toHaveLength(2);
+    expect(replayedStatuses).toEqual(['status-2']);
+    expect(connectionStates).toEqual([true, false, true]);
+    expect(client.connected).toBe(true);
+    subscription.unsubscribe();
     client.disconnect();
   });
 

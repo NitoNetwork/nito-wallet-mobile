@@ -12,6 +12,7 @@ export const tr: TranslationSet = {
   'actions.importSeed': 'BIP39 ifadesini içe aktar',
   'actions.continue': 'Devam',
   'actions.back': 'Geri',
+  'actions.retry': 'Yeniden dene',
   'actions.cancel': 'İptal',
   'actions.confirm': 'Onayla',
   'actions.copyAddress': 'Adresi kopyala',

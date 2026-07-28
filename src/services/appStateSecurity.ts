@@ -18,6 +18,7 @@ export interface WalletAppStateChangeRefs {
   biometricDismissedRef: MutableValue<boolean>;
   lockedDuringSessionRef: MutableValue<boolean>;
   lockWalletRef: MutableValue<() => void>;
+  clearTransientSecretsRef: MutableValue<() => void>;
   unlockSavedWalletRef: MutableValue<(useBiometrics?: boolean, auto?: boolean) => Promise<void>>;
 }
 
@@ -52,10 +53,20 @@ export const createWalletAppStateChangeHandler = ({
   biometricDismissedRef,
   lockedDuringSessionRef,
   lockWalletRef,
+  clearTransientSecretsRef,
   unlockSavedWalletRef,
 }: WalletAppStateChangeRefs) => (nextState: string): void => {
   const previousState = appStateRef.current;
   appStateRef.current = nextState;
+  if (
+    (screenRef.current === 'unlock' || screenRef.current === 'import')
+    && (
+      nextState === 'background'
+      || (nextState === 'inactive' && !systemPromptActiveRef.current)
+    )
+  ) {
+    clearTransientSecretsRef.current();
+  }
   if (shouldLockWalletForAppState({
     nextState,
     systemPromptActive: systemPromptActiveRef.current,

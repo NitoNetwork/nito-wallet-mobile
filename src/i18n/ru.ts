@@ -12,6 +12,7 @@ export const ru: TranslationSet = {
   'actions.importSeed': 'Импортировать seed',
   'actions.continue': 'Продолжить',
   'actions.back': 'Назад',
+  'actions.retry': 'Повторить',
   'actions.cancel': 'Отмена',
   'actions.confirm': 'Подтвердить',
   'actions.copyAddress': 'Скопировать адрес',
