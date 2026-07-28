@@ -17,7 +17,7 @@ import {
 import type { TranslationKey, Translator } from '../i18n';
 import { reportNonFinancialFailure } from '../services/diagnostics';
 import type { ElectrumServerPreference } from '../services/electrumClientFactory';
-import { ActionButton, PasswordField } from './components';
+import { ActionButton, MnemonicGrid, PasswordField } from './components';
 import type { WalletStyles } from './styles';
 import { THEME_NAMES, type ThemeName } from './theme';
 import { useStyles, useThemeColor } from './themeContext';
@@ -285,7 +285,7 @@ function SecuritySettingsSection({
         onPress={settings.onToggleMnemonic}
       />
       {settings.showMnemonic ? (
-        <Text selectable style={styles.mnemonic}>{settings.wallet.mnemonic}</Text>
+        <MnemonicGrid mnemonic={settings.wallet.mnemonic} />
       ) : null}
       <SensitiveConfirmation
         t={t}

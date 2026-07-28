@@ -1,7 +1,25 @@
 import { Text, TextInput, TouchableOpacity, View } from 'react-native';
 
+import { numberSeedBackupWords } from '../services/seedBackup';
 import { useStyles, useThemeColor } from './themeContext';
 import type { ButtonVariant } from './types';
+
+export function MnemonicGrid({ mnemonic }: { mnemonic: string }) {
+  const styles = useStyles();
+  return (
+    <View style={styles.mnemonicGrid}>
+      {numberSeedBackupWords(mnemonic).map((numberedWord, index) => (
+        <Text
+          key={`${index}:${numberedWord}`}
+          selectable
+          style={styles.mnemonicWord}
+        >
+          {numberedWord}
+        </Text>
+      ))}
+    </View>
+  );
+}
 
 export function ActionButton({
   label,

@@ -11,6 +11,7 @@ import constantsSource from './constants/nito.ts?raw';
 import i18nSource from './i18n.ts?raw';
 import frI18nSource from './i18n/fr.ts?raw';
 import formatSource from './ui/format.ts?raw';
+import componentsSource from './ui/components.tsx?raw';
 import stylesSource from './ui/styles.ts?raw';
 import tabsSource from './ui/tabs.tsx?raw';
 import settingsSource from './ui/settings.tsx?raw';
@@ -93,8 +94,14 @@ describe('mobile wallet UX and security invariants', () => {
     expect(appSource).toMatch(
       /if \(\s*pendingWalletRequiresSeedBackup[\s\S]*?seedBackupConfirmationStep < seedBackupChallenges\.length[\s\S]*?return;/,
     );
-    expect(screensSource).toContain('numberSeedBackupWords(pendingWallet.mnemonic).map');
-    expect(screensSource).toMatch(/<Text[\s\S]*?selectable[\s\S]*?>\s*\{numberedWord\}\s*<\/Text>/);
+    expect(screensSource).toContain('<MnemonicGrid mnemonic={pendingWallet.mnemonic} />');
+    expect(settingsSource).toContain('<MnemonicGrid mnemonic={settings.wallet.mnemonic} />');
+    expect(componentsSource).toContain('numberSeedBackupWords(mnemonic).map');
+    expect(componentsSource).toMatch(
+      /<Text[\s\S]*?selectable[\s\S]*?>\s*\{numberedWord\}\s*<\/Text>/,
+    );
+    expect(screensSource).not.toContain('numberSeedBackupWords');
+    expect(settingsSource).not.toContain('numberSeedBackupWords');
     expect(screensSource).toContain("t('persist.seedBackupConfirmInstruction'");
     const persistScreenSource = screensSource.slice(
       screensSource.indexOf('export function PersistScreen'),
