@@ -44,6 +44,7 @@ const COINBASE_MATURITY = 101;
 const BROADCAST_RECONCILIATION_CONCURRENCY = 6;
 
 export type WalletSyncOptions = DirtySyncOptions;
+export type WalletNetworkHistoryPublicationMode = WalletHistoryPublicationMode | 'replace';
 
 export const createEmptyNetworkState = (): NetworkState => ({
   status: 'idle',
@@ -58,7 +59,7 @@ export const mergeWalletNetworkPublication = (
   current: NetworkState,
   incoming: NetworkState,
   sameWallet = true,
-  historyMode: WalletHistoryPublicationMode = 'partial',
+  historyMode: WalletNetworkHistoryPublicationMode = 'partial',
 ): NetworkState => {
   if (!sameWallet || !current.snapshot || !incoming.snapshot) {
     return incoming;
@@ -68,11 +69,13 @@ export const mergeWalletNetworkPublication = (
     ...incoming,
     snapshot: {
       ...incoming.snapshot,
-      history: mergeWalletHistoryPublication(
-        current.snapshot.history,
-        incoming.snapshot.history,
-        historyMode,
-      ),
+      history: historyMode === 'replace'
+        ? normalizeWalletHistory([...incoming.snapshot.history])
+        : mergeWalletHistoryPublication(
+            current.snapshot.history,
+            incoming.snapshot.history,
+            historyMode,
+          ),
     },
   };
 };

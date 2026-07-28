@@ -10,6 +10,7 @@ import {
   mergeWalletNetworkPublication,
   synchronizeWalletNetwork,
 } from './walletNetworkController';
+import { needsHistoryEnrichment } from './walletHistory';
 import { WalletStorageError } from './walletStorageError';
 
 const transparentScanMocks = vi.hoisted(() => ({
@@ -517,6 +518,58 @@ describe('wallet network publication invariant', () => {
         provisional: true,
       }),
     ]);
+  });
+
+  it('lets a manual reset discard enrichment while automatic publications preserve it', () => {
+    const automatic = mergeWalletNetworkPublication(
+      enrichedNetwork,
+      {
+        ...network,
+        snapshot: {
+          ...snapshot,
+          history: [{ txid, height: 100, address: wallet.address }],
+        },
+      },
+      true,
+      'authoritative',
+    );
+    expect(automatic.snapshot?.history[0]).toMatchObject({
+      direction: 'sent',
+      amountSats: 42_000_000,
+      feeSats: 12_345,
+      counterparty: 'recipient-address',
+    });
+
+    const reset = mergeWalletNetworkPublication(
+      enrichedNetwork,
+      {
+        ...enrichedNetwork,
+        snapshot: {
+          ...enrichedNetwork.snapshot!,
+          history: [],
+        },
+      },
+      true,
+      'replace',
+    );
+    expect(reset.snapshot?.history).toEqual([]);
+
+    const freshScan = mergeWalletNetworkPublication(
+      reset,
+      {
+        ...network,
+        snapshot: {
+          ...snapshot,
+          history: [{ txid, height: 100, address: wallet.address }],
+        },
+      },
+      true,
+      'authoritative',
+    );
+    expect(freshScan.snapshot?.history).toEqual([
+      { txid, height: 100, address: wallet.address },
+    ]);
+    expect(freshScan.snapshot?.history.every(needsHistoryEnrichment)).toBe(true);
   });
 
   it('clears provisional data only after enrichment at a confirmed height', () => {

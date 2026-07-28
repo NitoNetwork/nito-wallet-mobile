@@ -371,6 +371,21 @@ describe('mobile wallet UX and security invariants', () => {
     expect(appSource).toMatch(
       /runExclusiveAction\('resynchronizeHistory',[\s\S]*?setWalletTab\('history'\);[\s\S]*?syncTransparentNetwork\(true, \{ force: true, rescanGap: true \}\)/,
     );
+    const resyncStart = appSource.indexOf('const resynchronizeWalletHistory = async () =>');
+    const resyncEnd = appSource.indexOf('const askResynchronizeWalletHistory = () =>', resyncStart);
+    const resyncSource = appSource.slice(resyncStart, resyncEnd);
+    const sqliteClear = resyncSource.indexOf('await clearWalletHistoryCache(activeWallet.address);');
+    const memoryReset = resyncSource.indexOf("}, activeWallet.address, 'replace');");
+    const attemptedReset = resyncSource.indexOf('enrichAttemptedRef.current.clear();');
+    const freshScan = resyncSource.indexOf(
+      'syncTransparentNetwork(true, { force: true, rescanGap: true })',
+    );
+    expect(resyncStart).toBeGreaterThanOrEqual(0);
+    expect(resyncEnd).toBeGreaterThan(resyncStart);
+    expect(sqliteClear).toBeGreaterThanOrEqual(0);
+    expect(memoryReset).toBeGreaterThan(sqliteClear);
+    expect(attemptedReset).toBeGreaterThan(memoryReset);
+    expect(freshScan).toBeGreaterThan(attemptedReset);
     expect(appSource).toContain('shouldShowBlockingLoadingOverlay(pendingAction)');
   });
 

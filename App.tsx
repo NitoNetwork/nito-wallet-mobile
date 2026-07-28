@@ -176,10 +176,7 @@ import {
   saveVault,
 } from './src/services/vault';
 import type { WalletSessionToken } from './src/services/walletSession';
-import {
-  needsHistoryEnrichment,
-  type WalletHistoryPublicationMode,
-} from './src/services/walletHistory';
+import { needsHistoryEnrichment } from './src/services/walletHistory';
 import {
   WalletNetworkController,
   createEmptyNetworkState,
@@ -191,6 +188,7 @@ import {
   reconcileBroadcastTransactions,
   synchronizeWalletNetwork,
   toQuickWalletSnapshot,
+  type WalletNetworkHistoryPublicationMode,
   type WalletSyncOptions,
 } from './src/services/walletNetworkController';
 import { applyOptimisticWalletBroadcast } from './src/wallet/optimisticConsolidation';
@@ -452,7 +450,7 @@ function WalletApp({ theme, onSelectTheme }: {
   const publishNetworkState = useCallback((
     incoming: NetworkState,
     walletAddress = walletRef.current?.address ?? null,
-    historyMode: WalletHistoryPublicationMode = 'partial',
+    historyMode: WalletNetworkHistoryPublicationMode = 'partial',
   ): NetworkState => {
     const nextNetwork = mergeWalletNetworkPublication(
       networkRef.current,
@@ -2612,6 +2610,16 @@ function WalletApp({ theme, onSelectTheme }: {
         clearAddressSubscriptions();
         await clearWalletHistoryCache(activeWallet.address);
         if (!walletNetworkController.isCurrent(session)) return;
+        const currentNetwork = networkRef.current;
+        if (currentNetwork.snapshot) {
+          publishNetworkState({
+            ...currentNetwork,
+            snapshot: {
+              ...currentNetwork.snapshot,
+              history: [],
+            },
+          }, activeWallet.address, 'replace');
+        }
         enrichAttemptedRef.current.clear();
         enrichFailedRef.current.clear();
         setHistoryPage(0);
