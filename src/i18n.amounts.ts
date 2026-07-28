@@ -11,11 +11,11 @@ type AmountFormat = {
 export const NITO_AMOUNT_FORMATS: Record<LanguageCode, AmountFormat> = {
   en: { groupSeparator: ',', decimalSeparator: '.', grouping: 'western' },
   zh: { groupSeparator: ',', decimalSeparator: '.', grouping: 'western' },
-  hi: { groupSeparator: ',', decimalSeparator: '.', grouping: 'indian' },
+  de: { groupSeparator: '.', decimalSeparator: ',', grouping: 'western' },
   es: { groupSeparator: '.', decimalSeparator: ',', grouping: 'western' },
   fr: { groupSeparator: '\u202f', decimalSeparator: ',', grouping: 'western' },
-  ar: { groupSeparator: ',', decimalSeparator: '.', grouping: 'western' },
-  bn: { groupSeparator: ',', decimalSeparator: '.', grouping: 'western' },
+  ja: { groupSeparator: ',', decimalSeparator: '.', grouping: 'western' },
+  tr: { groupSeparator: '.', decimalSeparator: ',', grouping: 'western' },
   pt: { groupSeparator: '.', decimalSeparator: ',', grouping: 'western' },
   ru: { groupSeparator: '\u202f', decimalSeparator: ',', grouping: 'western' },
 };

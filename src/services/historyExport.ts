@@ -2,6 +2,8 @@ import type {
   ElectrumHistoryEntry,
   ElectrumVerboseTransaction,
 } from '../network/electrum';
+import type { LanguageCode } from '../i18n';
+import { formatNitoDateTime } from '../i18n.datetime';
 import { createConcurrencyLimiter, mapWithConcurrency } from './concurrency';
 import { reportNonFinancialFailure } from './diagnostics';
 
@@ -295,9 +297,9 @@ export const buildHistoryExportRecords = async (
   return records;
 };
 
-const formatUtcDate = (blockTime: number | null) => {
+const formatExportDate = (blockTime: number | null, language: LanguageCode) => {
   if (blockTime === null) return '';
-  return new Date(blockTime * 1000).toISOString().replace('.000Z', 'Z');
+  return formatNitoDateTime(blockTime, language);
 };
 
 export const historyRecordsFromEntries = (entries: ElectrumHistoryEntry[]): HistoryExportRecord[] =>
@@ -315,10 +317,13 @@ export const historyRecordsFromEntries = (entries: ElectrumHistoryEntry[]): Hist
     } satisfies HistoryExportRecord];
   });
 
-export const historyExportCsvRows = (records: HistoryExportRecord[]) => [
+export const historyExportCsvRows = (
+  records: HistoryExportRecord[],
+  language: LanguageCode,
+) => [
   ['date', 'direction', 'amount_nito', 'fee_nito', 'status', 'block_height', 'address', 'txid'],
   ...records.map((record) => [
-    formatUtcDate(record.blockTime),
+    formatExportDate(record.blockTime, language),
     record.direction,
     formatSats(record.amountSats),
     formatSats(record.feeSats),

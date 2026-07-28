@@ -311,7 +311,7 @@ describe('mobile wallet UX and security invariants', () => {
     expect(amountFormatSource).not.toContain('toLocaleString');
     expect(formatSource).not.toContain("toLocaleString('fr-FR')");
     expect(transparentScanSource).not.toContain("toLocaleString('fr-FR')");
-    expect(amountFormatSource).toContain("hi: { groupSeparator: ',', decimalSeparator: '.', grouping: 'indian' }");
+    expect(amountFormatSource).toContain("de: { groupSeparator: '.', decimalSeparator: ',', grouping: 'western' }");
     expect(amountFormatSource).toContain("fr: { groupSeparator: '\\u202f'");
   });
 

@@ -2292,7 +2292,7 @@ function WalletApp({ theme, onSelectTheme }: {
 
         if (!walletNetworkController.isCurrent(session)) return;
         const records = historyRecordsFromEntries(networkRef.current.snapshot?.history ?? []);
-        const rows = historyExportCsvRows(records);
+        const rows = historyExportCsvRows(records, language);
         // Tab separated rather than comma: a comma file collapses into a single
         // column wherever the spreadsheet list separator is a semicolon, which
         // is the default on French and German Windows. Tabs split everywhere.

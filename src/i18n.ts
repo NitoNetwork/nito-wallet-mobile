@@ -1,9 +1,9 @@
-import { ar } from './i18n/ar';
-import { bn } from './i18n/bn';
 import { en } from './i18n/en';
 import { es } from './i18n/es';
 import { fr } from './i18n/fr';
-import { hi } from './i18n/hi';
+import { de } from './i18n/de';
+import { ja } from './i18n/ja';
+import { tr } from './i18n/tr';
 import { pt } from './i18n/pt';
 import { ru } from './i18n/ru';
 import { zh } from './i18n/zh';
@@ -11,11 +11,11 @@ import { zh } from './i18n/zh';
 export const LANGUAGES = [
   { code: 'en', short: 'EN', name: 'English' },
   { code: 'zh', short: 'ZH', name: '中文' },
-  { code: 'hi', short: 'HI', name: 'हिन्दी' },
+  { code: 'de', short: 'DE', name: 'Deutsch' },
   { code: 'es', short: 'ES', name: 'Español' },
   { code: 'fr', short: 'FR', name: 'Français' },
-  { code: 'ar', short: 'AR', name: 'العربية' },
-  { code: 'bn', short: 'BN', name: 'বাংলা' },
+  { code: 'ja', short: 'JA', name: '日本語' },
+  { code: 'tr', short: 'TR', name: 'Türkçe' },
   { code: 'pt', short: 'PT', name: 'Português' },
   { code: 'ru', short: 'RU', name: 'Русский' },
 ] as const;
@@ -33,7 +33,7 @@ export type Translator = (key: TranslationKey, values?: Record<string, string | 
  * object silently override an earlier one, is no longer possible.
  */
 export const TRANSLATIONS: Record<LanguageCode, TranslationSet> = {
-  en, zh, hi, es, fr, ar, bn, pt, ru,
+  en, zh, de, es, fr, ja, tr, pt, ru,
 };
 
 /** Language-neutral strings, exempt from the "must differ from English" audit. */
@@ -41,6 +41,8 @@ const SHARED_TRANSLATION_KEYS = new Set<TranslationKey>([
   'brand.wallet',
   'import.placeholder',
   'history.mempool',
+  // 'Block' is the same word in English and German.
+  'history.block',
   'history.loadingCount',
   'actions.ok',
 ]);

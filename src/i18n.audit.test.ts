@@ -20,11 +20,11 @@ describe('i18n coverage', () => {
     const expected = {
       en: 'Balance NITO',
       zh: '余额 NITO',
-      hi: 'शेष राशि NITO',
+      de: 'Guthaben NITO',
       es: 'Saldo NITO',
       fr: 'Solde NITO',
-      ar: 'الرصيد NITO',
-      bn: 'ব্যালেন্স NITO',
+      ja: '残高 NITO',
+      tr: 'Bakiye NITO',
       pt: 'Saldo NITO',
       ru: 'Баланс NITO',
     } satisfies Record<LanguageCode, string>;
@@ -38,11 +38,11 @@ describe('i18n coverage', () => {
     const expected = {
       en: 'History NITO',
       zh: '历史 NITO',
-      hi: 'इतिहास NITO',
+      de: 'Verlauf NITO',
       es: 'Historial NITO',
       fr: 'Historique NITO',
-      ar: 'السجل NITO',
-      bn: 'ইতিহাস NITO',
+      ja: '履歴 NITO',
+      tr: 'Geçmiş NITO',
       pt: 'Histórico NITO',
       ru: 'История NITO',
     } satisfies Record<LanguageCode, string>;
@@ -56,11 +56,11 @@ describe('i18n coverage', () => {
     const expected = {
       en: ['Show BIP39 phrase', 'Hide BIP39 phrase'],
       zh: ['显示 BIP39 助记词', '隐藏 BIP39 助记词'],
-      hi: ['BIP39 वाक्यांश दिखाएँ', 'BIP39 वाक्यांश छिपाएँ'],
+      de: ['BIP39-Phrase anzeigen', 'BIP39-Phrase verbergen'],
       es: ['Mostrar frase BIP39', 'Ocultar frase BIP39'],
       fr: ['Afficher la phrase BIP39', 'Masquer la phrase BIP39'],
-      ar: ['عرض عبارة BIP39', 'إخفاء عبارة BIP39'],
-      bn: ['BIP39 বাক্যাংশ দেখান', 'BIP39 বাক্যাংশ লুকান'],
+      ja: ['BIP39 フレーズを表示', 'BIP39 フレーズを隠す'],
+      tr: ['BIP39 ifadesini göster', 'BIP39 ifadesini gizle'],
       pt: ['Mostrar frase BIP39', 'Ocultar frase BIP39'],
       ru: ['Показать фразу BIP39', 'Скрыть фразу BIP39'],
     } satisfies Record<LanguageCode, [string, string]>;
@@ -77,11 +77,11 @@ describe('i18n coverage', () => {
     for (const { code } of [
       { code: 'en' },
       { code: 'zh' },
-      { code: 'hi' },
+      { code: 'de' },
       { code: 'es' },
       { code: 'fr' },
-      { code: 'ar' },
-      { code: 'bn' },
+      { code: 'ja' },
+      { code: 'tr' },
       { code: 'pt' },
       { code: 'ru' },
     ] as const) {
@@ -98,11 +98,11 @@ describe('i18n coverage', () => {
     const expected = {
       en: 'Add recipient',
       zh: '添加收款人',
-      hi: 'प्राप्तकर्ता जोड़ें',
+      de: 'Empfänger hinzufügen',
       es: 'Añadir destinatario',
       fr: 'Ajouter un destinataire',
-      ar: 'إضافة مستلم',
-      bn: 'প্রাপক যোগ করুন',
+      ja: '受取人を追加',
+      tr: 'Alıcı ekle',
       pt: 'Adicionar destinatário',
       ru: 'Добавить получателя',
     } satisfies Record<LanguageCode, string>;
@@ -123,11 +123,11 @@ describe('i18n coverage', () => {
     const expected = {
       en: ['Security', 'Display', 'Network and synchronization', 'About', 'Danger zone'],
       zh: ['安全', '显示', '网络与同步', '关于', '危险区域'],
-      hi: ['सुरक्षा', 'प्रदर्शन', 'नेटवर्क और सिंक्रनाइज़ेशन', 'परिचय', 'जोखिम क्षेत्र'],
+      de: ['Sicherheit', 'Darstellung', 'Netzwerk und Synchronisierung', 'Über', 'Gefahrenzone'],
       es: ['Seguridad', 'Visualización', 'Red y sincronización', 'Acerca de', 'Zona de peligro'],
       fr: ['Sécurité', 'Affichage', 'Réseau et synchronisation', 'À propos', 'Zone de danger'],
-      ar: ['الأمان', 'العرض', 'الشبكة والمزامنة', 'حول', 'منطقة الخطر'],
-      bn: ['নিরাপত্তা', 'প্রদর্শন', 'নেটওয়ার্ক ও সিঙ্ক্রোনাইজেশন', 'সম্পর্কে', 'বিপজ্জনক এলাকা'],
+      ja: ['セキュリティ', '表示', 'ネットワークと同期', '情報', '危険な操作'],
+      tr: ['Güvenlik', 'Görünüm', 'Ağ ve eşitleme', 'Hakkında', 'Tehlikeli bölge'],
       pt: ['Segurança', 'Exibição', 'Rede e sincronização', 'Sobre', 'Zona de perigo'],
       ru: ['Безопасность', 'Отображение', 'Сеть и синхронизация', 'О приложении', 'Опасная зона'],
     } satisfies Record<LanguageCode, string[]>;
@@ -148,11 +148,11 @@ describe('i18n coverage', () => {
     const expected = {
       en: ['Custom ElectrumX server', 'Return to official servers'],
       zh: ['自定义 ElectrumX 服务器', '恢复官方服务器'],
-      hi: ['कस्टम ElectrumX सर्वर', 'आधिकारिक सर्वर बहाल करें'],
+      de: ['Eigener ElectrumX-Server', 'Zu offiziellen Servern zurückkehren'],
       es: ['Servidor ElectrumX personalizado', 'Volver a servidores oficiales'],
       fr: ['Serveur ElectrumX personnalisé', 'Revenir aux serveurs officiels'],
-      ar: ['خادم ElectrumX مخصص', 'العودة إلى الخوادم الرسمية'],
-      bn: ['কাস্টম ElectrumX সার্ভার', 'অফিসিয়াল সার্ভারে ফিরুন'],
+      ja: ['カスタム ElectrumX サーバー', '公式サーバーに戻す'],
+      tr: ['Özel ElectrumX sunucusu', 'Resmi sunuculara dön'],
       pt: ['Servidor ElectrumX personalizado', 'Voltar aos servidores oficiais'],
       ru: ['Пользовательский сервер ElectrumX', 'Вернуться к официальным серверам'],
     } satisfies Record<LanguageCode, string[]>;
@@ -188,11 +188,11 @@ describe('i18n coverage', () => {
     const expected = {
       en: ['Active', 'Inactive'],
       zh: ['已启用', '未启用'],
-      hi: ['सक्रिय', 'निष्क्रिय'],
+      de: ['Aktiv', 'Inaktiv'],
       es: ['Activo', 'Inactivo'],
       fr: ['Actif', 'Inactif'],
-      ar: ['نشط', 'غير نشط'],
-      bn: ['সক্রিয়', 'নিষ্ক্রিয়'],
+      ja: ['有効', '無効'],
+      tr: ['Etkin', 'Etkin değil'],
       pt: ['Ativo', 'Inativo'],
       ru: ['Активен', 'Неактивен'],
     } satisfies Record<LanguageCode, string[]>;

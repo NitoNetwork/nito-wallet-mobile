@@ -11,6 +11,7 @@ import QRCode from 'react-native-qrcode-svg';
 import { CONSOLIDATION_MIN_UTXOS } from '../constants/nito';
 import type { LanguageCode, Translator } from '../i18n';
 import { makeConsolidationTranslator } from '../i18n.consolidation';
+import { formatNitoDateTime } from '../i18n.datetime';
 import { HISTORY_PAGE_SIZE } from '../services/historyEnrichmentQueue';
 import type { CachedTransactionOutput } from '../services/historyExport';
 import { reportNonFinancialFailure } from '../services/diagnostics';
@@ -483,6 +484,7 @@ export function HistoryTab({
                     </Text>
                     <Text style={styles.helper}>
                       {[
+                        entry.blockTime ? formatNitoDateTime(entry.blockTime, language) : '',
                         entry.direction === 'received'
                           ? t('history.received')
                           : entry.direction === 'sent'
