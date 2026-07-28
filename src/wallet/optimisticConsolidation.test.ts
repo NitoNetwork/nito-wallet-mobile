@@ -1,8 +1,9 @@
 import { describe, expect, it } from 'vitest';
 
+import { buildHistoryExportRecords } from '../services/historyExport';
 import { applyOptimisticWalletBroadcast } from './optimisticConsolidation';
 import type { TransparentWalletSnapshot } from './transparentScan';
-import type { PreparedTransparentTx } from './transparentSend';
+import type { PreparedTransparentSend, PreparedTransparentTx } from './transparentSend';
 
 const mainAddress = 'nito1qmain';
 
@@ -82,5 +83,74 @@ describe('applyOptimisticWalletBroadcast', () => {
     });
     expect(repeated.unconfirmedSats).toBe(29_500);
     expect(repeated.utxos).toHaveLength(1);
+  });
+
+  it('enriches an outgoing mempool entry immediately just like an incoming entry', async () => {
+    const outgoing: PreparedTransparentSend = {
+      ...transaction,
+      feeSats: 500,
+      walletOutputs: [
+        { vout: 1, valueSats: 19_500, address: mainAddress },
+      ],
+      recipients: [
+        { address: 'nito1qrecipient', amountSats: 10_000n },
+      ],
+    };
+
+    const pending = applyOptimisticWalletBroadcast({
+      snapshot,
+      transaction: outgoing,
+      txid: 'outgoing-mempool',
+    });
+    const incoming = await buildHistoryExportRecords({
+      history: [{ txid: 'incoming-mempool', height: 0, address: mainAddress }],
+      walletAddresses: [mainAddress],
+      reader: {
+        async getVerboseTransaction(txid: string) {
+          if (txid === 'incoming-mempool') {
+            return {
+              vin: [{ txid: 'external-parent', vout: 0 }],
+              vout: [{ n: 0, value: 0.0001, scriptPubKey: { address: mainAddress } }],
+            };
+          }
+          return {
+            vin: [{ coinbase: '00' }],
+            vout: [{ n: 0, value: 0.000105, scriptPubKey: { address: 'external-source' } }],
+          };
+        },
+      },
+    });
+
+    expect(pending.history[0]).toMatchObject({
+      txid: 'outgoing-mempool',
+      height: 0,
+      direction: 'sent',
+      amountSats: 10_000,
+      feeSats: 500,
+      counterparty: 'nito1qrecipient',
+    });
+    expect(incoming[0]).toMatchObject({
+      txid: 'incoming-mempool',
+      status: 'pending',
+      direction: 'received',
+      amountSats: 10_000,
+    });
+  });
+
+  it('enriches an internal mempool entry from its prepared wallet outputs', () => {
+    const pending = applyOptimisticWalletBroadcast({
+      snapshot,
+      transaction,
+      txid: 'internal-mempool',
+    });
+
+    expect(pending.history[0]).toMatchObject({
+      txid: 'internal-mempool',
+      height: 0,
+      direction: 'self',
+      amountSats: 29_500,
+      feeSats: 500,
+      counterparty: mainAddress,
+    });
   });
 });

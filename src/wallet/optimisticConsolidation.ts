@@ -1,8 +1,40 @@
 import type { ElectrumHistoryEntry, ElectrumUtxo } from '../network/electrum';
 import type { TransparentWalletSnapshot } from './transparentScan';
-import type { PreparedTransparentTx } from './transparentSend';
+import type { PreparedTransparentSend, PreparedTransparentTx } from './transparentSend';
 
 const outpointKey = ({ txid, vout }: { txid: string; vout: number }) => `${txid}:${vout}`;
+
+type OptimisticPreparedTransaction = PreparedTransparentTx & {
+  recipients?: PreparedTransparentSend['recipients'];
+};
+
+const createOptimisticHistoryEntry = (
+  snapshot: TransparentWalletSnapshot,
+  transaction: OptimisticPreparedTransaction,
+  txid: string,
+): ElectrumHistoryEntry => {
+  const ownedAddresses = new Set(snapshot.addresses.map(({ address }) => address));
+  const externalRecipients = (transaction.recipients ?? []).filter(
+    ({ address }) => !ownedAddresses.has(address),
+  );
+  const sent = externalRecipients.length > 0;
+  const amountSats = sent
+    ? externalRecipients.reduce((total, recipient) => total + Number(recipient.amountSats), 0)
+    : transaction.walletOutputs.reduce((total, output) => total + output.valueSats, 0);
+  const counterparty = sent
+    ? externalRecipients[0]?.address ?? ''
+    : transaction.walletOutputs[0]?.address ?? transaction.walletInputs[0]?.address ?? '';
+
+  return {
+    txid,
+    height: 0,
+    address: transaction.walletOutputs[0]?.address ?? transaction.walletInputs[0]?.address ?? '',
+    direction: sent ? 'sent' : 'self',
+    amountSats,
+    feeSats: transaction.feeSats,
+    counterparty,
+  };
+};
 
 export const applyOptimisticWalletBroadcast = ({
   snapshot,
@@ -10,7 +42,7 @@ export const applyOptimisticWalletBroadcast = ({
   txid,
 }: {
   snapshot: TransparentWalletSnapshot;
-  transaction: PreparedTransparentTx;
+  transaction: OptimisticPreparedTransaction;
   txid: string;
 }): TransparentWalletSnapshot => {
   const inputs = transaction.walletInputs;
@@ -33,8 +65,7 @@ export const applyOptimisticWalletBroadcast = ({
       confirmations: 0,
       isCoinbase: false,
     }] : []);
-  const historyAddress = outputs[0]?.address ?? inputs[0]?.address ?? '';
-  const pendingHistory: ElectrumHistoryEntry = { txid, height: 0, address: historyAddress };
+  const pendingHistory = createOptimisticHistoryEntry(snapshot, transaction, txid);
 
   const addresses = snapshot.addresses.map((address) => {
     const consumed = address.utxos.filter((utxo) => spentOutpoints.has(outpointKey(utxo)));
