@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
   createWalletAppStateChangeHandler,
-  lockWalletIfAppStateInactive,
+  lockWalletIfAppStateBackground,
   shouldLockWalletForAppState,
 } from './appStateSecurity';
 
@@ -101,28 +101,28 @@ describe('shouldLockWalletForAppState', () => {
     expect(lockWallet).not.toHaveBeenCalled();
 
     screenRef.current = 'wallet';
-    expect(lockWalletIfAppStateInactive(appStateRef.current, false, lockWallet)).toBe(true);
+    expect(lockWalletIfAppStateBackground(appStateRef.current, lockWallet)).toBe(true);
     expect(lockWallet).toHaveBeenCalledOnce();
   });
 
   it('keeps an active wallet entry open', () => {
     const lockWallet = vi.fn();
 
-    expect(lockWalletIfAppStateInactive('active', false, lockWallet)).toBe(false);
+    expect(lockWalletIfAppStateBackground('active', lockWallet)).toBe(false);
     expect(lockWallet).not.toHaveBeenCalled();
   });
 
-  it('keeps a biometric unlock open while its system prompt leaves iOS inactive', () => {
+  it('keeps an async wallet entry open while iOS is still inactive after a system prompt', () => {
     const lockWallet = vi.fn();
 
-    expect(lockWalletIfAppStateInactive('inactive', true, lockWallet)).toBe(false);
+    expect(lockWalletIfAppStateBackground('inactive', lockWallet)).toBe(false);
     expect(lockWallet).not.toHaveBeenCalled();
   });
 
   it('locks a biometric unlock that reaches the background', () => {
     const lockWallet = vi.fn();
 
-    expect(lockWalletIfAppStateInactive('background', true, lockWallet)).toBe(true);
+    expect(lockWalletIfAppStateBackground('background', lockWallet)).toBe(true);
     expect(lockWallet).toHaveBeenCalledOnce();
   });
 

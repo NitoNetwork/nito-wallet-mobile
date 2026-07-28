@@ -34,14 +34,15 @@ export const shouldLockWalletForAppState = ({
   )
 );
 
-export const lockWalletIfAppStateInactive = (
+export const lockWalletIfAppStateBackground = (
   appState: string,
-  systemPromptActive: boolean,
   lockWallet: () => void,
 ): boolean => {
   if (!shouldLockWalletForAppState({
     nextState: appState,
-    systemPromptActive,
+    // A post-async `inactive` value can be the stale transition left by an
+    // iOS system prompt. Only a confirmed background state is reconciled here.
+    systemPromptActive: true,
     sensitiveWalletState: true,
   })) {
     return false;

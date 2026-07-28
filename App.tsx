@@ -95,7 +95,7 @@ import { ExclusiveActionGate } from './src/services/exclusiveActionGate';
 import { loadWalletBootstrapState } from './src/services/appBootstrap';
 import {
   createWalletAppStateChangeHandler,
-  lockWalletIfAppStateInactive,
+  lockWalletIfAppStateBackground,
 } from './src/services/appStateSecurity';
 import {
   CustomElectrumServerValidationError,
@@ -857,9 +857,8 @@ function WalletApp({ theme, onSelectTheme }: {
     setPreparedTx(null);
     setPreparedConsolidation(null);
     setScreen('wallet');
-    if (lockWalletIfAppStateInactive(
+    if (lockWalletIfAppStateBackground(
       appStateRef.current,
-      systemPromptActiveRef.current,
       lockWalletRef.current,
     )) return;
     setStatus(message);
@@ -1360,9 +1359,8 @@ function WalletApp({ theme, onSelectTheme }: {
       setPersistConfirmPassword('');
       setShowMnemonic(false);
       setScreen('persist');
-      if (lockWalletIfAppStateInactive(
+      if (lockWalletIfAppStateBackground(
         appStateRef.current,
-        systemPromptActiveRef.current,
         lockWalletRef.current,
       )) return;
       setStatus(t('status.seedCreated'));
@@ -1413,9 +1411,8 @@ function WalletApp({ theme, onSelectTheme }: {
       setImportText('');
       setShowImportSeed(false);
       setScreen('persist');
-      if (lockWalletIfAppStateInactive(
+      if (lockWalletIfAppStateBackground(
         appStateRef.current,
-        systemPromptActiveRef.current,
         lockWalletRef.current,
       )) return;
       setStatus(t('status.seedImported'));

@@ -78,7 +78,7 @@ describe('mobile wallet UX and security invariants', () => {
     );
     expect(appStateSecuritySource).not.toContain("sensitiveWalletState: screen === 'wallet'");
     expect(appSource).toMatch(
-      /setScreen\('wallet'\);\s*if \(lockWalletIfAppStateInactive\(\s*appStateRef\.current,\s*systemPromptActiveRef\.current,\s*lockWalletRef\.current,\s*\)\) return;/,
+      /setScreen\('wallet'\);\s*if \(lockWalletIfAppStateBackground\(\s*appStateRef\.current,\s*lockWalletRef\.current,\s*\)\) return;/,
     );
     expect(appSource).toMatch(
       /systemPromptActiveRef\.current = true;\s*biometricPromptGuardActive = true;\s*const secret = await loadBiometricSecret\(\);[\s\S]*?enterWallet\([\s\S]*?\} finally \{\s*if \(biometricPromptGuardActive\) \{\s*systemPromptActiveRef\.current = false;/,
