@@ -331,6 +331,12 @@ describe('mobile wallet UX and security invariants', () => {
     expect(settingsSource).toMatch(
       /customElectrumExpanded \? \([\s\S]*?settings\.customElectrumRisk[\s\S]*?settings\.customElectrumCertificateWarning/,
     );
+    expect(
+      settingsSource.match(/label=\{t\('actions\.useOfficialElectrum'\)\}/g),
+    ).toHaveLength(1);
+    expect(settingsSource).toMatch(
+      /customElectrumExpanded \? \(\s*<View[^>]*>\s*\{electrumServerPreference\.mode !== 'official' \? \(\s*<>\s*<ActionButton[\s\S]*?actions\.useOfficialElectrum[\s\S]*?electrumServerPreference\.mode === 'recovery'[\s\S]*?settings\.customElectrumRecovery[\s\S]*?settings\.customElectrumHint/,
+    );
   });
 
   it('colors the connection text from the exact NetworkState status', () => {

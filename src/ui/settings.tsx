@@ -445,6 +445,22 @@ function NetworkSettingsSection({
       />
       {customElectrumExpanded ? (
         <View style={styles.settingsOptionPanel}>
+          {electrumServerPreference.mode !== 'official' ? (
+            <>
+              <ActionButton
+                label={t('actions.useOfficialElectrum')}
+                variant="secondary"
+                loading={pendingAction === 'electrumServer'}
+                disabled={actionLocked}
+                onPress={onUseOfficialElectrumServers}
+              />
+              {electrumServerPreference.mode === 'recovery' ? (
+                <Text style={styles.settingsWarning}>
+                  {t('settings.customElectrumRecovery')}
+                </Text>
+              ) : null}
+            </>
+          ) : null}
           <Text style={styles.helper}>{t('settings.customElectrumHint')}</Text>
           <Text style={styles.settingsWarning}>{t('settings.customElectrumRisk')}</Text>
           <TextInput
@@ -479,22 +495,6 @@ function NetworkSettingsSection({
               ) ?? '');
             }}
           />
-          {electrumServerPreference.mode !== 'official' ? (
-            <>
-              {electrumServerPreference.mode === 'recovery' ? (
-                <Text style={styles.settingsWarning}>
-                  {t('settings.customElectrumRecovery')}
-                </Text>
-              ) : null}
-              <ActionButton
-                label={t('actions.useOfficialElectrum')}
-                variant="secondary"
-                loading={pendingAction === 'electrumServer'}
-                disabled={actionLocked}
-                onPress={onUseOfficialElectrumServers}
-              />
-            </>
-          ) : null}
         </View>
       ) : null}
       <View style={styles.settingsOptionPanel}>
