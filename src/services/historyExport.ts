@@ -148,7 +148,13 @@ const buildHistoryExportRecord = (
   const totalOutputSats = currentOutputs.reduce((total, output) => total + output.valueSats, 0);
   const externalOutputSats = externalOutputs.reduce((total, output) => total + output.valueSats, 0);
   const isSent = walletInputSats > 0 && externalOutputSats > 0;
-  const direction: HistoryExportDirection = isSent ? 'sent' : walletInputSats > 0 ? 'self' : 'received';
+  // A self classification is also the proof used by the UI to reconstruct the
+  // debit as owned outputs + fee. It is therefore valid only when every input
+  // and every output value is demonstrably ours.
+  const isSelf = walletInputSats > 0
+    && walletInputSats === totalInputSats
+    && walletOutputSats === totalOutputSats;
+  const direction: HistoryExportDirection = isSent ? 'sent' : isSelf ? 'self' : 'received';
   const ownedOutputAddress = currentOutputs
     .flatMap((output) => output.addresses)
     .find((address) => owned.has(address)) ?? '';

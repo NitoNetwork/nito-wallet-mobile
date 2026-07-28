@@ -90,6 +90,38 @@ describe('wallet history export', () => {
     expect(historyExportTsvRows([record!], 'en')[1]?.[0]).toBe('10:26 AM · 07/20/2025');
   });
 
+  it('does not classify a transaction with an external input as internal', async () => {
+    const transactions: Record<string, ElectrumVerboseTransaction> = {
+      walletParent: { vin: [{ coinbase: '01' }], vout: [output(4, 'wallet-address')] },
+      externalParent: { vin: [{ coinbase: '02' }], vout: [output(6, 'external-source')] },
+      mixedInputs: {
+        vin: [
+          { txid: 'walletParent', vout: 0 },
+          { txid: 'externalParent', vout: 0 },
+        ],
+        vout: [output(9.9, 'wallet-address')],
+      },
+    };
+
+    const [record] = await buildHistoryExportRecords({
+      history: [{ txid: 'mixedInputs', height: 43, address: 'wallet-address' }],
+      walletAddresses: ['wallet-address'],
+      reader: {
+        async getVerboseTransaction(txid: string) {
+          const transaction = transactions[txid];
+          if (!transaction) throw new Error(`Missing transaction ${txid}`);
+          return transaction;
+        },
+      },
+    });
+
+    expect(record).toMatchObject({
+      direction: 'received',
+      amountSats: 990_000_000,
+      feeSats: 10_000_000,
+    });
+  });
+
   it('rebuilds records from cached entries without any network call', () => {
     const records = historyRecordsFromEntries([
       { txid: 'a', height: 10, address: 'wallet-address' },
