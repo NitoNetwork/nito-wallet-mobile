@@ -55,8 +55,6 @@
   },
   "dependencies": {
     "@noble/hashes": "2.2.0",
-    "@noble/secp256k1": "^2.2.0",
-    "@scure/bip32": "2.2.0",
     "@scure/bip39": "2.2.0",
     "@scure/btc-signer": "^2.2.0",
     "bech32": "^2.0.0",
@@ -82,6 +80,7 @@
   },
   "devDependencies": {
     "@types/react": "~19.2.14",
+    "@scure/bip32": "2.2.0",
     "babel-preset-expo": "^57.0.3",
     "eslint": "9.39.5",
     "eslint-config-expo": "~57.0.0",
