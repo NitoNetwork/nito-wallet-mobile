@@ -16,7 +16,7 @@ vi.mock('./diagnostics', () => diagnostics);
 const db = {
   execAsync: vi.fn(async (_sql: string) => undefined),
   getAllAsync: vi.fn(async (_sql: string, ..._params: unknown[]): Promise<unknown[]> => []),
-  getFirstAsync: vi.fn(async (sql: string) => (
+  getFirstAsync: vi.fn(async (sql: string): Promise<unknown> => (
     sql === 'PRAGMA user_version' ? { user_version: 1 } : null
   )),
   runAsync: vi.fn(async (_sql: string, ..._params: unknown[]) => ({
@@ -69,6 +69,23 @@ describe('wallet transaction output cache', () => {
       String(sql).includes('CREATE TABLE IF NOT EXISTS wallet_transaction_outputs')
       && String(sql).includes('PRAGMA user_version = 2')
     ))).toBe(true);
+  });
+
+  it('rejects a structurally incomplete wallet snapshot cache row', async () => {
+    const { loadWalletSnapshotCache } = await import('./walletHistoryDb');
+    db.getFirstAsync.mockImplementation(async (sql: string) => (
+      sql.includes('FROM wallet_snapshot_cache')
+        ? { snapshot_json: JSON.stringify({ confirmedSats: 1 }), height: 100 }
+        : null
+    ));
+
+    await expect(loadWalletSnapshotCache('wallet-address')).rejects.toBeInstanceOf(
+      WalletStorageError,
+    );
+    expect(diagnostics.reportNonFinancialFailure).toHaveBeenCalledWith(
+      'wallet snapshot cache read',
+      expect.objectContaining({ message: 'Invalid wallet snapshot cache.' }),
+    );
   });
 
   it('writes enriched rows and derived outputs in one retried transaction', async () => {

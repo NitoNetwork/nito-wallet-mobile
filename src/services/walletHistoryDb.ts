@@ -6,6 +6,7 @@ import type { CachedTransactionOutput } from './historyExport';
 import { isDuplicateColumnError, retrySqliteWrite } from './sqliteReliability';
 import { runWalletStorageOperation } from './walletStorageError';
 import { normalizeWalletHistory } from './walletHistory';
+import { parseWalletSnapshotCache } from './walletSnapshotCache';
 import type {
   EnrichedHistoryRecord,
   WalletHistoryPublicationMode,
@@ -271,9 +272,12 @@ export const loadWalletSnapshotCache = async (
     if (!row) {
       return null;
     }
+    if (!Number.isSafeInteger(row.height) || row.height < 0) {
+      throw new Error('Invalid wallet snapshot cache height.');
+    }
 
     return {
-      snapshot: JSON.parse(row.snapshot_json) as TransparentWalletSnapshot,
+      snapshot: parseWalletSnapshotCache(row.snapshot_json),
       height: row.height,
     };
   },
