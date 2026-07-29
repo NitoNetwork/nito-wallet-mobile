@@ -194,6 +194,12 @@ export const recordHistoryEnrichmentBatchOutcome = (
   });
 };
 
+/**
+ * Releases failures after any successful wallet synchronization, not only an
+ * Electrum reconnection. Published keys are absent from `failed` and remain
+ * protected by `attempted`, so only failed entries receive one new attempt per
+ * successful synchronization.
+ */
 export const releaseFailedHistoryEnrichmentAttempts = (
   attempted: Set<string>,
   failed: HistoryEnrichmentFailures,

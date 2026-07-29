@@ -219,7 +219,7 @@ describe('HistoryEnrichmentQueue', () => {
     }).remainingCount).toBe(0);
   });
 
-  it('releases only failed entries after a successful Electrum reconnection', () => {
+  it('releases only failed entries after any successful wallet synchronization', () => {
     const attempted = new Set<string>();
     const failed = new Map();
 
@@ -232,7 +232,7 @@ describe('HistoryEnrichmentQueue', () => {
     expect(failed).toEqual(new Map());
   });
 
-  it('retries a permanent failure once per reconnection without looping', () => {
+  it('retries a permanent failure once per successful synchronization without looping', () => {
     const attempted = new Set<string>();
     const failed = new Map();
     const key = 'tx-permanent:98';
@@ -240,7 +240,7 @@ describe('HistoryEnrichmentQueue', () => {
 
     recordHistoryEnrichmentBatchOutcome(attempted, failed, [key], 'failed');
 
-    for (let reconnection = 0; reconnection < 2; reconnection += 1) {
+    for (let synchronization = 0; synchronization < 2; synchronization += 1) {
       const released = releaseFailedHistoryEnrichmentAttempts(attempted, failed);
       expect(released).toBe(1);
       if (released > 0) {

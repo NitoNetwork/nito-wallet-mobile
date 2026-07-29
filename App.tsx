@@ -1149,6 +1149,10 @@ function WalletApp({ theme, onSelectTheme }: {
           walletRef.current?.address ?? null,
           historyMode,
         );
+        // Deliberately release failed enrichment keys after every successful
+        // synchronization, even when the socket never disconnected. The
+        // global Electrum limiter bounds the retry load, while this broad
+        // recovery prevents one transient read failure from lasting forever.
         if (
           publishedNetwork.status === 'connected'
           && releaseFailedHistoryEnrichmentAttempts(
