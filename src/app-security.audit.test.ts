@@ -378,6 +378,22 @@ describe('mobile wallet UX and security invariants', () => {
     expect(appSource).toMatch(/if \(!upgradeCommit\) \{\s*return;\s*\}\s*await saveVault\(upgradeCommit\);/);
   });
 
+  it('surfaces failures from every user-triggered asynchronous platform action', () => {
+    expect(appSource).toMatch(
+      /try \{\s*await deleteBiometricSecret\(\);[\s\S]*?await saveVault\(encrypted\);[\s\S]*?catch \(caught\) \{\s*setError\(translatedErrorMessage\([\s\S]*?errors\.saveFailed/,
+    );
+    expect(appSource).toMatch(
+      /await Clipboard\.setStringAsync\(wallet\.address\);[\s\S]*?catch \(caught\) \{\s*setError\(translatedErrorMessage\([\s\S]*?errors\.addressCopyFailed/,
+    );
+    expect(appSource).toMatch(
+      /await openTransactionExplorer\(txid\);[\s\S]*?catch \(caught\) \{\s*setError\(translatedErrorMessage\([\s\S]*?errors\.explorerUnavailable/,
+    );
+    expect(appSource).toMatch(
+      /await requestCameraPermission\(\);[\s\S]*?catch \(caught\) \{[\s\S]*?setError\(translatedErrorMessage\([\s\S]*?errors\.cameraUnavailable/,
+    );
+    expect(appSource).not.toContain('void openTransactionExplorer(txid);');
+  });
+
   it('renders blocking work above the scroll view with a rotating Nito logo', () => {
     const scrollViewEnd = appSource.indexOf('</ScrollView>');
     const loadingOverlay = appSource.indexOf(

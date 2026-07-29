@@ -246,4 +246,7 @@ export const es: TranslationSet = {
   'dialog.officialElectrumConfirm': 'Usar servidores oficiales',
   'actions.useCustomElectrum': 'Comprobar y usar servidor',
   'actions.useOfficialElectrum': 'Volver a servidores oficiales',
+  'errors.addressCopyFailed': 'No se pudo copiar la dirección. Inténtalo de nuevo.',
+  'errors.cameraUnavailable': 'No se pudo acceder a la cámara. Inténtalo de nuevo.',
+  'errors.explorerUnavailable': 'No se pudo abrir el explorador de transacciones.',
 };

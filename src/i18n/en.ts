@@ -248,4 +248,7 @@ export const en = {
   'dialog.officialElectrumConfirm': 'Use official servers',
   'actions.useCustomElectrum': 'Check and use custom server',
   'actions.useOfficialElectrum': 'Return to official servers',
+  'errors.addressCopyFailed': 'Unable to copy the address. Please try again.',
+  'errors.cameraUnavailable': 'Unable to access the camera. Please try again.',
+  'errors.explorerUnavailable': 'Unable to open the transaction explorer.',
 } as const;

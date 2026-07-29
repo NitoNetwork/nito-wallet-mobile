@@ -656,6 +656,19 @@ function WalletApp({ theme, onSelectTheme }: {
     clearFieldErrors();
   }, [clearFieldErrors]);
 
+  const openTransactionExplorerWithFeedback = useCallback(async (txid: string) => {
+    try {
+      await openTransactionExplorer(txid);
+    } catch (caught) {
+      setError(translatedErrorMessage(
+        caught,
+        t,
+        t('errors.explorerUnavailable'),
+        'transaction explorer opening',
+      ));
+    }
+  }, [t]);
+
   const scrollToPreparedReview = useCallback(() => {
     walletScrollRef.current?.scrollToEnd({ animated: true });
   }, []);
@@ -1720,12 +1733,12 @@ function WalletApp({ theme, onSelectTheme }: {
       return;
     }
 
-    await deleteBiometricSecret();
     setPersistBusy(true);
     setStatus(t('loading.protect'));
     await yieldToUi();
 
     try {
+      await deleteBiometricSecret();
       const encrypted = await encryptVault(
         {
           version: 1,
@@ -2002,7 +2015,17 @@ function WalletApp({ theme, onSelectTheme }: {
       return;
     }
 
-    await Clipboard.setStringAsync(wallet.address);
+    try {
+      await Clipboard.setStringAsync(wallet.address);
+    } catch (caught) {
+      setError(translatedErrorMessage(
+        caught,
+        t,
+        t('errors.addressCopyFailed'),
+        'wallet address copy',
+      ));
+      return;
+    }
     setStatus(t('status.addressCopied'));
     setTimeout(() => {
       void (async () => {
@@ -2232,7 +2255,7 @@ function WalletApp({ theme, onSelectTheme }: {
           {
             text: t('actions.viewTx'),
             onPress: () => {
-              void openTransactionExplorer(txid);
+              void openTransactionExplorerWithFeedback(txid);
             },
           },
           { text: t('actions.ok'), style: 'cancel' },
@@ -2796,6 +2819,15 @@ function WalletApp({ theme, onSelectTheme }: {
       try {
         const permission = await requestCameraPermission();
         granted = permission.granted;
+      } catch (caught) {
+        qrRecipientIdRef.current = null;
+        setError(translatedErrorMessage(
+          caught,
+          t,
+          t('errors.cameraUnavailable'),
+          'camera permission request',
+        ));
+        return;
       } finally {
         systemPromptActiveRef.current = false;
       }
@@ -2961,7 +2993,7 @@ function WalletApp({ theme, onSelectTheme }: {
           historySyncing={historySyncing}
           onChangeHistoryPage={setHistoryPage}
           onExportHistory={() => { void exportFullHistory(); }}
-          onOpenTx={(txid) => { void openTransactionExplorer(txid); }}
+          onOpenTx={(txid) => { void openTransactionExplorerWithFeedback(txid); }}
         />
       );
     }

@@ -246,4 +246,7 @@ export const ja: TranslationSet = {
   'dialog.officialElectrumConfirm': '公式サーバーを使う',
   'actions.useCustomElectrum': 'カスタムサーバーを確認して使用',
   'actions.useOfficialElectrum': '公式サーバーに戻す',
+  'errors.addressCopyFailed': 'アドレスをコピーできませんでした。もう一度お試しください。',
+  'errors.cameraUnavailable': 'カメラにアクセスできませんでした。もう一度お試しください。',
+  'errors.explorerUnavailable': 'トランザクションエクスプローラーを開けませんでした。',
 };

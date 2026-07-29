@@ -246,4 +246,7 @@ export const fr: TranslationSet = {
   'dialog.officialElectrumConfirm': 'Utiliser les serveurs officiels',
   'actions.useCustomElectrum': 'Vérifier et utiliser le serveur',
   'actions.useOfficialElectrum': 'Revenir aux serveurs officiels',
+  'errors.addressCopyFailed': 'Impossible de copier l’adresse. Réessayez.',
+  'errors.cameraUnavailable': 'Impossible d’accéder à la caméra. Réessayez.',
+  'errors.explorerUnavailable': 'Impossible d’ouvrir l’explorateur de transactions.',
 };

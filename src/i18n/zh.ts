@@ -246,4 +246,7 @@ export const zh: TranslationSet = {
   'dialog.officialElectrumConfirm': '使用官方服务器',
   'actions.useCustomElectrum': '检查并使用自定义服务器',
   'actions.useOfficialElectrum': '恢复官方服务器',
+  'errors.addressCopyFailed': '无法复制地址，请重试。',
+  'errors.cameraUnavailable': '无法访问相机，请重试。',
+  'errors.explorerUnavailable': '无法打开交易浏览器。',
 };

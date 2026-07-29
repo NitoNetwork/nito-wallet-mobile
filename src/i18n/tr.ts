@@ -246,4 +246,7 @@ export const tr: TranslationSet = {
   'dialog.officialElectrumConfirm': 'Resmi sunucuları kullan',
   'actions.useCustomElectrum': 'Özel sunucuyu kontrol et ve kullan',
   'actions.useOfficialElectrum': 'Resmi sunuculara dön',
+  'errors.addressCopyFailed': 'Adres kopyalanamadı. Lütfen tekrar deneyin.',
+  'errors.cameraUnavailable': 'Kameraya erişilemedi. Lütfen tekrar deneyin.',
+  'errors.explorerUnavailable': 'İşlem gezgini açılamadı.',
 };

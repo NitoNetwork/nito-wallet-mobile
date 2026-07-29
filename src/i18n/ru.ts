@@ -246,4 +246,7 @@ export const ru: TranslationSet = {
   'dialog.officialElectrumConfirm': 'Использовать официальные серверы',
   'actions.useCustomElectrum': 'Проверить и использовать сервер',
   'actions.useOfficialElectrum': 'Вернуться к официальным серверам',
+  'errors.addressCopyFailed': 'Не удалось скопировать адрес. Повторите попытку.',
+  'errors.cameraUnavailable': 'Не удалось получить доступ к камере. Повторите попытку.',
+  'errors.explorerUnavailable': 'Не удалось открыть обозреватель транзакций.',
 };
