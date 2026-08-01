@@ -59,9 +59,19 @@ describe('wallet history export', () => {
     });
     const rows = historyExportTsvRows(records, 'en');
     expect(rows[0]).toEqual([
-      'date', 'direction', 'amount_nito', 'fee_nito', 'status', 'block_height', 'address', 'txid',
+      'date',
+      'direction',
+      'amount_nito',
+      'fee_nito',
+      'wallet_effect_nito',
+      'status',
+      'block_height',
+      'address',
+      'txid',
     ]);
-    expect(rows[1]).toContain('recipient-address');
+    expect(rows[1]?.slice(1, 5)).toEqual(['sent', '7', '0.1', '-7.1']);
+    expect(rows[2]?.slice(1, 5)).toEqual(['received', '9.9', '0', '9.9']);
+    expect(rows.every((row) => row.length === rows[0]!.length)).toBe(true);
   });
 
   it('reports the real amount moved by an internal transaction', async () => {
@@ -88,8 +98,10 @@ describe('wallet history export', () => {
     });
 
     expect(record).toMatchObject({ direction: 'self', amountSats: 950_000_000, feeSats: 50_000_000 });
+    const row = historyExportTsvRows([record!], 'en')[1];
+    expect(row?.slice(1, 5)).toEqual(['self', '0', '0.5', '-0.5']);
     // Exported block times intentionally follow the device timezone.
-    expect(historyExportTsvRows([record!], 'en')[1]?.[0]).toBe(
+    expect(row?.[0]).toBe(
       formatNitoDateTime(record!.blockTime!, 'en'),
     );
   });

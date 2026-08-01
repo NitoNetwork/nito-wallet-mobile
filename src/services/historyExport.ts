@@ -109,6 +109,20 @@ const formatSats = (sats: number) => {
   return fraction ? `${whole}.${fraction}` : String(whole);
 };
 
+const formatSignedSats = (sats: number) => (
+  sats < 0 ? `-${formatSats(Math.abs(sats))}` : formatSats(sats)
+);
+
+const walletEffectSats = (record: HistoryExportRecord) => {
+  if (record.direction === 'sent') {
+    return -(record.amountSats + record.feeSats);
+  }
+  if (record.direction === 'self') {
+    return -record.feeSats;
+  }
+  return record.amountSats;
+};
+
 const buildHistoryExportRecord = (
   entry: ElectrumHistoryEntry,
   owned: Set<string>,
@@ -327,12 +341,23 @@ export const historyExportTsvRows = (
   records: HistoryExportRecord[],
   language: LanguageCode,
 ) => [
-  ['date', 'direction', 'amount_nito', 'fee_nito', 'status', 'block_height', 'address', 'txid'],
+  [
+    'date',
+    'direction',
+    'amount_nito',
+    'fee_nito',
+    'wallet_effect_nito',
+    'status',
+    'block_height',
+    'address',
+    'txid',
+  ],
   ...records.map((record) => [
     formatExportDate(record.blockTime, language),
     record.direction,
-    formatSats(record.amountSats),
+    formatSats(record.direction === 'self' ? 0 : record.amountSats),
     formatSats(record.feeSats),
+    formatSignedSats(walletEffectSats(record)),
     record.status,
     record.blockHeight,
     record.counterparty,
