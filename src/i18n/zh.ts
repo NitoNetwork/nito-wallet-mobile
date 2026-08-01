@@ -92,6 +92,7 @@ export const zh: TranslationSet = {
   'history.received': '已收',
   'history.sent': '已发',
   'history.self': '内部',
+  'history.networkFee': '网络手续费',
   'history.loading': '正在加载历史...',
   'history.loadingHint': '加载期间可继续使用其他标签页。',
   'history.loadingCount': '{done}/{total}',

@@ -92,6 +92,7 @@ export const fr: TranslationSet = {
   'history.received': 'Reçu',
   'history.sent': 'Envoyé',
   'history.self': 'Interne',
+  'history.networkFee': 'Frais réseau',
   'history.loading': 'Chargement de l’historique...',
   'history.loadingHint': 'Tu peux continuer à utiliser les autres onglets pendant ce temps.',
   'history.loadingCount': '{done}/{total}',

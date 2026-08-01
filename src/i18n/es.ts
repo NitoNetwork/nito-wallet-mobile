@@ -92,6 +92,7 @@ export const es: TranslationSet = {
   'history.received': 'Recibido',
   'history.sent': 'Enviado',
   'history.self': 'Interno',
+  'history.networkFee': 'Comisión de red',
   'history.loading': 'Cargando historial...',
   'history.loadingHint': 'Puedes seguir usando las otras pestañas mientras tanto.',
   'history.loadingCount': '{done}/{total}',

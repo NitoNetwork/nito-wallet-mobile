@@ -92,6 +92,7 @@ export const tr: TranslationSet = {
   'history.received': 'Alındı',
   'history.sent': 'Gönderildi',
   'history.self': 'Dahili',
+  'history.networkFee': 'Ağ ücreti',
   'history.loading': 'Geçmiş yükleniyor...',
   'history.loadingHint': 'Bu sırada diğer sekmeleri kullanmaya devam edebilirsiniz.',
   'history.loadingCount': '{done}/{total}',

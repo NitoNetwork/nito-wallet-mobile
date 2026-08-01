@@ -92,6 +92,7 @@ export const pt: TranslationSet = {
   'history.received': 'Recebido',
   'history.sent': 'Enviado',
   'history.self': 'Interno',
+  'history.networkFee': 'Taxa de rede',
   'history.loading': 'Carregando histórico...',
   'history.loadingHint': 'Pode continuar a usar os outros separadores entretanto.',
   'history.loadingCount': '{done}/{total}',

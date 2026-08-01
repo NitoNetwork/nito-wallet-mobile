@@ -94,6 +94,7 @@ export const en = {
   'history.received': 'Received',
   'history.sent': 'Sent',
   'history.self': 'Internal',
+  'history.networkFee': 'Network fee',
   'history.loading': 'Loading history...',
   'history.loadingHint': 'You can keep using the other tabs meanwhile.',
   'history.loadingCount': '{done}/{total}',

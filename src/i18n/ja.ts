@@ -92,6 +92,7 @@ export const ja: TranslationSet = {
   'history.received': '受取',
   'history.sent': '送金',
   'history.self': '内部',
+  'history.networkFee': 'ネットワーク手数料',
   'history.loading': '履歴を読み込んでいます...',
   'history.loadingHint': 'その間も他のタブを利用できます。',
   'history.loadingCount': '{done}/{total}',

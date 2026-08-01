@@ -92,6 +92,7 @@ export const de: TranslationSet = {
   'history.received': 'Empfangen',
   'history.sent': 'Gesendet',
   'history.self': 'Intern',
+  'history.networkFee': 'Netzwerkgebühr',
   'history.loading': 'Verlauf wird geladen...',
   'history.loadingHint': 'Du kannst währenddessen die anderen Tabs nutzen.',
   'history.loadingCount': '{done}/{total}',

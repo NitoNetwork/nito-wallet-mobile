@@ -54,6 +54,24 @@ describe('i18n coverage', () => {
     }
   });
 
+  it('resolves the internal transaction network-fee label in every language', () => {
+    const expected = {
+      en: 'Network fee',
+      zh: '网络手续费',
+      de: 'Netzwerkgebühr',
+      es: 'Comisión de red',
+      fr: 'Frais réseau',
+      ja: 'ネットワーク手数料',
+      tr: 'Ağ ücreti',
+      pt: 'Taxa de rede',
+      ru: 'Сетевая комиссия',
+    } satisfies Record<LanguageCode, string>;
+
+    for (const code of Object.keys(expected) as LanguageCode[]) {
+      expect(makeTranslator(code)('history.networkFee')).toBe(expected[code]);
+    }
+  });
+
   it('names the BIP39 phrase explicitly in every language', () => {
     const expected = {
       en: ['Show BIP39 phrase', 'Hide BIP39 phrase'],

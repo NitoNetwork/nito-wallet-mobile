@@ -92,6 +92,7 @@ export const ru: TranslationSet = {
   'history.received': 'Получено',
   'history.sent': 'Отправлено',
   'history.self': 'Внутренний',
+  'history.networkFee': 'Сетевая комиссия',
   'history.loading': 'Загрузка истории...',
   'history.loadingHint': 'Тем временем можно пользоваться другими вкладками.',
   'history.loadingCount': '{done}/{total}',

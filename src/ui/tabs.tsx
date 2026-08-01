@@ -25,7 +25,6 @@ import {
   formatHomeBalance,
   historyAmountBreakdown,
   historyPageFromInput,
-  internalDebitSats,
   signedHistoryAmountLines,
   shortAddress,
 } from './format';
@@ -443,7 +442,7 @@ export function HistoryTab({
       {visibleHistory.length > 0 ? (
         <View style={styles.historyList}>
           {visibleHistory.map((entry) => {
-            const amountBreakdown = entry.direction === undefined
+            const amountBreakdown = entry.direction === undefined || entry.direction === 'self'
               ? null
               : historyAmountBreakdown({
                 direction: entry.direction,
@@ -451,16 +450,15 @@ export function HistoryTab({
                 outputs: outputsByTxid.get(entry.txid) ?? [],
                 walletAddresses,
               });
-            const debitSats = entry.direction === undefined
-              ? null
-              : internalDebitSats(entry.direction, entry.amountSats ?? 0, entry.feeSats);
-            const amountLines = amountBreakdown && entry.direction
+            const amountLines = entry.direction
               ? signedHistoryAmountLines(
                 entry.direction,
-                amountBreakdown.amountsSats.map((amountSats) => (
+                (amountBreakdown?.amountsSats ?? []).map((amountSats) => (
                   satoshisToNito(amountSats, language)
                 )),
-                debitSats === null ? null : satoshisToNito(debitSats, language),
+                entry.direction === 'self' && entry.feeSats !== undefined
+                  ? satoshisToNito(entry.feeSats, language)
+                  : null,
               )
               : [];
             if (amountBreakdown && amountBreakdown.hiddenOutputCount > 0) {
@@ -478,13 +476,15 @@ export function HistoryTab({
                 <View style={styles.historyRowTop}>
                   <View style={styles.historyRowText}>
                     <Text style={styles.historyTxid}>
-                      {entry.direction === undefined
+                      {entry.direction === undefined || amountLines.length === 0
                         ? shortAddress(entry.txid)
                         : amountLines.join('\n')}
                     </Text>
                     <Text style={styles.helper}>
                       {[
-                        entry.blockTime ? formatNitoDateTime(entry.blockTime, language) : '',
+                        entry.direction !== 'self' && entry.blockTime
+                          ? formatNitoDateTime(entry.blockTime, language)
+                          : '',
                         entry.direction === 'received'
                           ? t('history.received')
                           : entry.direction === 'sent'
@@ -492,6 +492,7 @@ export function HistoryTab({
                             : entry.direction === 'self'
                               ? t('history.self')
                               : '',
+                        entry.direction === 'self' ? t('history.networkFee') : '',
                         entry.height > 0 ? t('history.block', { height: entry.height }) : t('history.mempool'),
                       ].filter(Boolean).join(' · ')}
                     </Text>
