@@ -1,9 +1,9 @@
 diff --git a/node_modules/expo/node_modules/@expo/log-box/android/build.gradle b/node_modules/expo/node_modules/@expo/log-box/android/build.gradle
-index 660af1e..9b461e2 100644
+index 5700d93..b933e41 100644
 --- a/node_modules/expo/node_modules/@expo/log-box/android/build.gradle
 +++ b/node_modules/expo/node_modules/@expo/log-box/android/build.gradle
 @@ -9,13 +9,13 @@ group = 'host.exp.exponent'
- version = '57.0.1'
+ version = '57.0.2'
 
  expoModule {
 -  canBePublished false
@@ -17,7 +17,7 @@ index 660af1e..9b461e2 100644
 +  namespace = "expo.modules.logbox"
    defaultConfig {
      versionCode 1
-     versionName "57.0.1"
+     versionName "57.0.2"
 @@ -34,8 +34,8 @@ android {
      }
    }
