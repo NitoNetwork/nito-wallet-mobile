@@ -1,8 +1,8 @@
 diff --git a/node_modules/expo-constants/android/build.gradle b/node_modules/expo-constants/android/build.gradle
-index d385002..9925730 100644
+index 3fb29eb..d8beff7 100644
 --- a/node_modules/expo-constants/android/build.gradle
 +++ b/node_modules/expo-constants/android/build.gradle
-@@ -10,11 +10,11 @@ version = '57.0.8'
+@@ -10,11 +10,11 @@ version = '57.0.9'
  
  expoModule {
    // We can't prebuild the module because we need to apply `get-app-config-android.gradle` script.
@@ -15,7 +15,7 @@ index d385002..9925730 100644
 +  namespace = "expo.modules.constants"
    defaultConfig {
      versionCode 33
-     versionName "57.0.8"
+     versionName "57.0.9"
 diff --git a/node_modules/expo-constants/android/src/main/java/expo/modules/constants/ConstantsModule.kt b/node_modules/expo-constants/android/src/main/java/expo/modules/constants/ConstantsModule.kt
 index 67247f7..e504cc0 100644
 --- a/node_modules/expo-constants/android/src/main/java/expo/modules/constants/ConstantsModule.kt
