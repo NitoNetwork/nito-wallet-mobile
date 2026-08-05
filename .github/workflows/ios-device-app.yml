@@ -256,12 +256,14 @@ jobs:
               fi
             done < <(find "$APP_PATH/Frameworks" -maxdepth 1 -name '*.framework' -type d -print)
           fi
+          VERSION="$(node -p "require('./package.json').version")"
+          IPA_NAME="Nito-Wallet-iOS-${VERSION}-unsigned.ipa"
           mkdir -p artifacts/ios/Payload
           ditto "$APP_PATH" "artifacts/ios/Payload/$(basename "$APP_PATH")"
           pushd artifacts/ios
-          ditto -c -k --sequesterRsrc --keepParent Payload Nito-Wallet-iOS-Device-unsigned.ipa
-          shasum -a 256 Nito-Wallet-iOS-Device-unsigned.ipa > Nito-Wallet-iOS-Device-unsigned.ipa.sha256
-          cat Nito-Wallet-iOS-Device-unsigned.ipa.sha256
+          ditto -c -k --sequesterRsrc --keepParent Payload "$IPA_NAME"
+          shasum -a 256 "$IPA_NAME" > "${IPA_NAME}.sha256"
+          cat "${IPA_NAME}.sha256"
           popd
 
       - name: Upload iOS device app
@@ -269,7 +271,7 @@ jobs:
         with:
           name: Nito-Wallet-iOS-Device-Unsigned
           path: |
-            artifacts/ios/Nito-Wallet-iOS-Device-unsigned.ipa
-            artifacts/ios/Nito-Wallet-iOS-Device-unsigned.ipa.sha256
+            artifacts/ios/Nito-Wallet-iOS-*-unsigned.ipa
+            artifacts/ios/Nito-Wallet-iOS-*-unsigned.ipa.sha256
           if-no-files-found: error
           retention-days: 30
