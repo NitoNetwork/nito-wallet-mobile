@@ -27,3 +27,20 @@ public disclosure.
 Nito Wallet is non-custodial. Losing the recovery phrase can permanently remove
 access to funds, and publishing it gives anyone control of the wallet. Network
 transactions cannot be reversed by the maintainers.
+
+## Unpatched build-tool advisories
+
+An audit exception is accepted only for a build dependency that is absent from
+the delivered application, never for code embedded in the APK or IPA.
+
+The current exception covers `image-size`, pulled into the build toolchain by
+Expo through `@expo/metro` and Metro. All published versions are affected by two
+denial-of-service advisories in the ICNS, JXL and HEIF readers
+(`GHSA-w3rx-r6r6-pgpr` and `GHSA-5p2g-fcmc-qvqq`). The package has published no
+release since April 2025, and npm's only proposed remediation is to downgrade
+Expo from version 57 to version 53.
+
+`image-size` is not included in the APK or IPA, and this repository contains
+only PNG and SVG image assets, so the affected readers are not invoked. The
+exception expires after November 8, 2026. Starting November 9, 2026, the build
+fails regardless of the audit result and requires a new review.

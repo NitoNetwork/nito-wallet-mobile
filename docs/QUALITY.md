@@ -11,7 +11,9 @@ Each device workflow runs the same project quality gate before compilation:
 - strict TypeScript checking;
 - unit and integration tests;
 - localization completeness and encoding audits;
-- production dependency audit;
+- production dependency audit, with an enumerated and dated exception set
+  limited to build tooling; every other vulnerability at moderate severity or
+  above fails the gate, and each exception expires automatically;
 - Rust formatting, Clippy with warnings denied, and Rust tests;
 - native bridge and artifact integrity checks.
 
