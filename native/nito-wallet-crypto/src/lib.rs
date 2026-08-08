@@ -37,7 +37,7 @@ use bitcoin::{
 use pbkdf2::pbkdf2_hmac;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use sha2::Sha256;
+use sha2::{Digest, Sha256};
 use thiserror::Error;
 use zeroize::{Zeroize, Zeroizing};
 
@@ -48,6 +48,7 @@ const MAX_PBKDF2_ROUNDS: u32 = 2_000_000;
 const MIN_RANDOM_BYTES: usize = 16;
 const MAX_RANDOM_BYTES: usize = 1024;
 const SEED_ENTROPY_BYTES: usize = 32;
+const SEED_ENTROPY_DOMAIN: &[u8] = b"nito-wallet/seed-entropy/v1";
 
 #[derive(Debug, Error)]
 enum CryptoError {
@@ -96,7 +97,10 @@ struct RandomBytesResponse {
 }
 
 #[derive(Deserialize)]
-struct GenerateMnemonicRequest {}
+#[serde(rename_all = "camelCase")]
+struct GenerateMnemonicRequest {
+    user_pool_base64: Option<String>,
+}
 
 #[derive(Serialize)]
 struct GenerateMnemonicResponse {
@@ -213,10 +217,44 @@ fn random_bytes(request: &str) -> Result<Value, CryptoError> {
 }
 
 fn generate_mnemonic(request: &str) -> Result<Value, CryptoError> {
-    let _: GenerateMnemonicRequest = parse_json(request)?;
-    let mut entropy = Zeroizing::new([0_u8; SEED_ENTROPY_BYTES]);
-    fill_os_random(entropy.as_mut())?;
-    let mnemonic = Mnemonic::from_entropy_in(Language::English, entropy.as_ref())
+    let request: GenerateMnemonicRequest = parse_json(request)?;
+    let user_pool = match request.user_pool_base64 {
+        Some(mut encoded) => {
+            let decoded = BASE64.decode(encoded.as_bytes());
+            encoded.zeroize();
+            let decoded = Zeroizing::new(decoded.map_err(|_| {
+                CryptoError::InvalidRequest("user entropy pool is not valid base64".into())
+            })?);
+            if decoded.len() != SEED_ENTROPY_BYTES {
+                return Err(CryptoError::InvalidRequest(format!(
+                    "user entropy pool must contain exactly {SEED_ENTROPY_BYTES} bytes"
+                )));
+            }
+            decoded
+        }
+        None => Zeroizing::new(vec![0_u8; SEED_ENTROPY_BYTES]),
+    };
+
+    // The optional pool is fully validated before fresh system entropy is drawn.
+    let mut system_entropy = Zeroizing::new([0_u8; SEED_ENTROPY_BYTES]);
+    fill_random_with(system_entropy.as_mut(), getrandom::fill)?;
+
+    let mut hasher = Sha256::new();
+    hasher.update(SEED_ENTROPY_DOMAIN);
+    hasher.update(user_pool.as_slice());
+    let mut digest = hasher.finalize();
+    let mut mix = Zeroizing::new([0_u8; SEED_ENTROPY_BYTES]);
+    mix.copy_from_slice(&digest);
+    digest[..].zeroize();
+
+    let mut mixed_entropy = Zeroizing::new([0_u8; SEED_ENTROPY_BYTES]);
+    for index in 0..SEED_ENTROPY_BYTES {
+        mixed_entropy[index] = system_entropy[index] ^ mix[index];
+    }
+    system_entropy.zeroize();
+    mix.zeroize();
+
+    let mnemonic = Mnemonic::from_entropy_in(Language::English, mixed_entropy.as_ref())
         .map_err(|error| CryptoError::Crypto(error.to_string()))?;
     serde_json::to_value(GenerateMnemonicResponse {
         mnemonic: mnemonic.to_string(),
@@ -680,13 +718,62 @@ mod tests {
         assert!(matches!(result, Err(CryptoError::Entropy)));
     }
 
-    #[test]
-    fn generated_mnemonic_is_a_valid_24_word_phrase() {
-        let response = generate_mnemonic("{}").unwrap();
-        let mnemonic = response.get("mnemonic").and_then(Value::as_str).unwrap();
+    fn generated_mnemonic(response: &Value) -> &str {
+        response.get("mnemonic").and_then(Value::as_str).unwrap()
+    }
 
+    fn assert_valid_24_word_mnemonic(mnemonic: &str) {
         assert_eq!(mnemonic.split_whitespace().count(), 24);
         assert!(Mnemonic::parse_in_normalized(Language::English, mnemonic).is_ok());
+    }
+
+    #[test]
+    fn generated_mnemonic_accepts_absent_zero_and_arbitrary_user_pools() {
+        let zero_pool = BASE64.encode([0_u8; SEED_ENTROPY_BYTES]);
+        let arbitrary_pool_bytes: [u8; SEED_ENTROPY_BYTES] =
+            std::array::from_fn(|index| index as u8);
+        let arbitrary_pool = BASE64.encode(arbitrary_pool_bytes);
+        let requests = [
+            json!({}),
+            json!({ "userPoolBase64": zero_pool }),
+            json!({ "userPoolBase64": arbitrary_pool }),
+        ];
+
+        for request in requests {
+            let first = generate_mnemonic(&request.to_string()).unwrap();
+            let second = generate_mnemonic(&request.to_string()).unwrap();
+            assert_valid_24_word_mnemonic(generated_mnemonic(&first));
+            assert_valid_24_word_mnemonic(generated_mnemonic(&second));
+            assert_ne!(generated_mnemonic(&first), generated_mnemonic(&second));
+        }
+    }
+
+    #[test]
+    fn different_user_pools_produce_different_mnemonics_without_returning_entropy() {
+        let first = generate_mnemonic(
+            &json!({ "userPoolBase64": BASE64.encode([0x11; SEED_ENTROPY_BYTES]) }).to_string(),
+        )
+        .unwrap();
+        let second = generate_mnemonic(
+            &json!({ "userPoolBase64": BASE64.encode([0x22; SEED_ENTROPY_BYTES]) }).to_string(),
+        )
+        .unwrap();
+
+        assert_ne!(generated_mnemonic(&first), generated_mnemonic(&second));
+        assert_eq!(first.as_object().unwrap().len(), 1);
+        assert_eq!(second.as_object().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn generated_mnemonic_rejects_malformed_user_pools() {
+        for request in [
+            json!({ "userPoolBase64": "not base64" }),
+            json!({ "userPoolBase64": BASE64.encode([0_u8; SEED_ENTROPY_BYTES - 1]) }),
+            json!({ "userPoolBase64": BASE64.encode([0_u8; SEED_ENTROPY_BYTES + 1]) }),
+        ] {
+            let error = generate_mnemonic(&request.to_string()).unwrap_err();
+            assert!(matches!(error, CryptoError::InvalidRequest(_)));
+        }
     }
 
     #[test]

@@ -522,6 +522,19 @@ describe('password policy is declared once', () => {
       expect(buildConfiguration).not.toContain('getrandom_backend');
     }
   });
+
+  it('always mixes fresh OS entropy with the optional user pool instead of replacing it', () => {
+    const generatorSource = nativeCryptoSource.slice(
+      nativeCryptoSource.indexOf('fn generate_mnemonic('),
+      nativeCryptoSource.indexOf('fn master_xpriv('),
+    );
+    expect(generatorSource).toContain(
+      'fill_random_with(system_entropy.as_mut(), getrandom::fill)',
+    );
+    expect(generatorSource).toContain(
+      'mixed_entropy[index] = system_entropy[index] ^ mix[index]',
+    );
+  });
 });
 
 describe('QR scanner does not fight the auto lock', () => {
