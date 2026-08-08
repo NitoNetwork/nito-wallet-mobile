@@ -3,17 +3,17 @@ index 79e920d..cabeb75 100644
 --- a/node_modules/expo-file-system/android/build.gradle
 +++ b/node_modules/expo-file-system/android/build.gradle
 @@ -7,11 +7,11 @@ group = 'host.exp.exponent'
- version = '57.0.1'
+ version = '57.0.2'
 
  android {
 -  namespace "expo.modules.filesystem"
 +  namespace = "expo.modules.filesystem"
    defaultConfig {
 -    versionCode 30
--    versionName "57.0.1"
+-    versionName "57.0.2"
 -    testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
 +    versionCode = 30
-+    versionName = "57.0.1"
++    versionName = "57.0.2"
 +    testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
    }
    testOptions {

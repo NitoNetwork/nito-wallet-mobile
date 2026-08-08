@@ -127,7 +127,9 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          npm audit --omit=dev --audit-level=moderate 2>&1 | tee npm-audit.log
+          npm run audit:production:self-test 2>&1 | tee npm-audit-self-test.log
+          npm run audit:production 2>&1 | tee npm-audit.log
+          node scripts/assert-warning-free.mjs npm-audit-self-test.log
           node scripts/assert-warning-free.mjs npm-audit.log
 
       - name: Prepare Android release signing
