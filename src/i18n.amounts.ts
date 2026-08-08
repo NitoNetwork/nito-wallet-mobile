@@ -30,6 +30,17 @@ const groupIntegerDigits = (
   { groupSeparator }: AmountFormat,
 ) => groupWesternDigits(digits, groupSeparator);
 
+export const formatLocalizedInteger = (
+  value: number | bigint,
+  language: LanguageCode,
+) => {
+  const normalized = typeof value === 'bigint' ? value : BigInt(Math.trunc(value));
+  const negative = normalized < 0n;
+  const absoluteDigits = (negative ? -normalized : normalized).toString();
+  const grouped = groupIntegerDigits(absoluteDigits, NITO_AMOUNT_FORMATS[language]);
+  return `${negative ? '-' : ''}${grouped}`;
+};
+
 export const formatNitoAmount = (
   satoshis: number | bigint,
   language: LanguageCode,

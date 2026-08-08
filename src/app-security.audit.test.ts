@@ -8,13 +8,14 @@ import appStateSecuritySource from './services/appStateSecurity.ts?raw';
 import amountFormatSource from './i18n.amounts.ts?raw';
 import dateFormatSource from './i18n.datetime.ts?raw';
 import constantsSource from './constants/nito.ts?raw';
-import i18nSource from './i18n.ts?raw';
+import enI18nSource from './i18n/en.ts?raw';
 import frI18nSource from './i18n/fr.ts?raw';
 import formatSource from './ui/format.ts?raw';
 import componentsSource from './ui/components.tsx?raw';
 import stylesSource from './ui/styles.ts?raw';
 import tabsSource from './ui/tabs.tsx?raw';
 import settingsSource from './ui/settings.tsx?raw';
+import themeContextSource from './ui/themeContext.tsx?raw';
 import sessionSource from './services/session.ts?raw';
 import vaultSource from './services/vault.ts?raw';
 import screensSource from './ui/screens.tsx?raw';
@@ -63,9 +64,8 @@ describe('mobile wallet UX and security invariants', () => {
   });
 
   it('locks every wallet background transition independently of the previous state and system prompts', () => {
-    expect(appStateSecuritySource).toContain('shouldLockWalletForAppState({');
-    expect(appStateSecuritySource).not.toMatch(
-      /previousState === 'active'[\s\S]{0,180}lockWallet\(\);/,
+    expect(appStateSecuritySource).toMatch(
+      /if \(shouldLockWalletForAppState\(\{[\s\S]*?\}\)\) \{\s*lockWalletRef\.current\(\);\s*\}/,
     );
   });
 
@@ -245,7 +245,7 @@ describe('mobile wallet UX and security invariants', () => {
   it('never disguises a failed financial read or write as complete data', () => {
     expect(networkControllerSource).not.toMatch(/options\.silent[\s\S]{0,300}status: 'connected'/);
     expect(networkControllerSource).not.toContain('client.connect().catch(() => undefined)');
-    expect(appSource).not.toMatch(/saveEnrichedHistoryRecords\([\s\S]{0,700}\.catch\(\(\) => undefined\)/);
+    expect(appSource).not.toMatch(/saveHistoryEnrichmentBatch\([\s\S]{0,700}\.catch\(\(\) => undefined\)/);
     expect(transparentScanSource).not.toContain('.catch(() => undefined)');
     expect(coinbaseSource).not.toMatch(/catch\s*\{\s*return utxo;/);
     expect(historyDbSource).not.toMatch(
@@ -311,7 +311,7 @@ describe('mobile wallet UX and security invariants', () => {
   it('always arms an inactivity timer with one of the supported non-zero durations', () => {
     expect(constantsSource).not.toMatch(/AUTO_LOCK_TIMEOUT_OPTIONS_MS\s*=\s*\[\s*0,/);
     expect(sessionSource).not.toContain('this.timeoutMs === 0');
-    expect(i18nSource).not.toContain('settings.autoLockImmediate');
+    expect(enI18nSource).not.toContain('settings.autoLockImmediate');
     expect(frI18nSource).not.toContain('settings.autoLockImmediate');
   });
 
@@ -447,6 +447,15 @@ describe('mobile wallet UX and security invariants', () => {
     expect(amountFormatSource).not.toContain('toLocaleString');
     expect(formatSource).not.toContain("toLocaleString('fr-FR')");
     expect(transparentScanSource).not.toContain("toLocaleString('fr-FR')");
+    for (const interfaceSource of [
+      componentsSource,
+      screensSource,
+      settingsSource,
+      tabsSource,
+      themeContextSource,
+    ]) {
+      expect(interfaceSource).not.toMatch(/\.toLocaleString\(/);
+    }
     expect(amountFormatSource).toContain("de: { groupSeparator: '.', decimalSeparator: ',' }");
     expect(amountFormatSource).toContain("fr: { groupSeparator: '\\u202f'");
     // Dates share the same rule: a fixed table, never the device locale data.
@@ -463,7 +472,7 @@ describe('mobile wallet UX and security invariants', () => {
     expect(formatSource).not.toContain('BALANCE_DECIMAL_OPTIONS');
     expect(formatSource).not.toContain('markTruncated');
     expect(amountFormatSource).not.toContain('markTruncated');
-    expect(i18nSource).not.toContain('security.balanceDecimals');
+    expect(enI18nSource).not.toContain('security.balanceDecimals');
     expect(stylesSource).not.toContain('balanceDecimals');
   });
 });

@@ -14,7 +14,8 @@ import {
   AUTO_LOCK_TIMEOUT_OPTIONS_MS,
   type AutoLockTimeoutMs,
 } from '../constants/nito';
-import type { TranslationKey, Translator } from '../i18n';
+import type { LanguageCode, TranslationKey, Translator } from '../i18n';
+import { formatLocalizedInteger } from '../i18n.amounts';
 import { reportNonFinancialFailure } from '../services/diagnostics';
 import type { ElectrumServerPreference } from '../services/electrumClientFactory';
 import { ActionButton, MnemonicGrid, PasswordField } from './components';
@@ -386,6 +387,7 @@ function DisplaySettingsSection({
 
 function NetworkSettingsSection({
   t,
+  language,
   actionLocked,
   pendingAction,
   network,
@@ -397,6 +399,7 @@ function NetworkSettingsSection({
   onBack,
 }: {
   t: Translator;
+  language: LanguageCode;
   actionLocked: boolean;
   pendingAction: PendingAction | null;
   network: NetworkState;
@@ -413,7 +416,7 @@ function NetworkSettingsSection({
   const styles = useStyles();
   const themeColor = useThemeColor();
   const server = network.serverUrl.replace(/^wss:\/\//i, '') || '—';
-  const blockHeight = network.height > 0 ? network.height.toLocaleString('fr-FR') : '—';
+  const blockHeight = network.height > 0 ? formatLocalizedInteger(network.height, language) : '—';
   const [customServerInput, setCustomServerInput] = useState(
     electrumServerPreference.customServerUrl ?? '',
   );
@@ -598,6 +601,7 @@ function DangerSettingsSection({
 
 export function SecurityTab({
   t,
+  language,
   actionLocked,
   pendingAction,
   security,
@@ -607,6 +611,7 @@ export function SecurityTab({
   danger,
 }: {
   t: Translator;
+  language: LanguageCode;
   actionLocked: boolean;
   pendingAction: PendingAction | null;
   security: {
@@ -682,6 +687,7 @@ export function SecurityTab({
     return (
       <NetworkSettingsSection
         t={t}
+        language={language}
         actionLocked={actionLocked}
         pendingAction={networkSettings.pendingAction}
         network={networkSettings.network}

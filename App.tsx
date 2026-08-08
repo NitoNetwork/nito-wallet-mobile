@@ -3006,6 +3006,7 @@ function WalletApp({ theme, onSelectTheme }: {
       return (
         <SecurityTab
           t={t}
+          language={language}
           actionLocked={actionLocked}
           pendingAction={pendingAction}
           security={{
