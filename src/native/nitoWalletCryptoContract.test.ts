@@ -44,7 +44,7 @@ describe('Nito Wallet Rust bridge contract', () => {
     expect(requests).toEqual([
       { operation: 'randomBytes', request: '{"length":4}' },
       { operation: 'generateMnemonic', request: '{}' },
-      { operation: 'generateMnemonic', request: '{"userPoolBase64":"AQID"}' },
+      { operation: 'generateMnemonic', request: '{"additionalEntropyBase64":"AQID"}' },
     ]);
   });
 });

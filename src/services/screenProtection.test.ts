@@ -1,11 +1,11 @@
 import { describe, expect, it } from 'vitest';
 
-import { shouldProtectRecoveryPhrase } from './screenProtection';
+import { shouldProtectSensitiveContent } from './screenProtection';
 
 const protectionFor = (
-  screen: Parameters<typeof shouldProtectRecoveryPhrase>[0]['screen'],
-  overrides: Partial<Parameters<typeof shouldProtectRecoveryPhrase>[0]> = {},
-) => shouldProtectRecoveryPhrase({
+  screen: Parameters<typeof shouldProtectSensitiveContent>[0]['screen'],
+  overrides: Partial<Parameters<typeof shouldProtectSensitiveContent>[0]> = {},
+) => shouldProtectSensitiveContent({
   screen,
   walletTab: 'home',
   createdPhraseVisible: false,
@@ -13,13 +13,16 @@ const protectionFor = (
   ...overrides,
 });
 
-describe('recovery phrase screen protection scope', () => {
-  it('does not cover loading, landing, dice, unlock, or initialization errors', () => {
+describe('sensitive content screen protection scope', () => {
+  it('does not cover loading, landing, unlock, or initialization errors', () => {
     expect(protectionFor('loading')).toBe(false);
     expect(protectionFor('initializationError')).toBe(false);
     expect(protectionFor('landing')).toBe(false);
-    expect(protectionFor('dice')).toBe(false);
     expect(protectionFor('unlock')).toBe(false);
+  });
+
+  it('covers physical dice entry because its results contribute to the seed', () => {
+    expect(protectionFor('dice')).toBe(true);
   });
 
   it('covers only the creation step that actually displays the phrase', () => {

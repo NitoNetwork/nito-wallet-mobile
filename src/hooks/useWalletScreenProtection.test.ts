@@ -15,7 +15,7 @@ describe('wallet screen capture protection', () => {
     vi.clearAllMocks();
   });
 
-  it('enables protection only when recovery words are visible and removes it afterwards', async () => {
+  it('enables protection for sensitive content and removes it afterwards', async () => {
     await setWalletScreenCaptureProtection(true);
     expect(ScreenCapture.preventScreenCaptureAsync).toHaveBeenCalledWith(
       'nito-wallet-sensitive-content',

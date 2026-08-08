@@ -1,6 +1,6 @@
 import type { AppScreen, WalletTab } from '../ui/types';
 
-export const shouldProtectRecoveryPhrase = ({
+export const shouldProtectSensitiveContent = ({
   screen,
   walletTab,
   createdPhraseVisible,
@@ -11,6 +11,7 @@ export const shouldProtectRecoveryPhrase = ({
   createdPhraseVisible: boolean;
   settingsPhraseVisible: boolean;
 }): boolean => (
-  (screen === 'persist' && createdPhraseVisible)
+  screen === 'dice'
+  || (screen === 'persist' && createdPhraseVisible)
   || (screen === 'wallet' && walletTab === 'security' && settingsPhraseVisible)
 );

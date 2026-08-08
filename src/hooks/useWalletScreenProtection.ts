@@ -15,13 +15,13 @@ export const setWalletScreenCaptureProtection = async (enabled: boolean): Promis
 };
 
 /**
- * Protects only screens that visibly expose the recovery phrase. Both capture
- * blocking and the iOS app-switcher overlay follow the same narrow scope.
+ * Protects screens that expose recovery words or physical dice input. Both
+ * capture blocking and the iOS app-switcher overlay follow this narrow scope.
  */
 export const useWalletScreenProtection = ({
-  protectRecoveryPhrase,
+  protectSensitiveContent,
 }: {
-  protectRecoveryPhrase: boolean;
+  protectSensitiveContent: boolean;
 }): void => {
   const screenCaptureUpdateRef = useRef<Promise<void>>(Promise.resolve());
   const queueScreenCaptureUpdate = useCallback((enabled: boolean) => {
@@ -45,14 +45,14 @@ export const useWalletScreenProtection = ({
   }, []);
 
   useEffect(() => {
-    queueScreenCaptureUpdate(protectRecoveryPhrase);
-  }, [protectRecoveryPhrase, queueScreenCaptureUpdate]);
+    queueScreenCaptureUpdate(protectSensitiveContent);
+  }, [protectSensitiveContent, queueScreenCaptureUpdate]);
 
   useEffect(() => {
     if (Platform.OS === 'ios') {
-      queueAppSwitcherUpdate(protectRecoveryPhrase);
+      queueAppSwitcherUpdate(protectSensitiveContent);
     }
-  }, [protectRecoveryPhrase, queueAppSwitcherUpdate]);
+  }, [protectSensitiveContent, queueAppSwitcherUpdate]);
 
   useEffect(() => () => {
     queueScreenCaptureUpdate(false);

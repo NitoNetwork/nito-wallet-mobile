@@ -156,7 +156,7 @@ import { useAutoLockTimeout } from './src/hooks/useAutoLockTimeout';
 import { useLanguage } from './src/hooks/useLanguage';
 import { useWalletScreenProtection } from './src/hooks/useWalletScreenProtection';
 import { useWalletSubscriptions } from './src/hooks/useWalletSubscriptions';
-import { shouldProtectRecoveryPhrase } from './src/services/screenProtection';
+import { shouldProtectSensitiveContent } from './src/services/screenProtection';
 import { AutoLock } from './src/services/session';
 import {
   reportUnexpectedTransparentSendFailure,
@@ -321,8 +321,8 @@ type SendEstimateState = {
   fitsAvailable: boolean;
 };
 
-const generateMnemonic24 = async (userPoolBase64?: string) => (
-  await nitoWalletCrypto.generateMnemonic(userPoolBase64)
+const generateMnemonic24 = async (additionalEntropyBase64?: string) => (
+  await nitoWalletCrypto.generateMnemonic(additionalEntropyBase64)
 ).mnemonic;
 
 const derivePrimaryAddress = async (mnemonic: string): Promise<Wallet> => {
@@ -546,7 +546,7 @@ function WalletApp({ theme, onSelectTheme }: {
     [pendingWallet, pendingWalletRequiresSeedBackup, seedBackupAttemptToken],
   );
   useWalletScreenProtection({
-    protectRecoveryPhrase: shouldProtectRecoveryPhrase({
+    protectSensitiveContent: shouldProtectSensitiveContent({
       screen,
       walletTab,
       createdPhraseVisible: Boolean(
@@ -1456,12 +1456,17 @@ function WalletApp({ theme, onSelectTheme }: {
     return undefined;
   }, [screen, syncTransparentNetwork, wallet]);
 
-  const createWallet = async (userPoolBase64: string) => {
+  const createWallet = async (additionalEntropyBase64?: string) => {
     await runExclusiveAction('create', async () => {
     resetFeedback();
+    const secretGeneration = transientSecretGenerationRef.current;
 
     try {
-      const mnemonic = await generateMnemonic24(userPoolBase64);
+      const mnemonic = await generateMnemonic24(additionalEntropyBase64);
+      if (
+        additionalEntropyBase64 !== undefined
+        && secretGeneration !== transientSecretGenerationRef.current
+      ) return;
       const nextWallet = await derivePrimaryAddress(mnemonic);
       walletLockAppliedRef.current = false;
       setPendingWallet(nextWallet);
@@ -1904,6 +1909,9 @@ function WalletApp({ theme, onSelectTheme }: {
     if (screenRef.current === 'dice') {
       diceEntropyResetRef.current();
       setDiceSessionKey((current) => current + 1);
+      setError('');
+      setStatus(tRef.current('status.diceResultsCleared'));
+      setScreen('landing');
     }
 
     if (screenRef.current === 'import') {
@@ -3116,7 +3124,9 @@ function WalletApp({ theme, onSelectTheme }: {
           pendingAction={pendingAction}
           actionLocked={actionLocked}
           resetRef={diceEntropyResetRef}
-          onContinue={(userPoolBase64) => { void createWallet(userPoolBase64); }}
+          onContinue={(additionalEntropyBase64) => {
+            void createWallet(additionalEntropyBase64);
+          }}
           onBack={() => { resetFeedback(); setScreen('landing'); }}
         />
       );
@@ -3222,6 +3232,10 @@ function WalletApp({ theme, onSelectTheme }: {
         pendingAction={pendingAction}
         actionLocked={actionLocked}
         onCreate={() => {
+          resetFeedback();
+          void createWallet();
+        }}
+        onUsePhysicalDice={() => {
           resetFeedback();
           setDiceSessionKey((current) => current + 1);
           setScreen('dice');

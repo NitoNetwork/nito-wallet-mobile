@@ -1,54 +1,84 @@
 import { describe, expect, it } from 'vitest';
 
 import {
-  DICE_ENTROPY_POOL_LENGTH,
-  diceEntropyPoolToBase64,
-  mixDiceEntropyPool,
-  packDiceEntropySample,
-  type DiceEntropySample,
+  DICE_ENTROPY_DIGEST_LENGTH,
+  PHYSICAL_DICE_RESULT_COUNT,
+  PhysicalDiceEntropySession,
+  hashPhysicalDiceResults,
 } from './diceEntropy';
 
-const sample = (counter: number): DiceEntropySample => ({
-  dateNowMs: 1_786_200_000_000,
-  performanceNowMs: 12_345.678,
-  nativeTimestampMs: 54_321.123,
-  locationX: 20.5,
-  locationY: 41.25,
-  pageX: 120.5,
-  pageY: 341.25,
-  force: 0.75,
-  counter,
-});
+const referenceResults = (): Uint8Array => Uint8Array.from(
+  { length: PHYSICAL_DICE_RESULT_COUNT },
+  (_, index) => (index % 6) + 1,
+);
 
-describe('dice entropy pool', () => {
-  it('packs every timing, touch, force, and counter field as binary data', () => {
-    const packed = packDiceEntropySample(sample(7));
+const bytesToHex = (bytes: Uint8Array): string => Array.from(
+  bytes,
+  (byte) => byte.toString(16).padStart(2, '0'),
+).join('');
 
-    expect(packed).toBeInstanceOf(Uint8Array);
-    expect(packed).toHaveLength(68);
-    expect([...packed]).not.toEqual(new Array(68).fill(0));
+describe('physical dice entropy', () => {
+  it('hashes the canonical ordered 100-result encoding to a stable vector', () => {
+    const digest = hashPhysicalDiceResults(referenceResults());
+
+    expect(digest).toHaveLength(DICE_ENTROPY_DIGEST_LENGTH);
+    expect(bytesToHex(digest)).toBe(
+      'c6d1977aa5752fd4b616c38fc4f4b4530e923f50be59fe8d8a29ace9a3bf870e',
+    );
   });
 
-  it('mixes the previous 32-byte pool and changes when the sample changes', () => {
-    const pool = Uint8Array.from({ length: DICE_ENTROPY_POOL_LENGTH }, (_, index) => index);
-    const firstSample = packDiceEntropySample(sample(1));
-    const secondSample = packDiceEntropySample(sample(2));
-    const first = mixDiceEntropyPool(pool, firstSample);
-    const repeated = mixDiceEntropyPool(pool, firstSample);
-    const second = mixDiceEntropyPool(pool, secondSample);
+  it('treats order as entropy and rejects malformed physical results', () => {
+    const first = referenceResults();
+    const reordered = referenceResults();
+    [reordered[0], reordered[1]] = [reordered[1]!, reordered[0]!];
 
-    expect(first).toHaveLength(DICE_ENTROPY_POOL_LENGTH);
-    expect(first).toEqual(repeated);
-    expect(first).not.toEqual(second);
-    expect(pool).toEqual(Uint8Array.from({ length: DICE_ENTROPY_POOL_LENGTH }, (_, index) => index));
+    expect(hashPhysicalDiceResults(first)).not.toEqual(hashPhysicalDiceResults(reordered));
+    expect(() => hashPhysicalDiceResults(first.slice(0, 99))).toThrow();
+    expect(() => hashPhysicalDiceResults(new Uint8Array(101).fill(1))).toThrow();
+
+    const zero = referenceResults();
+    zero[30] = 0;
+    expect(() => hashPhysicalDiceResults(zero)).toThrow();
+
+    const seven = referenceResults();
+    seven[30] = 7;
+    expect(() => hashPhysicalDiceResults(seven)).toThrow();
   });
 
-  it('rejects malformed pools and exports exactly 32 bytes', () => {
-    expect(() => mixDiceEntropyPool(new Uint8Array(31), new Uint8Array(1))).toThrow();
-    expect(() => diceEntropyPoolToBase64(new Uint8Array(33))).toThrow();
+  it('accepts only values 1 to 6 and exactly 100 entries', () => {
+    const session = new PhysicalDiceEntropySession();
+    expect(() => session.append(0)).toThrow();
+    expect(() => session.append(7)).toThrow();
+    expect(() => session.append(1.5)).toThrow();
+    expect(() => session.entropyDigestBase64()).toThrow();
 
-    const pool = new Uint8Array(DICE_ENTROPY_POOL_LENGTH);
-    expect(Uint8Array.from(atob(diceEntropyPoolToBase64(pool)), (value) => value.charCodeAt(0)))
-      .toEqual(pool);
+    for (const value of referenceResults()) session.append(value);
+
+    expect(session.complete).toBe(true);
+    expect(session.count).toBe(PHYSICAL_DICE_RESULT_COUNT);
+    expect(() => session.append(1)).toThrow();
+    const decoded = Uint8Array.from(
+      atob(session.entropyDigestBase64()),
+      (value) => value.charCodeAt(0),
+    );
+    expect(decoded).toEqual(hashPhysicalDiceResults(referenceResults()));
+  });
+
+  it('supports correction and clears every retained result', () => {
+    const session = new PhysicalDiceEntropySession();
+    session.append(4);
+    session.append(2);
+    expect(session.valueAt(0)).toBe(4);
+    expect(session.valueAt(1)).toBe(2);
+    expect(session.undo()).toBe(true);
+    expect(session.valueAt(1)).toBeNull();
+    expect(session.count).toBe(1);
+
+    session.clear();
+
+    expect(session.count).toBe(0);
+    expect(session.complete).toBe(false);
+    expect(session.valueAt(0)).toBeNull();
+    expect(session.undo()).toBe(false);
   });
 });

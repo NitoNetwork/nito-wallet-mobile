@@ -7,7 +7,7 @@ import { pubSchnorr } from '@scure/btc-signer/utils.js';
 import { HDKey } from '@scure/bip32';
 import { entropyToMnemonic, mnemonicToSeedSync } from '@scure/bip39';
 import { wordlist } from '@scure/bip39/wordlists/english.js';
-import { createHash, randomBytes as nodeRandomBytes } from 'node:crypto';
+import { randomBytes as nodeRandomBytes } from 'node:crypto';
 
 import type {
   NativeAddressRequest,
@@ -55,20 +55,20 @@ export const createNitoWalletCryptoTestDouble = (): NitoWalletCryptoApi => ({
   async randomBytes(length) {
     return { bytesBase64: bytesToBase64(nodeRandomBytes(length)) };
   },
-  async generateMnemonic(userPoolBase64) {
-    const userPool = userPoolBase64
-      ? base64ToBytes(userPoolBase64)
+  async generateMnemonic(additionalEntropyBase64) {
+    const additionalEntropy = additionalEntropyBase64
+      ? base64ToBytes(additionalEntropyBase64)
       : new Uint8Array(32);
-    if (userPool.length !== 32) throw new Error('Test user entropy pool must contain 32 bytes.');
+    if (additionalEntropy.length !== 32) {
+      throw new Error('Test additional entropy must contain 32 bytes.');
+    }
     const systemEntropy = nodeRandomBytes(32);
-    const mix = createHash('sha256')
-      .update('nito-wallet/seed-entropy/v1', 'utf8')
-      .update(userPool)
-      .digest();
-    const entropy = Uint8Array.from(systemEntropy, (byte, index) => byte ^ mix[index]!);
+    const entropy = Uint8Array.from(
+      systemEntropy,
+      (byte, index) => byte ^ additionalEntropy[index]!,
+    );
     systemEntropy.fill(0);
-    mix.fill(0);
-    userPool.fill(0);
+    additionalEntropy.fill(0);
     const mnemonic = entropyToMnemonic(entropy, wordlist);
     entropy.fill(0);
     return { mnemonic };

@@ -37,7 +37,7 @@ use bitcoin::{
 use pbkdf2::pbkdf2_hmac;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use sha2::{Digest, Sha256};
+use sha2::Sha256;
 use thiserror::Error;
 use zeroize::{Zeroize, Zeroizing};
 
@@ -48,7 +48,6 @@ const MAX_PBKDF2_ROUNDS: u32 = 2_000_000;
 const MIN_RANDOM_BYTES: usize = 16;
 const MAX_RANDOM_BYTES: usize = 1024;
 const SEED_ENTROPY_BYTES: usize = 32;
-const SEED_ENTROPY_DOMAIN: &[u8] = b"nito-wallet/seed-entropy/v1";
 
 #[derive(Debug, Error)]
 enum CryptoError {
@@ -99,7 +98,7 @@ struct RandomBytesResponse {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct GenerateMnemonicRequest {
-    user_pool_base64: Option<String>,
+    additional_entropy_base64: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -216,18 +215,37 @@ fn random_bytes(request: &str) -> Result<Value, CryptoError> {
     .map_err(|error| CryptoError::Crypto(error.to_string()))
 }
 
+fn mix_seed_entropy_with<E>(
+    additional_entropy: &[u8],
+    fill: impl FnOnce(&mut [u8]) -> Result<(), E>,
+) -> Result<Zeroizing<[u8; SEED_ENTROPY_BYTES]>, CryptoError> {
+    if additional_entropy.len() != SEED_ENTROPY_BYTES {
+        return Err(CryptoError::InvalidRequest(format!(
+            "additional entropy must contain exactly {SEED_ENTROPY_BYTES} bytes"
+        )));
+    }
+    let mut system_entropy = Zeroizing::new([0_u8; SEED_ENTROPY_BYTES]);
+    fill_random_with(system_entropy.as_mut(), fill)?;
+    let mut mixed_entropy = Zeroizing::new([0_u8; SEED_ENTROPY_BYTES]);
+    for index in 0..SEED_ENTROPY_BYTES {
+        mixed_entropy[index] = system_entropy[index] ^ additional_entropy[index];
+    }
+    system_entropy.zeroize();
+    Ok(mixed_entropy)
+}
+
 fn generate_mnemonic(request: &str) -> Result<Value, CryptoError> {
     let request: GenerateMnemonicRequest = parse_json(request)?;
-    let user_pool = match request.user_pool_base64 {
+    let additional_entropy = match request.additional_entropy_base64 {
         Some(mut encoded) => {
             let decoded = BASE64.decode(encoded.as_bytes());
             encoded.zeroize();
             let decoded = Zeroizing::new(decoded.map_err(|_| {
-                CryptoError::InvalidRequest("user entropy pool is not valid base64".into())
+                CryptoError::InvalidRequest("additional entropy is not valid base64".into())
             })?);
             if decoded.len() != SEED_ENTROPY_BYTES {
                 return Err(CryptoError::InvalidRequest(format!(
-                    "user entropy pool must contain exactly {SEED_ENTROPY_BYTES} bytes"
+                    "additional entropy must contain exactly {SEED_ENTROPY_BYTES} bytes"
                 )));
             }
             decoded
@@ -235,24 +253,9 @@ fn generate_mnemonic(request: &str) -> Result<Value, CryptoError> {
         None => Zeroizing::new(vec![0_u8; SEED_ENTROPY_BYTES]),
     };
 
-    // The optional pool is fully validated before fresh system entropy is drawn.
-    let mut system_entropy = Zeroizing::new([0_u8; SEED_ENTROPY_BYTES]);
-    fill_random_with(system_entropy.as_mut(), getrandom::fill)?;
-
-    let mut hasher = Sha256::new();
-    hasher.update(SEED_ENTROPY_DOMAIN);
-    hasher.update(user_pool.as_slice());
-    let mut digest = hasher.finalize();
-    let mut mix = Zeroizing::new([0_u8; SEED_ENTROPY_BYTES]);
-    mix.copy_from_slice(&digest);
-    digest[..].zeroize();
-
-    let mut mixed_entropy = Zeroizing::new([0_u8; SEED_ENTROPY_BYTES]);
-    for index in 0..SEED_ENTROPY_BYTES {
-        mixed_entropy[index] = system_entropy[index] ^ mix[index];
-    }
-    system_entropy.zeroize();
-    mix.zeroize();
+    // Additional entropy is fully validated before fresh system entropy is drawn.
+    // The caller provides a domain-separated SHA-256 digest of physical rolls.
+    let mixed_entropy = mix_seed_entropy_with(additional_entropy.as_slice(), getrandom::fill)?;
 
     let mnemonic = Mnemonic::from_entropy_in(Language::English, mixed_entropy.as_ref())
         .map_err(|error| CryptoError::Crypto(error.to_string()))?;
@@ -728,15 +731,15 @@ mod tests {
     }
 
     #[test]
-    fn generated_mnemonic_accepts_absent_zero_and_arbitrary_user_pools() {
-        let zero_pool = BASE64.encode([0_u8; SEED_ENTROPY_BYTES]);
-        let arbitrary_pool_bytes: [u8; SEED_ENTROPY_BYTES] =
+    fn generated_mnemonic_accepts_absent_zero_and_arbitrary_additional_entropy() {
+        let zero_entropy = BASE64.encode([0_u8; SEED_ENTROPY_BYTES]);
+        let arbitrary_entropy_bytes: [u8; SEED_ENTROPY_BYTES] =
             std::array::from_fn(|index| index as u8);
-        let arbitrary_pool = BASE64.encode(arbitrary_pool_bytes);
+        let arbitrary_entropy = BASE64.encode(arbitrary_entropy_bytes);
         let requests = [
             json!({}),
-            json!({ "userPoolBase64": zero_pool }),
-            json!({ "userPoolBase64": arbitrary_pool }),
+            json!({ "additionalEntropyBase64": zero_entropy }),
+            json!({ "additionalEntropyBase64": arbitrary_entropy }),
         ];
 
         for request in requests {
@@ -749,13 +752,15 @@ mod tests {
     }
 
     #[test]
-    fn different_user_pools_produce_different_mnemonics_without_returning_entropy() {
+    fn different_additional_entropy_produces_different_mnemonics_without_returning_entropy() {
         let first = generate_mnemonic(
-            &json!({ "userPoolBase64": BASE64.encode([0x11; SEED_ENTROPY_BYTES]) }).to_string(),
+            &json!({ "additionalEntropyBase64": BASE64.encode([0x11; SEED_ENTROPY_BYTES]) })
+                .to_string(),
         )
         .unwrap();
         let second = generate_mnemonic(
-            &json!({ "userPoolBase64": BASE64.encode([0x22; SEED_ENTROPY_BYTES]) }).to_string(),
+            &json!({ "additionalEntropyBase64": BASE64.encode([0x22; SEED_ENTROPY_BYTES]) })
+                .to_string(),
         )
         .unwrap();
 
@@ -765,15 +770,39 @@ mod tests {
     }
 
     #[test]
-    fn generated_mnemonic_rejects_malformed_user_pools() {
+    fn generated_mnemonic_rejects_malformed_additional_entropy() {
         for request in [
-            json!({ "userPoolBase64": "not base64" }),
-            json!({ "userPoolBase64": BASE64.encode([0_u8; SEED_ENTROPY_BYTES - 1]) }),
-            json!({ "userPoolBase64": BASE64.encode([0_u8; SEED_ENTROPY_BYTES + 1]) }),
+            json!({ "additionalEntropyBase64": "not base64" }),
+            json!({ "additionalEntropyBase64": BASE64.encode([0_u8; SEED_ENTROPY_BYTES - 1]) }),
+            json!({ "additionalEntropyBase64": BASE64.encode([0_u8; SEED_ENTROPY_BYTES + 1]) }),
         ] {
             let error = generate_mnemonic(&request.to_string()).unwrap_err();
             assert!(matches!(error, CryptoError::InvalidRequest(_)));
         }
+    }
+
+    #[test]
+    fn seed_entropy_is_the_exact_xor_of_system_and_additional_entropy() {
+        let system_entropy: [u8; SEED_ENTROPY_BYTES] =
+            std::array::from_fn(|index| (index as u8).wrapping_add(1));
+        let additional_entropy: [u8; SEED_ENTROPY_BYTES] =
+            std::array::from_fn(|index| 0xf0_u8.wrapping_sub(index as u8));
+        let expected: [u8; SEED_ENTROPY_BYTES] =
+            std::array::from_fn(|index| system_entropy[index] ^ additional_entropy[index]);
+
+        let mixed = mix_seed_entropy_with(&additional_entropy, |buffer| {
+            buffer.copy_from_slice(&system_entropy);
+            Ok::<(), ()>(())
+        })
+        .unwrap();
+
+        assert_eq!(&*mixed, &expected);
+
+        let invalid =
+            mix_seed_entropy_with(&[0_u8; SEED_ENTROPY_BYTES - 1], |_| -> Result<(), ()> {
+                panic!("invalid additional entropy must be rejected before drawing randomness")
+            });
+        assert!(matches!(invalid, Err(CryptoError::InvalidRequest(_))));
     }
 
     #[test]

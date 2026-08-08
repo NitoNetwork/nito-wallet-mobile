@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   LANGUAGES,
+  TRANSLATIONS,
   auditTranslationCoverage,
   auditTranslationQuality,
   makeTranslator,
@@ -54,22 +55,38 @@ describe('i18n coverage', () => {
     }
   });
 
-  it('resolves the dice entropy label in every language', () => {
+  it('resolves the optional physical dice entry in every language', () => {
     const expected = {
-      en: '256-bit seed · your roll included',
-      zh: '256 位种子 · 已混入你的掷骰',
-      de: '256-Bit-Seed · dein Wurf beigemischt',
-      es: 'Seed de 256 bits · tu tirada integrada',
-      fr: 'Graine 256 bits · votre lancer intégré',
-      ja: '256 ビットシード · あなたの出目を混合',
-      tr: '256 bit BIP39 girdisi · zar atışın karıştırıldı',
-      pt: 'Seed de 256 bits · sua jogada integrada',
-      ru: '256-битная основа · ваш бросок добавлен',
+      en: 'Add physical dice, optional',
+      zh: '添加实体骰子，可选',
+      de: 'Physische Würfel hinzufügen, optional',
+      es: 'Añadir dados físicos, opcional',
+      fr: 'Ajouter des dés physiques, facultatif',
+      ja: '物理サイコロを追加、任意',
+      tr: 'Fiziksel zar ekle, isteğe bağlı',
+      pt: 'Adicionar dados físicos, opcional',
+      ru: 'Добавить физические кубики, необязательно',
     } satisfies Record<LanguageCode, string>;
 
     for (const code of Object.keys(expected) as LanguageCode[]) {
-      expect(makeTranslator(code)('dice.entropyLabel')).toBe(expected[code]);
-      expect(makeTranslator(code)('dice.result', { value: 6 })).toContain('6');
+      const t = makeTranslator(code);
+      expect(t('dice.optionTitle')).toBe(expected[code]);
+      expect(t('dice.optionMethod')).toContain('100');
+      expect(t('dice.optionMethod')).toContain('20');
+      expect(t('dice.why100')).toContain('256');
+      expect(t('dice.why100')).toContain('BIP39');
+      expect(t('dice.mixExplanation')).toContain('SHA-256');
+      expect(t('dice.finalExplanation')).toContain('24');
+      expect(t('dice.finalExplanation')).toContain('256');
+      expect(t('dice.enterResult', { value: 6 })).toContain('6');
+    }
+  });
+
+  it('uses neither em dashes nor semicolons in visible translations', () => {
+    for (const { code } of LANGUAGES) {
+      for (const [key, message] of Object.entries(TRANSLATIONS[code])) {
+        expect(message, `${code}:${key}`).not.toMatch(/[—;]/);
+      }
     }
   });
 

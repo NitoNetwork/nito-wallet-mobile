@@ -1,62 +1,97 @@
 import { sha256 } from '@noble/hashes/sha2.js';
 
-export const DICE_ENTROPY_POOL_LENGTH = 32;
+export const PHYSICAL_DICE_RESULT_COUNT = 100;
+export const PHYSICAL_DICE_RESULTS_PER_SERIES = 5;
+export const PHYSICAL_DICE_SERIES_COUNT = (
+  PHYSICAL_DICE_RESULT_COUNT / PHYSICAL_DICE_RESULTS_PER_SERIES
+);
+export const DICE_ENTROPY_DIGEST_LENGTH = 32;
 
-export type DiceEntropySample = {
-  dateNowMs: number;
-  performanceNowMs: number;
-  nativeTimestampMs: number;
-  locationX: number;
-  locationY: number;
-  pageX: number;
-  pageY: number;
-  force: number;
-  counter: number;
+const PHYSICAL_DICE_DOMAIN = new TextEncoder().encode('nito-wallet/physical-dice/v1');
+const RESULT_COUNT_BYTES = 2;
+
+const assertDieValue = (value: number): void => {
+  if (!Number.isInteger(value) || value < 1 || value > 6) {
+    throw new Error('A physical die result must be an integer from 1 to 6.');
+  }
 };
 
-const FLOAT_FIELD_COUNT = 8;
-const SAMPLE_BYTE_LENGTH = (FLOAT_FIELD_COUNT * Float64Array.BYTES_PER_ELEMENT)
-  + Uint32Array.BYTES_PER_ELEMENT;
+const assertCompleteResults = (results: Uint8Array): void => {
+  if (results.length !== PHYSICAL_DICE_RESULT_COUNT) {
+    throw new Error(`Physical dice entropy requires exactly ${PHYSICAL_DICE_RESULT_COUNT} results.`);
+  }
+  results.forEach(assertDieValue);
+};
 
-const finiteOrZero = (value: number): number => (Number.isFinite(value) ? value : 0);
-
-export const packDiceEntropySample = (sample: DiceEntropySample): Uint8Array => {
-  const packed = new Uint8Array(SAMPLE_BYTE_LENGTH);
-  const view = new DataView(packed.buffer);
-  const floatValues = [
-    sample.dateNowMs,
-    sample.performanceNowMs,
-    sample.nativeTimestampMs,
-    sample.locationX,
-    sample.locationY,
-    sample.pageX,
-    sample.pageY,
-    sample.force,
-  ];
-  floatValues.forEach((value, index) => {
-    view.setFloat64(index * Float64Array.BYTES_PER_ELEMENT, finiteOrZero(value), false);
-  });
-  view.setUint32(
-    FLOAT_FIELD_COUNT * Float64Array.BYTES_PER_ELEMENT,
-    sample.counter >>> 0,
-    false,
+export const hashPhysicalDiceResults = (results: Uint8Array): Uint8Array => {
+  assertCompleteResults(results);
+  const encoded = new Uint8Array(
+    PHYSICAL_DICE_DOMAIN.length + RESULT_COUNT_BYTES + PHYSICAL_DICE_RESULT_COUNT,
   );
-  return packed;
+  try {
+    encoded.set(PHYSICAL_DICE_DOMAIN);
+    const countOffset = PHYSICAL_DICE_DOMAIN.length;
+    const view = new DataView(encoded.buffer);
+    view.setUint16(countOffset, PHYSICAL_DICE_RESULT_COUNT, false);
+    encoded.set(results, countOffset + RESULT_COUNT_BYTES);
+    return sha256(encoded);
+  } finally {
+    encoded.fill(0);
+  }
 };
 
-export const mixDiceEntropyPool = (
-  pool: Uint8Array,
-  sample: Uint8Array,
-): Uint8Array => {
-  if (pool.length !== DICE_ENTROPY_POOL_LENGTH) {
-    throw new Error(`Dice entropy pool must contain ${DICE_ENTROPY_POOL_LENGTH} bytes.`);
-  }
-  return sha256.create().update(pool).update(sample).digest();
-};
+const bytesToBase64 = (bytes: Uint8Array): string => (
+  btoa(String.fromCharCode(...bytes))
+);
 
-export const diceEntropyPoolToBase64 = (pool: Uint8Array): string => {
-  if (pool.length !== DICE_ENTROPY_POOL_LENGTH) {
-    throw new Error(`Dice entropy pool must contain ${DICE_ENTROPY_POOL_LENGTH} bytes.`);
+export class PhysicalDiceEntropySession {
+  private readonly results = new Uint8Array(PHYSICAL_DICE_RESULT_COUNT);
+
+  private resultCount = 0;
+
+  get count(): number {
+    return this.resultCount;
   }
-  return btoa(String.fromCharCode(...pool));
-};
+
+  get complete(): boolean {
+    return this.resultCount === PHYSICAL_DICE_RESULT_COUNT;
+  }
+
+  append(value: number): void {
+    assertDieValue(value);
+    if (this.complete) {
+      throw new Error('Physical dice entropy is already complete.');
+    }
+    this.results[this.resultCount] = value;
+    this.resultCount += 1;
+  }
+
+  undo(): boolean {
+    if (this.resultCount === 0) return false;
+    this.resultCount -= 1;
+    this.results[this.resultCount] = 0;
+    return true;
+  }
+
+  valueAt(index: number): number | null {
+    if (!Number.isInteger(index) || index < 0 || index >= this.resultCount) return null;
+    return this.results[index] ?? null;
+  }
+
+  entropyDigestBase64(): string {
+    if (!this.complete) {
+      throw new Error(`Physical dice entropy requires exactly ${PHYSICAL_DICE_RESULT_COUNT} results.`);
+    }
+    const digest = hashPhysicalDiceResults(this.results);
+    try {
+      return bytesToBase64(digest);
+    } finally {
+      digest.fill(0);
+    }
+  }
+
+  clear(): void {
+    this.results.fill(0);
+    this.resultCount = 0;
+  }
+}

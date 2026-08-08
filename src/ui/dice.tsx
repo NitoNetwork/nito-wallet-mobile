@@ -1,162 +1,128 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import {
-  AccessibilityInfo,
-  Animated,
-  Easing,
-  StyleSheet,
-  Text,
-  TouchableOpacity,
-  View,
-  type GestureResponderEvent,
-} from 'react-native';
+import { useLayoutEffect, useState } from 'react';
+import { Alert, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 
 import type { Translator } from '../i18n';
 import type { PendingAction } from './types';
 import { ActionButton } from './components';
 import {
-  DICE_ENTROPY_POOL_LENGTH,
-  diceEntropyPoolToBase64,
-  mixDiceEntropyPool,
-  packDiceEntropySample,
+  PHYSICAL_DICE_RESULT_COUNT,
+  PHYSICAL_DICE_RESULTS_PER_SERIES,
+  PHYSICAL_DICE_SERIES_COUNT,
+  PhysicalDiceEntropySession,
 } from './diceEntropy';
 import { useStyles, useThemeColor } from './themeContext';
 
-const FACE_COUNT = 6;
-const FACE_STEPS = 30;
-const FACE_CUT_EPSILON = 0.001;
-const DIE_SIZE = 132;
-
-const FACE_INPUT_RANGE: number[] = [];
-const FACE_OUTPUT_RANGES: number[][] = Array.from({ length: FACE_COUNT }, () => []);
-for (let step = 0; step < FACE_STEPS; step += 1) {
-  FACE_INPUT_RANGE.push(step, step + 1 - FACE_CUT_EPSILON);
-  for (let face = 0; face < FACE_COUNT; face += 1) {
-    const visible = step % FACE_COUNT === face ? 1 : 0;
-    FACE_OUTPUT_RANGES[face]!.push(visible, visible);
-  }
-}
-FACE_INPUT_RANGE.push(FACE_STEPS);
-for (let face = 0; face < FACE_COUNT; face += 1) {
-  FACE_OUTPUT_RANGES[face]!.push(FACE_STEPS % FACE_COUNT === face ? 1 : 0);
-}
-
-const PIP_SLOTS: number[][] = [
-  [4],
-  [0, 8],
-  [0, 4, 8],
-  [0, 2, 6, 8],
-  [0, 2, 4, 6, 8],
-  [0, 2, 3, 5, 6, 8],
-];
-
-const DICE_STYLES = StyleSheet.create({
-  stage: {
-    minHeight: 246,
+const PHYSICAL_DICE_STYLES = StyleSheet.create({
+  detailsButton: {
+    minHeight: 46,
+    borderRadius: 16,
+    borderWidth: 1,
+    paddingHorizontal: 14,
+    flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'flex-end',
-    paddingTop: 18,
-    paddingBottom: 22,
+    justifyContent: 'space-between',
+    gap: 10,
+  },
+  detailsText: {
+    flex: 1,
+    fontSize: 14,
+    lineHeight: 20,
+    fontWeight: '800',
+  },
+  detailsChevron: {
+    fontSize: 18,
+    fontWeight: '900',
+  },
+  detailsPanel: {
+    borderRadius: 16,
+    padding: 14,
+    gap: 8,
+  },
+  detailsBody: {
+    fontSize: 13,
+    lineHeight: 19,
+  },
+  progressHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 10,
+  },
+  progressText: {
+    flexShrink: 1,
+    fontSize: 14,
+    lineHeight: 20,
+    fontWeight: '900',
+  },
+  progressTrack: {
+    height: 8,
+    borderRadius: 999,
     overflow: 'hidden',
   },
-  platform: {
-    position: 'absolute',
-    left: 12,
-    right: 12,
-    bottom: 10,
-    height: 70,
-    borderRadius: 28,
-    borderWidth: 1,
-  },
-  contact: {
-    position: 'absolute',
-    bottom: 42,
-    width: 110,
-    height: 22,
+  progressFill: {
+    height: '100%',
     borderRadius: 999,
   },
-  dieMotion: {
-    width: DIE_SIZE,
-    height: DIE_SIZE,
-    marginBottom: 28,
-  },
-  die: {
-    width: DIE_SIZE,
-    height: DIE_SIZE,
-    borderRadius: 30,
-    borderWidth: 2,
-    overflow: 'hidden',
-  },
-  dieEdge: {
-    position: 'absolute',
-    left: 8,
-    right: 8,
-    bottom: 5,
-    height: 12,
-    borderRadius: 8,
-  },
-  dieRim: {
-    ...StyleSheet.absoluteFill,
-    borderRadius: 28,
-    borderWidth: 2,
-  },
-  face: {
-    ...StyleSheet.absoluteFill,
+  seriesRow: {
     flexDirection: 'row',
-    flexWrap: 'wrap',
-    padding: 22,
+    gap: 8,
   },
-  pipSlot: {
-    width: '33.333%',
-    height: '33.333%',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  pip: {
-    width: 17,
-    height: 17,
-    borderRadius: 9,
-  },
-  rollButton: {
-    minHeight: 52,
-    borderRadius: 18,
+  seriesSlot: {
+    flex: 1,
+    minWidth: 0,
+    height: 48,
+    borderRadius: 14,
     borderWidth: 1,
     alignItems: 'center',
     justifyContent: 'center',
-    paddingHorizontal: 20,
   },
-  rollButtonText: {
-    fontSize: 16,
+  seriesSlotText: {
+    fontSize: 18,
     fontWeight: '900',
+  },
+  diceGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'space-between',
+    rowGap: 10,
+  },
+  dieButton: {
+    width: '31.5%',
+    minHeight: 52,
+    borderRadius: 16,
+    borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  dieButtonText: {
+    fontSize: 20,
+    fontWeight: '900',
+  },
+  warning: {
+    fontSize: 13,
+    lineHeight: 19,
+    fontWeight: '700',
+  },
+  secondaryActions: {
+    flexDirection: 'row',
+    gap: 10,
+  },
+  secondaryAction: {
+    flex: 1,
+    minHeight: 48,
+    borderRadius: 14,
+    borderWidth: 1,
+    paddingHorizontal: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  secondaryActionText: {
+    fontSize: 13,
+    lineHeight: 18,
+    fontWeight: '800',
     textAlign: 'center',
   },
 });
-
-function DiceFace({
-  face,
-  opacity,
-  pipColor,
-}: {
-  face: number;
-  opacity: Animated.AnimatedInterpolation<number>;
-  pipColor: string;
-}) {
-  const occupiedSlots = PIP_SLOTS[face] ?? [];
-  return (
-    <Animated.View
-      accessible={false}
-      importantForAccessibility="no-hide-descendants"
-      style={[DICE_STYLES.face, { opacity }]}
-    >
-      {Array.from({ length: 9 }, (_, slot) => (
-        <View key={slot} style={DICE_STYLES.pipSlot}>
-          {occupiedSlots.includes(slot) ? (
-            <View style={[DICE_STYLES.pip, { backgroundColor: pipColor }]} />
-          ) : null}
-        </View>
-      ))}
-    </Animated.View>
-  );
-}
 
 export function DiceEntropyScreen({
   t,
@@ -170,248 +136,303 @@ export function DiceEntropyScreen({
   pendingAction: PendingAction | null;
   actionLocked: boolean;
   resetRef: { current: () => void };
-  onContinue: (userPoolBase64: string) => void;
+  onContinue: (additionalEntropyBase64: string) => void;
   onBack: () => void;
 }) {
   const styles = useStyles();
   const themeColor = useThemeColor();
-  const [entropyPool] = useState(() => new Uint8Array(DICE_ENTROPY_POOL_LENGTH));
-  const [faceCursor] = useState(() => new Animated.Value(0));
-  const [motionCursor] = useState(() => new Animated.Value(0));
-  const [hasRolled, setHasRolled] = useState(false);
-  const [rolling, setRolling] = useState(false);
-  const [result, setResult] = useState<number | null>(null);
-  const [reduceMotion, setReduceMotion] = useState(false);
-  const currentFaceRef = useRef(0);
-  const rollCounterRef = useRef(0);
-  const animationRef = useRef<Animated.CompositeAnimation | null>(null);
-  const faceOpacities = useMemo(
-    () => FACE_OUTPUT_RANGES.map((outputRange) => faceCursor.interpolate({
-      inputRange: FACE_INPUT_RANGE,
-      outputRange,
-    })),
-    [faceCursor],
-  );
+  const [session] = useState(() => new PhysicalDiceEntropySession());
+  const [count, setCount] = useState(0);
+  const [detailsExpanded, setDetailsExpanded] = useState(false);
 
   useLayoutEffect(() => {
     const resetEntropy = () => {
-      animationRef.current?.stop();
-      entropyPool.fill(0);
-      rollCounterRef.current = 0;
+      session.clear();
+      setCount(0);
+      setDetailsExpanded(false);
     };
     resetRef.current = resetEntropy;
     return () => {
+      session.clear();
       if (resetRef.current === resetEntropy) resetRef.current = () => undefined;
     };
-  }, [entropyPool, resetRef]);
+  }, [resetRef, session]);
 
-  useEffect(() => {
-    let mounted = true;
-    void AccessibilityInfo.isReduceMotionEnabled().then((enabled) => {
-      if (mounted) setReduceMotion(enabled);
-    });
-    const subscription = AccessibilityInfo.addEventListener(
-      'reduceMotionChanged',
-      setReduceMotion,
-    );
-    return () => {
-      mounted = false;
-      subscription.remove();
-      animationRef.current?.stop();
-      entropyPool.fill(0);
-    };
-  }, [entropyPool]);
+  const currentSeriesIndex = Math.min(
+    Math.floor(count / PHYSICAL_DICE_RESULTS_PER_SERIES),
+    PHYSICAL_DICE_SERIES_COUNT - 1,
+  );
+  const seriesStart = currentSeriesIndex * PHYSICAL_DICE_RESULTS_PER_SERIES;
+  const seriesNumber = currentSeriesIndex + 1;
+  const currentSlot = count === PHYSICAL_DICE_RESULT_COUNT
+    ? PHYSICAL_DICE_RESULTS_PER_SERIES
+    : (count % PHYSICAL_DICE_RESULTS_PER_SERIES) + 1;
 
-  const translateY = motionCursor.interpolate({
-    inputRange: [0, 1, 2, 3, 4, 5],
-    outputRange: [0, -42, 9, -15, 5, 0],
-  });
-  const scaleX = motionCursor.interpolate({
-    inputRange: [0, 1, 2, 3, 4, 5],
-    outputRange: [1, 0.96, 1.12, 0.98, 1.07, 1],
-  });
-  const scaleY = motionCursor.interpolate({
-    inputRange: [0, 1, 2, 3, 4, 5],
-    outputRange: [1, 1.05, 0.86, 1.02, 0.92, 1],
-  });
-  const rotation = motionCursor.interpolate({
-    inputRange: [0, 1, 2, 3, 4, 5],
-    outputRange: ['0deg', '190deg', '372deg', '348deg', '366deg', '360deg'],
-  });
-  const contactOpacity = motionCursor.interpolate({
-    inputRange: [0, 1, 2, 3, 4, 5],
-    outputRange: [0.42, 0.1, 0.62, 0.2, 0.52, 0.42],
-  });
-  const contactScale = motionCursor.interpolate({
-    inputRange: [0, 1, 2, 3, 4, 5],
-    outputRange: [1, 0.5, 1.2, 0.75, 1.1, 1],
-  });
+  const appendResult = (value: number) => {
+    if (actionLocked || session.complete) return;
+    session.append(value);
+    setCount(session.count);
+  };
 
-  const roll = (event: GestureResponderEvent) => {
-    if (rolling || actionLocked) return;
-    rollCounterRef.current += 1;
-    const nativeEvent = event.nativeEvent;
-    const packedSample = packDiceEntropySample({
-      dateNowMs: Date.now(),
-      performanceNowMs: (
-        typeof performance !== 'undefined' && typeof performance.now === 'function'
-      ) ? performance.now() : 0,
-      nativeTimestampMs: nativeEvent.timestamp,
-      locationX: nativeEvent.locationX,
-      locationY: nativeEvent.locationY,
-      pageX: nativeEvent.pageX,
-      pageY: nativeEvent.pageY,
-      force: nativeEvent.force ?? 0,
-      counter: rollCounterRef.current,
-    });
-    let nextPool: Uint8Array;
-    try {
-      nextPool = mixDiceEntropyPool(entropyPool, packedSample);
-    } finally {
-      packedSample.fill(0);
-    }
-    const targetFace = nextPool[0]! % FACE_COUNT;
-    entropyPool.set(nextPool);
-    nextPool.fill(0);
+  const undo = () => {
+    if (actionLocked || !session.undo()) return;
+    setCount(session.count);
+  };
 
-    setResult(null);
-    setHasRolled(true);
-    const currentFace = currentFaceRef.current;
-    currentFaceRef.current = targetFace;
-    if (reduceMotion) {
-      faceCursor.setValue(targetFace);
-      motionCursor.setValue(0);
-      setResult(targetFace + 1);
+  const leave = () => {
+    if (actionLocked) return;
+    if (session.count === 0) {
+      onBack();
       return;
     }
+    Alert.alert(
+      t('dice.cancelTitle'),
+      t('dice.cancelBody', { count: session.count }),
+      [
+        { text: t('dice.keepEntering'), style: 'cancel' },
+        {
+          text: t('dice.leaveAndClear'),
+          style: 'destructive',
+          onPress: () => {
+            session.clear();
+            setCount(0);
+            onBack();
+          },
+        },
+      ],
+    );
+  };
 
-    setRolling(true);
-    const advance = (2 * FACE_COUNT) + ((targetFace - currentFace + FACE_COUNT) % FACE_COUNT);
-    motionCursor.setValue(0);
-    const animation = Animated.parallel([
-      Animated.timing(faceCursor, {
-        toValue: currentFace + advance + 0.5,
-        duration: 670,
-        easing: Easing.out(Easing.cubic),
-        useNativeDriver: true,
-      }),
-      Animated.sequence([
-        Animated.timing(motionCursor, { toValue: 1, duration: 190, easing: Easing.out(Easing.quad), useNativeDriver: true }),
-        Animated.timing(motionCursor, { toValue: 2, duration: 210, easing: Easing.in(Easing.quad), useNativeDriver: true }),
-        Animated.timing(motionCursor, { toValue: 3, duration: 110, easing: Easing.out(Easing.quad), useNativeDriver: true }),
-        Animated.timing(motionCursor, { toValue: 4, duration: 90, easing: Easing.in(Easing.quad), useNativeDriver: true }),
-        Animated.timing(motionCursor, { toValue: 5, duration: 100, easing: Easing.out(Easing.cubic), useNativeDriver: true }),
-      ]),
-    ]);
-    animationRef.current = animation;
-    animation.start(({ finished }) => {
-      if (!finished) return;
-      faceCursor.setValue(targetFace);
-      motionCursor.setValue(0);
-      animationRef.current = null;
-      setRolling(false);
-      setResult(targetFace + 1);
-    });
+  const createWithResults = () => {
+    if (actionLocked || !session.complete) return;
+    const additionalEntropyBase64 = session.entropyDigestBase64();
+    session.clear();
+    setCount(0);
+    onContinue(additionalEntropyBase64);
   };
 
   return (
     <View style={styles.card}>
       <Text style={styles.sectionTitle}>{t('dice.title')}</Text>
       <Text style={styles.body}>{t('dice.body')}</Text>
-      <Text style={styles.helper}>{t('dice.entropyLabel')}</Text>
-      <View style={DICE_STYLES.stage}>
-        <View
-          style={[
-            DICE_STYLES.platform,
-            {
-              backgroundColor: themeColor('rgba(2, 6, 17, 0.62)'),
-              borderColor: themeColor('rgba(126, 151, 188, 0.14)'),
-            },
-          ]}
-        />
-        <Animated.View
-          style={[
-            DICE_STYLES.contact,
-            {
-              backgroundColor: themeColor('rgba(126, 151, 188, 0.2)'),
-              opacity: contactOpacity,
-              transform: [{ scaleX: contactScale }],
-            },
-          ]}
-        />
-        <Animated.View
-          style={[
-            DICE_STYLES.dieMotion,
-            { transform: [{ translateY }, { rotate: rotation }, { scaleX }, { scaleY }] },
-          ]}
-        >
-          <View
-            style={[
-              DICE_STYLES.die,
-              {
-                backgroundColor: themeColor('#071326'),
-                borderColor: themeColor('rgba(126, 151, 188, 0.16)'),
-              },
-            ]}
-          >
-            <View
-              style={[
-                DICE_STYLES.dieEdge,
-                { backgroundColor: themeColor('rgba(126, 151, 188, 0.16)') },
-              ]}
-            />
-            {faceOpacities.map((opacity, face) => (
-              <DiceFace
-                key={face}
-                face={face}
-                opacity={opacity}
-                pipColor={themeColor('#f6f8ff')}
-              />
-            ))}
-            <View
-              pointerEvents="none"
-              style={[
-                DICE_STYLES.dieRim,
-                { borderColor: themeColor('rgba(91, 166, 255, 0.34)') },
-              ]}
-            />
-          </View>
-        </Animated.View>
-      </View>
+
       <TouchableOpacity
         accessibilityRole="button"
-        accessibilityLabel={t('dice.roll')}
-        accessibilityHint={t('dice.rollHint')}
-        accessibilityState={{ busy: rolling, disabled: rolling || actionLocked }}
-        disabled={rolling || actionLocked}
-        onPress={roll}
+        accessibilityState={{ expanded: detailsExpanded }}
+        onPress={() => setDetailsExpanded((current) => !current)}
         style={[
-          DICE_STYLES.rollButton,
+          PHYSICAL_DICE_STYLES.detailsButton,
           {
-            backgroundColor: themeColor('#071326'),
-            borderColor: themeColor('rgba(91, 166, 255, 0.34)'),
+            backgroundColor: themeColor('#0b203a'),
+            borderColor: themeColor('rgba(75, 157, 255, 0.32)'),
           },
         ]}
       >
-        <Text style={[DICE_STYLES.rollButtonText, { color: themeColor('#f6f8ff') }]}>
-          {t('dice.roll')}
+        <Text style={[
+          PHYSICAL_DICE_STYLES.detailsText,
+          { color: themeColor('#dbeaff') },
+        ]}>
+          {t('dice.detailsTitle')}
+        </Text>
+        <Text
+          accessible={false}
+          style={[
+            PHYSICAL_DICE_STYLES.detailsChevron,
+            { color: themeColor('#8cc6ff') },
+          ]}
+        >
+          {detailsExpanded ? '⌃' : '⌄'}
         </Text>
       </TouchableOpacity>
-      <Text accessibilityLiveRegion="polite" style={styles.tileValue}>
-        {result === null ? '' : t('dice.result', { value: result })}
+
+      {detailsExpanded ? (
+        <View style={[
+          PHYSICAL_DICE_STYLES.detailsPanel,
+          { backgroundColor: themeColor('rgba(2, 6, 17, 0.62)') },
+        ]}>
+          <Text style={[
+            PHYSICAL_DICE_STYLES.detailsBody,
+            { color: themeColor('#bdc9df') },
+          ]}>
+            {t('dice.why100')}
+          </Text>
+          <Text style={[
+            PHYSICAL_DICE_STYLES.detailsBody,
+            { color: themeColor('#bdc9df') },
+          ]}>
+            {t('dice.mixExplanation')}
+          </Text>
+          <Text style={[
+            PHYSICAL_DICE_STYLES.detailsBody,
+            { color: themeColor('#bdc9df') },
+          ]}>
+            {t('dice.finalExplanation')}
+          </Text>
+        </View>
+      ) : null}
+
+      <View style={PHYSICAL_DICE_STYLES.progressHeader}>
+        <Text
+          accessibilityLiveRegion="polite"
+          style={[
+            PHYSICAL_DICE_STYLES.progressText,
+            { color: themeColor('#f6f8ff') },
+          ]}
+        >
+          {t('dice.progress', { count, total: PHYSICAL_DICE_RESULT_COUNT })}
+        </Text>
+        <Text style={styles.helper}>
+          {t('dice.series', { current: seriesNumber, total: PHYSICAL_DICE_SERIES_COUNT })}
+        </Text>
+      </View>
+      <View
+        accessibilityRole="progressbar"
+        accessibilityValue={{ min: 0, max: PHYSICAL_DICE_RESULT_COUNT, now: count }}
+        style={[
+          PHYSICAL_DICE_STYLES.progressTrack,
+          { backgroundColor: themeColor('rgba(126, 151, 188, 0.22)') },
+        ]}
+      >
+        <View
+          style={[
+            PHYSICAL_DICE_STYLES.progressFill,
+            {
+              width: `${count}%`,
+              backgroundColor: themeColor('#f5bd31'),
+            },
+          ]}
+        />
+      </View>
+
+      <Text style={styles.label}>
+        {t('dice.currentResult', {
+          current: currentSlot,
+          total: PHYSICAL_DICE_RESULTS_PER_SERIES,
+        })}
       </Text>
+      <View style={PHYSICAL_DICE_STYLES.seriesRow}>
+        {Array.from({ length: PHYSICAL_DICE_RESULTS_PER_SERIES }, (_, offset) => {
+          const position = seriesStart + offset;
+          const value = session.valueAt(position);
+          const active = !session.complete && position === count;
+          return (
+            <View
+              key={position}
+              accessible
+              accessibilityLabel={t('dice.resultSlot', {
+                position: offset + 1,
+                value: value ?? t('dice.emptyResult'),
+              })}
+              style={[
+                PHYSICAL_DICE_STYLES.seriesSlot,
+                {
+                  backgroundColor: active ? themeColor('#0b203a') : themeColor('#071326'),
+                  borderColor: active
+                    ? themeColor('rgba(245, 189, 49, 0.52)')
+                    : themeColor('rgba(126, 151, 188, 0.28)'),
+                },
+              ]}
+            >
+              <Text style={[
+                PHYSICAL_DICE_STYLES.seriesSlotText,
+                {
+                  color: value === null
+                    ? themeColor('#8390a8')
+                    : themeColor('#f6f8ff'),
+                },
+              ]}>
+                {value ?? '·'}
+              </Text>
+            </View>
+          );
+        })}
+      </View>
+
+      <View style={PHYSICAL_DICE_STYLES.diceGrid}>
+        {[1, 2, 3, 4, 5, 6].map((value) => (
+          <TouchableOpacity
+            key={value}
+            accessibilityRole="button"
+            accessibilityLabel={t('dice.enterResult', { value })}
+            accessibilityState={{ disabled: actionLocked || session.complete }}
+            disabled={actionLocked || session.complete}
+            onPress={() => appendResult(value)}
+            style={[
+              PHYSICAL_DICE_STYLES.dieButton,
+              {
+                backgroundColor: themeColor('#0b203a'),
+                borderColor: themeColor('rgba(75, 157, 255, 0.64)'),
+                opacity: actionLocked || session.complete ? 0.45 : 1,
+              },
+            ]}
+          >
+            <Text style={[
+              PHYSICAL_DICE_STYLES.dieButtonText,
+              { color: themeColor('#dbeaff') },
+            ]}>
+              {value}
+            </Text>
+          </TouchableOpacity>
+        ))}
+      </View>
+
+      <Text style={[
+        PHYSICAL_DICE_STYLES.warning,
+        { color: themeColor('#ffc66d') },
+      ]}>
+        {t('dice.orderWarning')}
+      </Text>
+
       <ActionButton
-        label={t('actions.continue')}
+        label={t('dice.create')}
         loading={pendingAction === 'create'}
-        disabled={actionLocked || !hasRolled}
-        onPress={() => onContinue(diceEntropyPoolToBase64(entropyPool))}
+        disabled={actionLocked || !session.complete}
+        onPress={createWithResults}
       />
-      <ActionButton
-        label={t('actions.back')}
-        variant="ghost"
-        disabled={actionLocked}
-        onPress={onBack}
-      />
+      <View style={PHYSICAL_DICE_STYLES.secondaryActions}>
+        <TouchableOpacity
+          accessibilityRole="button"
+          accessibilityState={{ disabled: actionLocked || count === 0 }}
+          disabled={actionLocked || count === 0}
+          onPress={undo}
+          style={[
+            PHYSICAL_DICE_STYLES.secondaryAction,
+            {
+              backgroundColor: themeColor('#071326'),
+              borderColor: themeColor('rgba(126, 151, 188, 0.28)'),
+              opacity: actionLocked || count === 0 ? 0.45 : 1,
+            },
+          ]}
+        >
+          <Text style={[
+            PHYSICAL_DICE_STYLES.secondaryActionText,
+            { color: themeColor('#9fb4d3') },
+          ]}>
+            {t('dice.undo')}
+          </Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          accessibilityRole="button"
+          accessibilityState={{ disabled: actionLocked }}
+          disabled={actionLocked}
+          onPress={leave}
+          style={[
+            PHYSICAL_DICE_STYLES.secondaryAction,
+            {
+              backgroundColor: themeColor('#071326'),
+              borderColor: themeColor('rgba(126, 151, 188, 0.28)'),
+              opacity: actionLocked ? 0.45 : 1,
+            },
+          ]}
+        >
+          <Text style={[
+            PHYSICAL_DICE_STYLES.secondaryActionText,
+            { color: themeColor('#9fb4d3') },
+          ]}>
+            {t('actions.cancel')}
+          </Text>
+        </TouchableOpacity>
+      </View>
     </View>
   );
 }

@@ -97,7 +97,7 @@ describe('mobile wallet UX and security invariants', () => {
 
   it('requires a visible and verified backup before persisting a created seed', () => {
     expect(appSource).toMatch(
-      /const mnemonic = await generateMnemonic24\(userPoolBase64\);[\s\S]*?setPendingWalletRequiresSeedBackup\(true\);/,
+      /const mnemonic = await generateMnemonic24\(additionalEntropyBase64\);[\s\S]*?setPendingWalletRequiresSeedBackup\(true\);/,
     );
     expect(appSource).toMatch(
       /if \(\s*pendingWalletRequiresSeedBackup[\s\S]*?seedBackupConfirmationStep < seedBackupChallenges\.length[\s\S]*?return;/,
@@ -141,8 +141,8 @@ describe('mobile wallet UX and security invariants', () => {
     );
   });
 
-  it('protects recovery phrase displays without blocking ordinary wallet captures', () => {
-    expect(appSource).toContain('protectRecoveryPhrase: shouldProtectRecoveryPhrase({');
+  it('protects recovery phrases and physical dice without blocking ordinary wallet captures', () => {
+    expect(appSource).toContain('protectSensitiveContent: shouldProtectSensitiveContent({');
     expect(appSource).toContain('seedBackupConfirmationStep < 0');
     expect(appSource).toMatch(
       /if \(nextTab !== 'security'\) \{\s*setShowMnemonic\(false\);/,
@@ -153,6 +153,7 @@ describe('mobile wallet UX and security invariants', () => {
     expect(screenProtectionPolicySource).toContain(
       "screen === 'persist' && createdPhraseVisible",
     );
+    expect(screenProtectionPolicySource).toContain("screen === 'dice'");
     expect(screenProtectionPolicySource).toContain(
       "screen === 'wallet' && walletTab === 'security' && settingsPhraseVisible",
     );
@@ -518,7 +519,7 @@ describe('password policy is declared once', () => {
     expect(appSource).not.toContain('getRandomValues');
     expect(vaultCryptoSource).not.toContain('getRandomValues');
     expect(appSource).not.toContain('entropyToMnemonic');
-    expect(appSource).toContain('await nitoWalletCrypto.generateMnemonic(userPoolBase64)');
+    expect(appSource).toContain('await nitoWalletCrypto.generateMnemonic(additionalEntropyBase64)');
     expect(appSource).toContain('nitoWalletCrypto.isAvailable()');
     expect(appSource).toContain('nitoWalletCrypto.randomBytes(SEED_ENTROPY_BYTE_LENGTH)');
     expect(nativeCryptoSource).toContain('fill_random_with(buffer, getrandom::fill)');
@@ -528,45 +529,64 @@ describe('password policy is declared once', () => {
     }
   });
 
-  it('always mixes fresh OS entropy with the optional user pool instead of replacing it', () => {
+  it('always XORs fresh OS entropy with optional additional entropy instead of replacing it', () => {
     const generatorSource = nativeCryptoSource.slice(
-      nativeCryptoSource.indexOf('fn generate_mnemonic('),
+      nativeCryptoSource.indexOf('fn mix_seed_entropy_with'),
       nativeCryptoSource.indexOf('fn master_xpriv('),
     );
     expect(generatorSource).toContain(
-      'fill_random_with(system_entropy.as_mut(), getrandom::fill)',
+      'fill_random_with(system_entropy.as_mut(), fill)',
     );
     expect(generatorSource).toContain(
-      'mixed_entropy[index] = system_entropy[index] ^ mix[index]',
+      'mix_seed_entropy_with(additional_entropy.as_slice(), getrandom::fill)',
+    );
+    expect(generatorSource).toContain(
+      'mixed_entropy[index] = system_entropy[index] ^ additional_entropy[index]',
     );
   });
 
-  it('collects dice input before generating one seed and never displays a phrase while rolling', () => {
-    expect(appSource).toMatch(/onCreate=\{\(\) => \{[\s\S]*?setScreen\('dice'\);/);
+  it('keeps physical dice optional and requires 100 ordered results before seed generation', () => {
+    expect(appSource).toMatch(/onCreate=\{\(\) => \{[\s\S]*?void createWallet\(\);/);
+    expect(appSource).toMatch(/onUsePhysicalDice=\{\(\) => \{[\s\S]*?setScreen\('dice'\);/);
     expect(appSource).toMatch(/if \(screen === 'dice'\) \{[\s\S]*?<DiceEntropyScreen/);
-    expect(appSource).toContain('onContinue={(userPoolBase64) => { void createWallet(userPoolBase64); }}');
-    expect(diceSource).toContain('onContinue(diceEntropyPoolToBase64(entropyPool))');
+    expect(appSource).toContain('void createWallet(additionalEntropyBase64);');
+    expect(diceSource).toContain('session.entropyDigestBase64()');
     expect(diceSource).not.toContain('MnemonicGrid');
     expect(diceSource).not.toContain('generateMnemonic');
-    expect(diceEntropySource).toContain('sha256.create().update(pool).update(sample).digest()');
-    expect(diceSource).toContain('packedSample.fill(0)');
-    expect(diceSource).toContain('disabled={actionLocked || !hasRolled}');
+    expect(diceEntropySource).toContain("nito-wallet/physical-dice/v1");
+    expect(diceEntropySource).toContain('PHYSICAL_DICE_RESULT_COUNT = 100');
+    expect(diceEntropySource).toContain('return sha256(encoded)');
+    expect(diceSource).toContain('disabled={actionLocked || !session.complete}');
     expect(appStateSecuritySource).toContain(
       "screenRef.current === 'dice' && nextState === 'background'",
     );
     expect(appSource).toMatch(
-      /if \(screenRef\.current === 'dice'\) \{\s*diceEntropyResetRef\.current\(\);\s*setDiceSessionKey\(\(current\) => current \+ 1\);\s*\}/,
+      /if \(screenRef\.current === 'dice'\) \{[\s\S]*?diceEntropyResetRef\.current\(\);[\s\S]*?setScreen\('landing'\);[\s\S]*?\}/,
     );
-    expect(diceSource).toContain('entropyPool.fill(0)');
-    expect(diceSource).toContain('rollCounterRef.current = 0');
+    expect(appSource).toMatch(
+      /const secretGeneration = transientSecretGenerationRef\.current;[\s\S]*?additionalEntropyBase64 !== undefined[\s\S]*?secretGeneration !== transientSecretGenerationRef\.current[\s\S]*?return;/,
+    );
+    expect(diceEntropySource).toContain('this.results.fill(0)');
+    expect(diceSource).toContain('session.clear()');
   });
 
-  it('keeps dice animation on the native driver without frame listeners or effect resets', () => {
-    expect(diceSource).toContain('useState(() => new Animated.Value(0))');
-    expect(diceSource).not.toContain('faceCursor.addListener');
-    expect(diceSource).not.toContain('motionCursor.addListener');
-    expect(diceSource).not.toContain('useNativeDriver: false');
-    expect(diceSource.match(/useNativeDriver: true/g)?.length).toBe(6);
+  it('does not present a virtual die or collect touch timing as physical entropy', () => {
+    expect(diceSource).not.toContain('Animated');
+    expect(diceSource).not.toContain('Date.now');
+    expect(diceSource).not.toContain('performance.now');
+    expect(diceSource).not.toContain('GestureResponderEvent');
+    expect(diceEntropySource).not.toContain('nativeTimestampMs');
+    expect(diceEntropySource).not.toContain('locationX');
+  });
+
+  it('keeps the optional dice flow compact and phone first', () => {
+    expect(screensSource).toContain('const [diceOptionOpen, setDiceOptionOpen] = useState(false)');
+    expect(screensSource).toMatch(/diceOptionOpen \? \([\s\S]*?dice\.optionBody/);
+    expect(diceSource).toContain("width: '31.5%'");
+    expect(diceSource).toContain('minHeight: 52');
+    expect(diceSource).toContain('PHYSICAL_DICE_RESULTS_PER_SERIES');
+    expect(diceSource).not.toContain('TextInput');
+    expect(diceSource).not.toContain('Array.from({ length: PHYSICAL_DICE_RESULT_COUNT }');
   });
 });
 

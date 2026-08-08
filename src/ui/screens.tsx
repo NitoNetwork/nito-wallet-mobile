@@ -1,5 +1,5 @@
-import type { ReactNode } from 'react';
-import { Animated, Image, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { useState, type ReactNode } from 'react';
+import { Animated, Image, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 
 import { LANGUAGES, type LanguageCode, type Translator } from '../i18n';
 import type { SeedBackupChallenge } from '../services/seedBackup';
@@ -10,6 +10,45 @@ import type { BiometricMethod, PendingAction, Wallet } from './types';
 const NITO_LOGO = require('../../assets/nito-logo.png');
 
 type Rotation = Animated.AnimatedInterpolation<string | number>;
+
+const LANDING_STYLES = StyleSheet.create({
+  diceOptionButton: {
+    minHeight: 62,
+    borderRadius: 18,
+    borderWidth: 1,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  diceOptionText: {
+    flex: 1,
+    gap: 2,
+  },
+  diceOptionTitle: {
+    fontSize: 14,
+    lineHeight: 20,
+    fontWeight: '900',
+  },
+  diceOptionSummary: {
+    fontSize: 12,
+    lineHeight: 17,
+  },
+  diceOptionChevron: {
+    fontSize: 18,
+    fontWeight: '900',
+  },
+  diceOptionPanel: {
+    borderRadius: 18,
+    padding: 14,
+    gap: 8,
+  },
+  diceOptionBody: {
+    fontSize: 13,
+    lineHeight: 19,
+  },
+});
 
 export function Hero({ t }: { t: Translator }) {
   const styles = useStyles();
@@ -148,20 +187,86 @@ export function LandingScreen({
   pendingAction,
   actionLocked,
   onCreate,
+  onUsePhysicalDice,
   onImport,
 }: {
   t: Translator;
   pendingAction: PendingAction | null;
   actionLocked: boolean;
   onCreate: () => void;
+  onUsePhysicalDice: () => void;
   onImport: () => void;
 }) {
   const styles = useStyles();
+  const themeColor = useThemeColor();
+  const [diceOptionOpen, setDiceOptionOpen] = useState(false);
   return (
     <View style={styles.card}>
       <Text style={styles.sectionTitle}>{t('start.title')}</Text>
       <Text style={styles.body}>{t('start.body')}</Text>
       <ActionButton label={t('actions.createWallet')} loading={pendingAction === 'create'} disabled={actionLocked} onPress={onCreate} />
+      <TouchableOpacity
+        accessibilityRole="button"
+        accessibilityState={{ expanded: diceOptionOpen, disabled: actionLocked }}
+        disabled={actionLocked}
+        onPress={() => setDiceOptionOpen((current) => !current)}
+        style={[
+          LANDING_STYLES.diceOptionButton,
+          {
+            backgroundColor: themeColor('#071326'),
+            borderColor: themeColor('rgba(75, 157, 255, 0.32)'),
+          },
+        ]}
+      >
+        <View style={LANDING_STYLES.diceOptionText}>
+          <Text style={[
+            LANDING_STYLES.diceOptionTitle,
+            { color: themeColor('#dbeaff') },
+          ]}>
+            {t('dice.optionTitle')}
+          </Text>
+          <Text style={[
+            LANDING_STYLES.diceOptionSummary,
+            { color: themeColor('#9fb4d3') },
+          ]}>
+            {t('dice.optionSummary')}
+          </Text>
+        </View>
+        <Text
+          accessible={false}
+          style={[
+            LANDING_STYLES.diceOptionChevron,
+            { color: themeColor('#8cc6ff') },
+          ]}
+        >
+          {diceOptionOpen ? '⌃' : '⌄'}
+        </Text>
+      </TouchableOpacity>
+      {diceOptionOpen ? (
+        <View style={[
+          LANDING_STYLES.diceOptionPanel,
+          { backgroundColor: themeColor('rgba(2, 6, 17, 0.62)') },
+        ]}>
+          <Text style={[
+            LANDING_STYLES.diceOptionBody,
+            { color: themeColor('#bdc9df') },
+          ]}>
+            {t('dice.optionBody')}
+          </Text>
+          <Text style={[
+            LANDING_STYLES.diceOptionBody,
+            { color: themeColor('#bdc9df') },
+          ]}>
+            {t('dice.optionMethod')}
+          </Text>
+          <ActionButton
+            label={t('dice.start')}
+            variant="secondary"
+            disabled={actionLocked}
+            onPress={onUsePhysicalDice}
+          />
+        </View>
+      ) : null}
       <ActionButton label={t('actions.importSeed')} variant="secondary" disabled={actionLocked} onPress={onImport} />
     </View>
   );
