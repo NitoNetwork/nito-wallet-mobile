@@ -135,7 +135,6 @@ describe('WalletNetworkController', () => {
       getClient: () => client,
       setClient: vi.fn(),
       actionPending: () => false,
-      fullHistoryByDefault: true,
       readHistoryCache: async () => {
         controller.beginWalletSession('wallet-b');
         return { status: 'hit', value: { history: [], fullHistoryHeight: 100 } };
@@ -174,7 +173,6 @@ describe('WalletNetworkController', () => {
       getClient: () => client,
       setClient: vi.fn(),
       actionPending: () => false,
-      fullHistoryByDefault: true,
       readHistoryCache: async () => ({
         status: 'hit',
         value: { history: [], fullHistoryHeight: 100 },
@@ -236,7 +234,6 @@ describe('WalletNetworkController', () => {
       getClient: () => offlineClient,
       setClient: vi.fn(),
       actionPending: () => false,
-      fullHistoryByDefault: true,
       readHistoryCache: vi.fn(),
       saveHistory: vi.fn(),
       saveSnapshot: vi.fn(),
@@ -270,7 +267,6 @@ describe('WalletNetworkController', () => {
       getClient: () => client,
       setClient: vi.fn(),
       actionPending: () => false,
-      fullHistoryByDefault: true,
       readHistoryCache: async () => ({
         status: 'hit',
         value: { history: [], fullHistoryHeight: 100 },
@@ -335,7 +331,6 @@ describe('WalletNetworkController', () => {
       getClient: () => client,
       setClient: vi.fn(),
       actionPending: () => false,
-      fullHistoryByDefault: true,
       readHistoryCache: async () => ({
         status: 'hit',
         value: { history: [rawEntry], fullHistoryHeight: 0 },
@@ -371,13 +366,15 @@ describe('WalletNetworkController', () => {
         blockTime: 1_753_000_000,
       }),
     ]);
+    expect(transparentScanMocks.refreshKnownUsedAddresses).toHaveBeenCalledWith(
+      expect.objectContaining({ includeHistory: true }),
+    );
   });
 });
 
 describe('fresh history cache policy', () => {
   const fresh = {
     cacheReadFailed: false,
-    wantsFullHistory: true,
     cacheAlreadyFresh: true,
     hasSnapshot: true,
     heightUnchanged: true,

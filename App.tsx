@@ -200,7 +200,6 @@ import { applyOptimisticWalletBroadcast } from './src/wallet/optimisticConsolida
 const PRIMARY_DERIVATION_PATH = "m/84'/0'/0'/0/0";
 const BALANCE_REFRESH_COOLDOWN_KEY = 'nito.wallet.balance-refresh-until.v1';
 const BALANCE_REFRESH_COOLDOWN_MS = 120_000;
-const HISTORY_AUTO_IMPORT = true;
 const MNEMONIC_REVEAL_MS = 60_000;
 const ADDRESS_CLIPBOARD_MS = 60_000;
 const QR_SCAN_MAX_ATTEMPTS = 3;
@@ -1147,7 +1146,6 @@ function WalletApp({ theme, onSelectTheme }: {
         electrumClientRef.current = client;
       },
       actionPending: () => pendingActionRef.current !== null,
-      fullHistoryByDefault: HISTORY_AUTO_IMPORT,
       readHistoryCache: (address) => readOptionalCache(() => loadWalletHistoryCache(address)),
       saveHistory: saveWalletHistoryCache,
       saveSnapshot: saveWalletSnapshotCache,

@@ -472,11 +472,6 @@ export const saveHistoryEnrichmentBatch = async (
   });
 });
 
-export const saveEnrichedHistoryRecords = async (
-  walletId: string,
-  records: EnrichedHistoryRecord[],
-) => saveHistoryEnrichmentBatch(walletId, records, []);
-
 export const clearWalletHistoryCache = async (walletId: string): Promise<void> => (
   runWalletStorageOperation('wallet history cache clear', async () => {
     const db = await openHistoryDb();

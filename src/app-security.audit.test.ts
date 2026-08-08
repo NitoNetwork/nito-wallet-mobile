@@ -247,6 +247,9 @@ describe('mobile wallet UX and security invariants', () => {
     );
     expect(networkControllerSource).toMatch(/scanWalletNetwork\(\{[\s\S]*?onProgress,/);
     expect(networkControllerSource).toContain('ports.setHistoryProgress({ done, total });');
+    expect(networkControllerSource).toContain('includeHistory: true');
+    expect(networkControllerSource).not.toContain('fullHistoryByDefault');
+    expect(appSource).not.toContain('HISTORY_AUTO_IMPORT');
   });
 
   it('never disguises a failed financial read or write as complete data', () => {

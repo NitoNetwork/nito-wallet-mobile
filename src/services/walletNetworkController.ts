@@ -164,14 +164,12 @@ export const prepareWalletEntry = ({
 
 export const canUseFreshHistoryCache = ({
   cacheReadFailed,
-  wantsFullHistory,
   cacheAlreadyFresh,
   hasSnapshot,
   heightUnchanged,
   options,
 }: {
   cacheReadFailed: boolean;
-  wantsFullHistory: boolean;
   cacheAlreadyFresh: boolean;
   hasSnapshot: boolean;
   heightUnchanged: boolean;
@@ -180,7 +178,6 @@ export const canUseFreshHistoryCache = ({
   !cacheReadFailed
   && !options.force
   && !options.rescanGap
-  && wantsFullHistory
   && cacheAlreadyFresh
   && hasSnapshot
   && heightUnchanged
@@ -274,7 +271,6 @@ export const scanWalletNetwork = async ({
   client,
   cacheReadFailed,
   cacheAlreadyFresh,
-  wantsFullHistory,
   options,
   onProgress,
   isCurrent,
@@ -284,7 +280,6 @@ export const scanWalletNetwork = async ({
   client: NitoElectrumClient;
   cacheReadFailed: boolean;
   cacheAlreadyFresh: boolean;
-  wantsFullHistory: boolean;
   options: WalletSyncOptions;
   onProgress: (done: number, total: number) => void;
   isCurrent: () => boolean;
@@ -299,7 +294,7 @@ export const scanWalletNetwork = async ({
     ? refreshKnownUsedAddresses({
         snapshot: currentNetwork.snapshot,
         electrum: client,
-        includeHistory: wantsFullHistory,
+        includeHistory: true,
         onlyAddresses,
         onProgress,
       })
@@ -307,7 +302,7 @@ export const scanWalletNetwork = async ({
         mnemonic: wallet.mnemonic,
         electrum: client,
         gapLimit: 20,
-        includeHistory: wantsFullHistory && (
+        includeHistory: (
           !cacheAlreadyFresh || Boolean(options.force) || Boolean(options.rescanGap)
         ),
         previousSnapshot: currentNetwork.snapshot,
@@ -331,7 +326,6 @@ type WalletNetworkSyncPorts = {
   getClient: () => NitoElectrumClient | null;
   setClient: (client: NitoElectrumClient) => void;
   actionPending: () => boolean;
-  fullHistoryByDefault: boolean;
   readHistoryCache: (walletAddress: string) => Promise<OptionalCacheRead<WalletHistoryCache>>;
   saveHistory: (
     walletAddress: string,
@@ -418,15 +412,11 @@ export const synchronizeWalletNetwork = async (
         serverUrl,
       });
     }
-    const wantsFullHistory = (
-      ports.fullHistoryByDefault
-      || includeHistory
-      || cache.fullHistoryHeight > 0
-    );
-    if (wantsFullHistory) ports.setHistorySyncing(true);
+    // Complete history is a product invariant: every successful wallet sync
+    // refreshes or reuses an authoritative history instead of opting out.
+    ports.setHistorySyncing(true);
     const cacheAlreadyFresh = (
       !cacheReadFailed
-      && wantsFullHistory
       && knownHeight > 0
       && cache.fullHistoryHeight === knownHeight
     );
@@ -436,29 +426,8 @@ export const synchronizeWalletNetwork = async (
       && Boolean(currentNetwork.snapshot)
     );
 
-    if (
-      !cacheReadFailed
-      && !options.force
-      && !options.rescanGap
-      && !wantsFullHistory
-      && heightUnchanged
-    ) {
-      requireConnectedSession();
-      if (!ports.controller.isCurrent(session)) return;
-      publishNetwork({
-        ...currentNetwork,
-        status: 'connected',
-        error: '',
-        serverUrl,
-        height: Math.max(currentNetwork.height, knownHeight),
-        fullHistoryEnabled: currentNetwork.fullHistoryEnabled || cache.fullHistoryHeight > 0,
-      });
-      return;
-    }
-
     if (canUseFreshHistoryCache({
       cacheReadFailed,
-      wantsFullHistory,
       cacheAlreadyFresh,
       hasSnapshot: Boolean(currentNetwork.snapshot),
       heightUnchanged,
@@ -494,7 +463,7 @@ export const synchronizeWalletNetwork = async (
         error: '',
         serverUrl,
         height: Math.max(ports.getNetwork().height, knownHeight),
-        fullHistoryEnabled: wantsFullHistory || ports.getNetwork().fullHistoryEnabled,
+        fullHistoryEnabled: true,
       });
     }
     const onProgress = (done: number, total: number) => {
@@ -508,7 +477,6 @@ export const synchronizeWalletNetwork = async (
       client,
       cacheReadFailed,
       cacheAlreadyFresh,
-      wantsFullHistory,
       options,
       onProgress,
       isCurrent: () => ports.controller.isCurrent(session),
@@ -516,8 +484,7 @@ export const synchronizeWalletNetwork = async (
     if (!ports.controller.isCurrent(session)) return;
     requireConnectedSession();
     const historyMode: WalletHistoryPublicationMode = (
-      wantsFullHistory
-      && !options.pendingOnly
+      !options.pendingOnly
       && options.onlyAddresses === undefined
     ) ? 'authoritative' : 'partial';
     const previousHistory = normalizeWalletHistory([
@@ -529,18 +496,16 @@ export const synchronizeWalletNetwork = async (
       snapshot.history,
       historyMode,
     );
-    if (wantsFullHistory) {
-      snapshot = { ...snapshot, history: mergedHistory };
-      if (!cacheAlreadyFresh || options.force || options.rescanGap) {
-        requireConnectedSession();
-        await ports.saveHistory(
-          activeWallet.address,
-          mergedHistory,
-          historyMode === 'authoritative' ? knownHeight : cache.fullHistoryHeight,
-          historyMode,
-        );
-        if (!ports.controller.isCurrent(session)) return;
-      }
+    snapshot = { ...snapshot, history: mergedHistory };
+    if (!cacheAlreadyFresh || options.force || options.rescanGap) {
+      requireConnectedSession();
+      await ports.saveHistory(
+        activeWallet.address,
+        mergedHistory,
+        historyMode === 'authoritative' ? knownHeight : cache.fullHistoryHeight,
+        historyMode,
+      );
+      if (!ports.controller.isCurrent(session)) return;
     }
     if (!ports.controller.isCurrent(session)) return;
     requireConnectedSession();
@@ -550,7 +515,7 @@ export const synchronizeWalletNetwork = async (
       error: '',
       serverUrl,
       height: knownHeight,
-      fullHistoryEnabled: wantsFullHistory,
+      fullHistoryEnabled: true,
     };
     await ports.saveSnapshot(activeWallet.address, toQuickWalletSnapshot(snapshot), knownHeight);
     if (!ports.controller.isCurrent(session)) return;
