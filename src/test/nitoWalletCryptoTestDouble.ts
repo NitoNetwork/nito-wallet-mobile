@@ -1,9 +1,13 @@
+/// <reference types="node" />
+
 import { pbkdf2Async } from '@noble/hashes/pbkdf2.js';
 import { sha256 } from '@noble/hashes/sha2.js';
 import * as btc from '@scure/btc-signer';
 import { pubSchnorr } from '@scure/btc-signer/utils.js';
 import { HDKey } from '@scure/bip32';
-import { mnemonicToSeedSync } from '@scure/bip39';
+import { entropyToMnemonic, mnemonicToSeedSync } from '@scure/bip39';
+import { wordlist } from '@scure/bip39/wordlists/english.js';
+import { randomBytes as nodeRandomBytes } from 'node:crypto';
 
 import type {
   NativeAddressRequest,
@@ -48,6 +52,12 @@ const derive = (mnemonic: string, request: NativeAddressRequest): NativeDerivedA
 
 export const createNitoWalletCryptoTestDouble = (): NitoWalletCryptoApi => ({
   isAvailable: () => true,
+  async randomBytes(length) {
+    return { bytesBase64: bytesToBase64(nodeRandomBytes(length)) };
+  },
+  async generateMnemonic() {
+    return { mnemonic: entropyToMnemonic(nodeRandomBytes(32), wordlist) };
+  },
   async pbkdf2({ password, saltBase64, rounds, outputLength }) {
     const key = await pbkdf2Async(sha256, new TextEncoder().encode(password), base64ToBytes(saltBase64), {
       c: rounds,

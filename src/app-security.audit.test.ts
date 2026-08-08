@@ -31,6 +31,11 @@ import exclusiveActionGateSource from './services/exclusiveActionGate.ts?raw';
 import vaultSessionMachineSource from './services/vaultSessionMachine.ts?raw';
 import expoConfig from '../app.config.js?raw';
 import androidLintFixesSource from '../plugins/withNitoAndroidLintFixes.cjs?raw';
+import nativeCryptoSource from '../native/nito-wallet-crypto/src/lib.rs?raw';
+import cargoConfigSource from '../.cargo/config.toml?raw';
+import androidWorkflowSource from '../.github/workflows/android-apk.yml?raw';
+import iosWorkflowSource from '../.github/workflows/ios-device-app.yml?raw';
+import packageJsonSource from '../package.json?raw';
 
 describe('mobile wallet UX and security invariants', () => {
   it('keeps password encryption when biometric quick unlock is enabled', () => {
@@ -90,7 +95,7 @@ describe('mobile wallet UX and security invariants', () => {
 
   it('requires a visible and verified backup before persisting a created seed', () => {
     expect(appSource).toMatch(
-      /const mnemonic = generateMnemonic24\(\);[\s\S]*?setPendingWalletRequiresSeedBackup\(true\);/,
+      /const mnemonic = await generateMnemonic24\(\);[\s\S]*?setPendingWalletRequiresSeedBackup\(true\);/,
     );
     expect(appSource).toMatch(
       /if \(\s*pendingWalletRequiresSeedBackup[\s\S]*?seedBackupConfirmationStep < seedBackupChallenges\.length[\s\S]*?return;/,
@@ -495,9 +500,27 @@ describe('password policy is declared once', () => {
   });
 
   it('derives vault version and salt length from the constants', () => {
-    expect(vaultCryptoSource).toContain('nacl.randomBytes(SALT_BYTE_LENGTH)');
+    expect(vaultCryptoSource).toContain('randomBytes(SALT_BYTE_LENGTH, crypto)');
     expect(vaultCryptoSource).toContain('version: VAULT_VERSION');
-    expect(vaultCryptoSource).not.toContain('nacl.randomBytes(16)');
+    expect(vaultCryptoSource).not.toContain('randomBytes(16)');
+  });
+
+  it('keeps all production entropy behind the guarded Rust OS source', () => {
+    expect(appSource).not.toContain('react-native-get-random-values');
+    expect(packageJsonSource).not.toContain('react-native-get-random-values');
+    expect(appSource).not.toContain('nacl.randomBytes');
+    expect(vaultCryptoSource).not.toContain('nacl.randomBytes');
+    expect(appSource).not.toContain('getRandomValues');
+    expect(vaultCryptoSource).not.toContain('getRandomValues');
+    expect(appSource).not.toContain('entropyToMnemonic');
+    expect(appSource).toContain('await nitoWalletCrypto.generateMnemonic()');
+    expect(appSource).toContain('nitoWalletCrypto.isAvailable()');
+    expect(appSource).toContain('nitoWalletCrypto.randomBytes(SEED_ENTROPY_BYTE_LENGTH)');
+    expect(nativeCryptoSource).toContain('fill_random_with(buffer, getrandom::fill)');
+
+    for (const buildConfiguration of [cargoConfigSource, androidWorkflowSource, iosWorkflowSource]) {
+      expect(buildConfiguration).not.toContain('getrandom_backend');
+    }
   });
 });
 

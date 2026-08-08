@@ -8,6 +8,7 @@ export type AutoLockTimeoutMs = (typeof AUTO_LOCK_TIMEOUT_OPTIONS_MS)[number];
 export const MAX_SEND_RECIPIENTS = 20;
 export const VAULT_VERSION = 1 as const;
 export const SALT_BYTE_LENGTH = 16;
+export const SEED_ENTROPY_BYTE_LENGTH = 32;
 
 /** Policy floor, enforced when a password is chosen. */
 export const PASSWORD_MIN_LENGTH = 10;

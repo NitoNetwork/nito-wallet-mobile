@@ -25,4 +25,24 @@ describe('Nito Wallet Rust bridge contract', () => {
       .resolves.toEqual({ keyBase64: 'AA==' });
     expect(operations).toEqual(['pbkdf2']);
   });
+
+  it('exposes native entropy and mnemonic generation without returning raw seed entropy', async () => {
+    const requests: { operation: string; request: string }[] = [];
+    const bridge = createNitoWalletCryptoBridge({
+      async invoke(operation, request) {
+        requests.push({ operation, request });
+        const result = operation === 'randomBytes'
+          ? { bytesBase64: 'AAECAw==' }
+          : { mnemonic: 'test mnemonic' };
+        return JSON.stringify({ ok: true, result });
+      },
+    });
+
+    await expect(bridge.randomBytes(4)).resolves.toEqual({ bytesBase64: 'AAECAw==' });
+    await expect(bridge.generateMnemonic()).resolves.toEqual({ mnemonic: 'test mnemonic' });
+    expect(requests).toEqual([
+      { operation: 'randomBytes', request: '{"length":4}' },
+      { operation: 'generateMnemonic', request: '{}' },
+    ]);
+  });
 });

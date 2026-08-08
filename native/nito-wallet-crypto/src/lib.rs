@@ -1,3 +1,19 @@
+#[cfg(any(
+    getrandom_backend,
+    getrandom_backend = "custom",
+    getrandom_backend = "efi_rng",
+    getrandom_backend = "extern_impl",
+    getrandom_backend = "linux_getrandom",
+    getrandom_backend = "linux_raw",
+    getrandom_backend = "rdrand",
+    getrandom_backend = "rndr",
+    getrandom_backend = "unsupported",
+    getrandom_backend = "windows_legacy",
+))]
+compile_error!(
+    "getrandom_backend must not be overridden: the wallet requires the OS CSPRNG backend."
+);
+
 use std::{
     collections::HashMap,
     ffi::{CStr, CString, c_char},
@@ -23,12 +39,15 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sha2::Sha256;
 use thiserror::Error;
-use zeroize::Zeroize;
+use zeroize::{Zeroize, Zeroizing};
 
 const NITO_HRP: &str = "nito";
 const NITO_P2PKH_PREFIX: u8 = 0x00;
 const NITO_P2SH_PREFIX: u8 = 0x05;
 const MAX_PBKDF2_ROUNDS: u32 = 2_000_000;
+const MIN_RANDOM_BYTES: usize = 16;
+const MAX_RANDOM_BYTES: usize = 1024;
+const SEED_ENTROPY_BYTES: usize = 32;
 
 #[derive(Debug, Error)]
 enum CryptoError {
@@ -46,6 +65,8 @@ enum CryptoError {
     MissingSigner(usize),
     #[error("Cryptographic operation failed: {0}")]
     Crypto(String),
+    #[error("System entropy is unavailable")]
+    Entropy,
 }
 
 impl CryptoError {
@@ -58,8 +79,28 @@ impl CryptoError {
             Self::MissingPrevout(_) => "MISSING_PREVOUT",
             Self::MissingSigner(_) => "MISSING_SIGNER",
             Self::Crypto(_) => "CRYPTO_ERROR",
+            Self::Entropy => "ENTROPY_UNAVAILABLE",
         }
     }
+}
+
+#[derive(Deserialize)]
+struct RandomBytesRequest {
+    length: usize,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct RandomBytesResponse {
+    bytes_base64: String,
+}
+
+#[derive(Deserialize)]
+struct GenerateMnemonicRequest {}
+
+#[derive(Serialize)]
+struct GenerateMnemonicResponse {
+    mnemonic: String,
 }
 
 #[derive(Debug, Clone, Copy, Deserialize)]
@@ -138,6 +179,49 @@ struct SignPsbtResponse {
 
 fn parse_json<T: for<'de> Deserialize<'de>>(request: &str) -> Result<T, CryptoError> {
     serde_json::from_str(request).map_err(|error| CryptoError::InvalidRequest(error.to_string()))
+}
+
+fn fill_random_with<E>(
+    buffer: &mut [u8],
+    fill: impl FnOnce(&mut [u8]) -> Result<(), E>,
+) -> Result<(), CryptoError> {
+    if fill(buffer).is_err() || buffer.iter().all(|byte| *byte == 0) {
+        buffer.zeroize();
+        return Err(CryptoError::Entropy);
+    }
+    Ok(())
+}
+
+fn fill_os_random(buffer: &mut [u8]) -> Result<(), CryptoError> {
+    fill_random_with(buffer, getrandom::fill)
+}
+
+fn random_bytes(request: &str) -> Result<Value, CryptoError> {
+    let request: RandomBytesRequest = parse_json(request)?;
+    if !(MIN_RANDOM_BYTES..=MAX_RANDOM_BYTES).contains(&request.length) {
+        return Err(CryptoError::InvalidRequest(format!(
+            "random byte length must be between {MIN_RANDOM_BYTES} and {MAX_RANDOM_BYTES}"
+        )));
+    }
+
+    let mut bytes = Zeroizing::new(vec![0_u8; request.length]);
+    fill_os_random(bytes.as_mut_slice())?;
+    serde_json::to_value(RandomBytesResponse {
+        bytes_base64: BASE64.encode(bytes.as_slice()),
+    })
+    .map_err(|error| CryptoError::Crypto(error.to_string()))
+}
+
+fn generate_mnemonic(request: &str) -> Result<Value, CryptoError> {
+    let _: GenerateMnemonicRequest = parse_json(request)?;
+    let mut entropy = Zeroizing::new([0_u8; SEED_ENTROPY_BYTES]);
+    fill_os_random(entropy.as_mut())?;
+    let mnemonic = Mnemonic::from_entropy_in(Language::English, entropy.as_ref())
+        .map_err(|error| CryptoError::Crypto(error.to_string()))?;
+    serde_json::to_value(GenerateMnemonicResponse {
+        mnemonic: mnemonic.to_string(),
+    })
+    .map_err(|error| CryptoError::Crypto(error.to_string()))
 }
 
 fn master_xpriv(mnemonic: &str) -> Result<Xpriv, CryptoError> {
@@ -441,6 +525,8 @@ fn sign_psbt(request: &str) -> Result<Value, CryptoError> {
 
 fn dispatch(operation: &str, request: &str) -> Result<Value, CryptoError> {
     match operation {
+        "randomBytes" => random_bytes(request),
+        "generateMnemonic" => generate_mnemonic(request),
         "pbkdf2" => pbkdf2(request),
         "deriveAddresses" => derive_addresses(request),
         "signPsbt" => sign_psbt(request),
@@ -550,6 +636,57 @@ mod tests {
             hex::encode(BASE64.decode(key).unwrap()),
             "120fb6cffcf8b32c43e7225256c4f837a86548c92ccc35480805987cb70be17b"
         );
+    }
+
+    #[test]
+    fn random_bytes_respects_requested_length_and_changes_between_calls() {
+        let request = json!({ "length": 32 }).to_string();
+        let first = random_bytes(&request).unwrap();
+        let second = random_bytes(&request).unwrap();
+        let first = BASE64
+            .decode(first.get("bytesBase64").and_then(Value::as_str).unwrap())
+            .unwrap();
+        let second = BASE64
+            .decode(second.get("bytesBase64").and_then(Value::as_str).unwrap())
+            .unwrap();
+
+        assert_eq!(first.len(), 32);
+        assert_eq!(second.len(), 32);
+        assert_ne!(first, second);
+    }
+
+    #[test]
+    fn random_bytes_rejects_out_of_policy_lengths() {
+        for length in [0, MIN_RANDOM_BYTES - 1, MAX_RANDOM_BYTES + 1] {
+            let error = random_bytes(&json!({ "length": length }).to_string()).unwrap_err();
+            assert!(matches!(error, CryptoError::InvalidRequest(_)));
+        }
+    }
+
+    #[test]
+    fn entropy_source_failure_is_explicit_without_fallback() {
+        let mut bytes = [0x5a; SEED_ENTROPY_BYTES];
+        let result = fill_random_with(&mut bytes, |buffer| {
+            buffer[..4].copy_from_slice(&[1, 2, 3, 4]);
+            Err::<(), ()>(())
+        });
+
+        assert!(matches!(result, Err(CryptoError::Entropy)));
+        assert_eq!(bytes, [0_u8; SEED_ENTROPY_BYTES]);
+        assert_eq!(CryptoError::Entropy.code(), "ENTROPY_UNAVAILABLE");
+
+        let mut unchanged_zero_buffer = [0_u8; SEED_ENTROPY_BYTES];
+        let result = fill_random_with(&mut unchanged_zero_buffer, |_| Ok::<(), ()>(()));
+        assert!(matches!(result, Err(CryptoError::Entropy)));
+    }
+
+    #[test]
+    fn generated_mnemonic_is_a_valid_24_word_phrase() {
+        let response = generate_mnemonic("{}").unwrap();
+        let mnemonic = response.get("mnemonic").and_then(Value::as_str).unwrap();
+
+        assert_eq!(mnemonic.split_whitespace().count(), 24);
+        assert!(Mnemonic::parse_in_normalized(Language::English, mnemonic).is_ok());
     }
 
     #[test]

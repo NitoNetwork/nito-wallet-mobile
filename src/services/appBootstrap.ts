@@ -1,5 +1,6 @@
 export interface WalletBootstrapLoaders<Vault, BiometricMethod, ElectrumPreference> {
   loadVault: () => Promise<Vault | null>;
+  probeNativeCrypto: () => Promise<void>;
   hasBiometricHardware: () => Promise<boolean>;
   isBiometricEnrolled: () => Promise<boolean>;
   getBiometricMethod: () => Promise<BiometricMethod>;
@@ -38,6 +39,7 @@ export const loadWalletBootstrapState = async <Vault, BiometricMethod, ElectrumP
   loaders: WalletBootstrapLoaders<Vault, BiometricMethod, ElectrumPreference>,
 ): Promise<WalletBootstrapState<Vault, BiometricMethod, ElectrumPreference>> => {
   const vault = await loaders.loadVault();
+  await loaders.probeNativeCrypto();
   const [
     hardwareResult,
     enrollmentResult,

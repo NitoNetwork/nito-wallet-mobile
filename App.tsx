@@ -2,10 +2,10 @@ import {
   PASSWORD_MIN_LENGTH,
   PASSWORD_UNLOCK_MIN_LENGTH,
   PBKDF2_ROUNDS,
+  SEED_ENTROPY_BYTE_LENGTH,
 } from './src/constants/nito';
-import 'react-native-get-random-values';
 
-import { entropyToMnemonic, validateMnemonic } from '@scure/bip39';
+import { validateMnemonic } from '@scure/bip39';
 import { wordlist } from '@scure/bip39/wordlists/english.js';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import * as Clipboard from 'expo-clipboard';
@@ -37,7 +37,6 @@ import {
   View,
 } from 'react-native';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
-import nacl from 'tweetnacl';
 
 import { escapeTsvCell, isValidTransactionId, shortAddress, transactionExplorerUrl } from './src/ui/format';
 import { shouldShowBlockingLoadingOverlay } from './src/ui/loadingPolicy';
@@ -322,7 +321,7 @@ type SendEstimateState = {
   fitsAvailable: boolean;
 };
 
-const generateMnemonic24 = () => entropyToMnemonic(nacl.randomBytes(32), wordlist);
+const generateMnemonic24 = async () => (await nitoWalletCrypto.generateMnemonic()).mnemonic;
 
 const derivePrimaryAddress = async (mnemonic: string): Promise<Wallet> => {
   const [derived] = await nitoWalletCrypto.deriveAddresses(mnemonic, [
@@ -380,10 +379,8 @@ const requestBiometricGate = async (promptMessage: string) => {
   }
 };
 
-const createSeedBackupAttemptToken = (): string => Array.from(
-  nacl.randomBytes(16),
-  (byte) => byte.toString(16).padStart(2, '0'),
-).join('');
+let seedBackupAttemptCounter = 0;
+const nextSeedBackupAttemptToken = () => `attempt-${++seedBackupAttemptCounter}`;
 
 function WalletApp({ theme, onSelectTheme }: {
   theme: ThemeName;
@@ -427,7 +424,7 @@ function WalletApp({ theme, onSelectTheme }: {
   const [pendingWalletRequiresSeedBackup, setPendingWalletRequiresSeedBackup] = useState(false);
   const [seedBackupConfirmationStep, setSeedBackupConfirmationStep] = useState(-1);
   const [seedBackupAttemptToken, setSeedBackupAttemptToken] =
-    useState(createSeedBackupAttemptToken);
+    useState(nextSeedBackupAttemptToken);
   const seedBackupAnswerLockedRef = useRef(false);
   const [walletNetworkController] = useState(() => new WalletNetworkController());
   const [historyEnrichmentRetryScheduler] =
@@ -763,6 +760,12 @@ function WalletApp({ theme, onSelectTheme }: {
           electrumPreference: savedElectrumServerPreference,
         } = await loadWalletBootstrapState({
           loadVault,
+          probeNativeCrypto: async () => {
+            if (!nitoWalletCrypto.isAvailable()) {
+              throw new Error('Native cryptographic core is unavailable.');
+            }
+            await nitoWalletCrypto.randomBytes(SEED_ENTROPY_BYTE_LENGTH);
+          },
           hasBiometricHardware: LocalAuthentication.hasHardwareAsync,
           isBiometricEnrolled: LocalAuthentication.isEnrolledAsync,
           getBiometricMethod,
@@ -1455,13 +1458,13 @@ function WalletApp({ theme, onSelectTheme }: {
     resetFeedback();
 
     try {
-      const mnemonic = generateMnemonic24();
+      const mnemonic = await generateMnemonic24();
       const nextWallet = await derivePrimaryAddress(mnemonic);
       walletLockAppliedRef.current = false;
       setPendingWallet(nextWallet);
       setPendingWalletRequiresSeedBackup(true);
       setSeedBackupConfirmationStep(-1);
-      setSeedBackupAttemptToken(createSeedBackupAttemptToken());
+      setSeedBackupAttemptToken(nextSeedBackupAttemptToken());
       setSeedBackupConfirmationError('');
       void prefetchWalletNetwork(nextWallet);
       setWallet(null);
@@ -1511,7 +1514,7 @@ function WalletApp({ theme, onSelectTheme }: {
       setPendingWallet(nextWallet);
       setPendingWalletRequiresSeedBackup(false);
       setSeedBackupConfirmationStep(-1);
-      setSeedBackupAttemptToken(createSeedBackupAttemptToken());
+      setSeedBackupAttemptToken(nextSeedBackupAttemptToken());
       setSeedBackupConfirmationError('');
       void prefetchWalletNetwork(nextWallet);
       setWallet(null);
@@ -1800,7 +1803,7 @@ function WalletApp({ theme, onSelectTheme }: {
     seedBackupAnswerLockedRef.current = false;
     setSeedBackupConfirmationError('');
     setSeedBackupConfirmationStep(-1);
-    setSeedBackupAttemptToken(createSeedBackupAttemptToken());
+    setSeedBackupAttemptToken(nextSeedBackupAttemptToken());
   };
 
   const confirmSeedBackupWord = (answer: string) => {
@@ -1817,7 +1820,7 @@ function WalletApp({ theme, onSelectTheme }: {
     if (nextStep < 0) {
       setSeedBackupConfirmationError(t('errors.seedBackupWordMismatch'));
       setSeedBackupConfirmationStep(-1);
-      setSeedBackupAttemptToken(createSeedBackupAttemptToken());
+      setSeedBackupAttemptToken(nextSeedBackupAttemptToken());
       return;
     }
 

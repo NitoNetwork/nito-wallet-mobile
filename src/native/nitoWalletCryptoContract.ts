@@ -56,6 +56,14 @@ export const createNitoWalletCryptoBridge = (nativeModule?: NitoWalletCryptoNati
   return {
     isAvailable: () => Boolean(nativeModule),
 
+    randomBytes(length: number) {
+      return invoke<{ bytesBase64: string }>('randomBytes', { length });
+    },
+
+    generateMnemonic() {
+      return invoke<{ mnemonic: string }>('generateMnemonic', {});
+    },
+
     pbkdf2(request: { password: string; saltBase64: string; rounds: number; outputLength: number }) {
       return invoke<{ keyBase64: string }>('pbkdf2', request);
     },

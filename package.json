@@ -75,13 +75,13 @@
     "expo-system-ui": "~57.0.2",
     "react": "19.2.3",
     "react-native": "0.86.2",
-    "react-native-get-random-values": "~1.11.0",
     "react-native-qrcode-svg": "file:vendor/react-native-qrcode-svg",
     "react-native-safe-area-context": "~5.7.0",
     "tweetnacl": "^1.0.3"
   },
   "devDependencies": {
     "@scure/bip32": "2.2.0",
+    "@types/node": "26.1.1",
     "@types/react": "~19.2.14",
     "babel-preset-expo": "^57.0.3",
     "eslint": "9.39.5",

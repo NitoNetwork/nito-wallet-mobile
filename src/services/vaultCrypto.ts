@@ -31,6 +31,18 @@ export const uint8ArrayToBase64 = (value: Uint8Array) => btoa(String.fromCharCod
 export const base64ToUint8Array = (value: string) =>
   Uint8Array.from(atob(value), (char) => char.charCodeAt(0));
 
+export const randomBytes = async (
+  length: number,
+  crypto: NitoWalletCryptoApi = nitoWalletCrypto,
+): Promise<Uint8Array> => {
+  const { bytesBase64 } = await crypto.randomBytes(length);
+  const bytes = base64ToUint8Array(bytesBase64);
+  if (bytes.length !== length) {
+    throw new Error('Native entropy response has an unexpected length.');
+  }
+  return bytes;
+};
+
 export const deriveKey = async (
   password: string,
   salt: Uint8Array,
@@ -53,8 +65,10 @@ export const encryptVault = async (
   unlockMode: 'password' | 'biometric' = 'password',
   crypto: NitoWalletCryptoApi = nitoWalletCrypto,
 ): Promise<EncryptedVault> => {
-  const salt = nacl.randomBytes(SALT_BYTE_LENGTH);
-  const nonce = nacl.randomBytes(nacl.secretbox.nonceLength);
+  const [salt, nonce] = await Promise.all([
+    randomBytes(SALT_BYTE_LENGTH, crypto),
+    randomBytes(nacl.secretbox.nonceLength, crypto),
+  ]);
   const key = await deriveKey(password, salt, PBKDF2_ROUNDS, crypto);
   const plaintext = new TextEncoder().encode(JSON.stringify(payload));
   const ciphertext = nacl.secretbox(plaintext, nonce, key);
