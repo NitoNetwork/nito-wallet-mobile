@@ -60,8 +60,11 @@ export const createNitoWalletCryptoBridge = (nativeModule?: NitoWalletCryptoNati
       return invoke<{ bytesBase64: string }>('randomBytes', { length });
     },
 
-    generateMnemonic() {
-      return invoke<{ mnemonic: string }>('generateMnemonic', {});
+    generateMnemonic(userPoolBase64?: string) {
+      return invoke<{ mnemonic: string }>(
+        'generateMnemonic',
+        userPoolBase64 === undefined ? {} : { userPoolBase64 },
+      );
     },
 
     pbkdf2(request: { password: string; saltBase64: string; rounds: number; outputLength: number }) {

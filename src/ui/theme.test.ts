@@ -15,6 +15,7 @@ import tabsSource from './tabs.tsx?raw';
 import screensSource from './screens.tsx?raw';
 import componentsSource from './components.tsx?raw';
 import settingsSource from './settings.tsx?raw';
+import diceSource from './dice.tsx?raw';
 import appSource from '../../App.tsx?raw';
 
 type RgbaColor = {
@@ -415,7 +416,7 @@ describe('inline theme colours', () => {
   // Colours passed as props rather than through the stylesheet escape the
   // coverage check above. Scanning the sources keeps them under the same rule:
   // an unmapped literal would silently stay dark on paper.
-  const sources = [tabsSource, screensSource, componentsSource, settingsSource].join('\n');
+  const sources = [tabsSource, screensSource, componentsSource, settingsSource, diceSource].join('\n');
 
   it('maps every colour passed through themeColor()', () => {
     const literals = [...sources.matchAll(/themeColor\('(#[0-9a-fA-F]{3,8})'\)/g)]

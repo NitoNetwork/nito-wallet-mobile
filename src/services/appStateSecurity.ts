@@ -67,11 +67,14 @@ export const createWalletAppStateChangeHandler = ({
   const previousState = appStateRef.current;
   appStateRef.current = nextState;
   if (
-    (screenRef.current === 'unlock' || screenRef.current === 'import')
-    && (
-      nextState === 'background'
-      || (nextState === 'inactive' && !systemPromptActiveRef.current)
+    (
+      (screenRef.current === 'unlock' || screenRef.current === 'import')
+      && (
+        nextState === 'background'
+        || (nextState === 'inactive' && !systemPromptActiveRef.current)
+      )
     )
+    || (screenRef.current === 'dice' && nextState === 'background')
   ) {
     clearTransientSecretsRef.current();
   }

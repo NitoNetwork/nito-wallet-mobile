@@ -36,6 +36,8 @@ import cargoConfigSource from '../.cargo/config.toml?raw';
 import androidWorkflowSource from '../.github/workflows/android-apk.yml?raw';
 import iosWorkflowSource from '../.github/workflows/ios-device-app.yml?raw';
 import packageJsonSource from '../package.json?raw';
+import diceSource from './ui/dice.tsx?raw';
+import diceEntropySource from './ui/diceEntropy.ts?raw';
 
 describe('mobile wallet UX and security invariants', () => {
   it('keeps password encryption when biometric quick unlock is enabled', () => {
@@ -95,7 +97,7 @@ describe('mobile wallet UX and security invariants', () => {
 
   it('requires a visible and verified backup before persisting a created seed', () => {
     expect(appSource).toMatch(
-      /const mnemonic = await generateMnemonic24\(\);[\s\S]*?setPendingWalletRequiresSeedBackup\(true\);/,
+      /const mnemonic = await generateMnemonic24\(userPoolBase64\);[\s\S]*?setPendingWalletRequiresSeedBackup\(true\);/,
     );
     expect(appSource).toMatch(
       /if \(\s*pendingWalletRequiresSeedBackup[\s\S]*?seedBackupConfirmationStep < seedBackupChallenges\.length[\s\S]*?return;/,
@@ -513,7 +515,7 @@ describe('password policy is declared once', () => {
     expect(appSource).not.toContain('getRandomValues');
     expect(vaultCryptoSource).not.toContain('getRandomValues');
     expect(appSource).not.toContain('entropyToMnemonic');
-    expect(appSource).toContain('await nitoWalletCrypto.generateMnemonic()');
+    expect(appSource).toContain('await nitoWalletCrypto.generateMnemonic(userPoolBase64)');
     expect(appSource).toContain('nitoWalletCrypto.isAvailable()');
     expect(appSource).toContain('nitoWalletCrypto.randomBytes(SEED_ENTROPY_BYTE_LENGTH)');
     expect(nativeCryptoSource).toContain('fill_random_with(buffer, getrandom::fill)');
@@ -534,6 +536,34 @@ describe('password policy is declared once', () => {
     expect(generatorSource).toContain(
       'mixed_entropy[index] = system_entropy[index] ^ mix[index]',
     );
+  });
+
+  it('collects dice input before generating one seed and never displays a phrase while rolling', () => {
+    expect(appSource).toMatch(/onCreate=\{\(\) => \{[\s\S]*?setScreen\('dice'\);/);
+    expect(appSource).toMatch(/if \(screen === 'dice'\) \{[\s\S]*?<DiceEntropyScreen/);
+    expect(appSource).toContain('onContinue={(userPoolBase64) => { void createWallet(userPoolBase64); }}');
+    expect(diceSource).toContain('onContinue(diceEntropyPoolToBase64(entropyPool))');
+    expect(diceSource).not.toContain('MnemonicGrid');
+    expect(diceSource).not.toContain('generateMnemonic');
+    expect(diceEntropySource).toContain('sha256.create().update(pool).update(sample).digest()');
+    expect(diceSource).toContain('packedSample.fill(0)');
+    expect(diceSource).toContain('disabled={actionLocked || !hasRolled}');
+    expect(appStateSecuritySource).toContain(
+      "screenRef.current === 'dice' && nextState === 'background'",
+    );
+    expect(appSource).toMatch(
+      /if \(screenRef\.current === 'dice'\) \{\s*diceEntropyResetRef\.current\(\);\s*setDiceSessionKey\(\(current\) => current \+ 1\);\s*\}/,
+    );
+    expect(diceSource).toContain('entropyPool.fill(0)');
+    expect(diceSource).toContain('rollCounterRef.current = 0');
+  });
+
+  it('keeps dice animation on the native driver without frame listeners or effect resets', () => {
+    expect(diceSource).toContain('useState(() => new Animated.Value(0))');
+    expect(diceSource).not.toContain('faceCursor.addListener');
+    expect(diceSource).not.toContain('motionCursor.addListener');
+    expect(diceSource).not.toContain('useNativeDriver: false');
+    expect(diceSource.match(/useNativeDriver: true/g)?.length).toBe(6);
   });
 });
 

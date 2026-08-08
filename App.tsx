@@ -69,6 +69,7 @@ import {
 } from './src/ui/screens';
 import { HistoryTab, HomeTab, ReceiveTab, SendTab } from './src/ui/tabs';
 import { SecurityTab } from './src/ui/settings';
+import { DiceEntropyScreen } from './src/ui/dice';
 import type {
   AppScreen,
   BiometricMethod,
@@ -321,7 +322,9 @@ type SendEstimateState = {
   fitsAvailable: boolean;
 };
 
-const generateMnemonic24 = async () => (await nitoWalletCrypto.generateMnemonic()).mnemonic;
+const generateMnemonic24 = async (userPoolBase64?: string) => (
+  await nitoWalletCrypto.generateMnemonic(userPoolBase64)
+).mnemonic;
 
 const derivePrimaryAddress = async (mnemonic: string): Promise<Wallet> => {
   const [derived] = await nitoWalletCrypto.deriveAddresses(mnemonic, [
@@ -422,6 +425,7 @@ function WalletApp({ theme, onSelectTheme }: {
   const [wallet, setWallet] = useState<Wallet | null>(null);
   const [pendingWallet, setPendingWallet] = useState<Wallet | null>(null);
   const [pendingWalletRequiresSeedBackup, setPendingWalletRequiresSeedBackup] = useState(false);
+  const [diceSessionKey, setDiceSessionKey] = useState(0);
   const [seedBackupConfirmationStep, setSeedBackupConfirmationStep] = useState(-1);
   const [seedBackupAttemptToken, setSeedBackupAttemptToken] =
     useState(nextSeedBackupAttemptToken);
@@ -444,6 +448,7 @@ function WalletApp({ theme, onSelectTheme }: {
   const walletLockAppliedRef = useRef(false);
   const lockWalletRef = useRef<() => void>(() => undefined);
   const clearTransientSecretsRef = useRef<() => void>(() => undefined);
+  const diceEntropyResetRef = useRef<() => void>(() => undefined);
   const transientSecretGenerationRef = useRef(0);
   const enrichAttemptedRef = useRef<Set<string>>(new Set());
   const enrichFailedRef = useRef<HistoryEnrichmentFailures>(new Map());
@@ -1453,12 +1458,12 @@ function WalletApp({ theme, onSelectTheme }: {
     return undefined;
   }, [screen, syncTransparentNetwork, wallet]);
 
-  const createWallet = async () => {
+  const createWallet = async (userPoolBase64: string) => {
     await runExclusiveAction('create', async () => {
     resetFeedback();
 
     try {
-      const mnemonic = await generateMnemonic24();
+      const mnemonic = await generateMnemonic24(userPoolBase64);
       const nextWallet = await derivePrimaryAddress(mnemonic);
       walletLockAppliedRef.current = false;
       setPendingWallet(nextWallet);
@@ -1897,6 +1902,11 @@ function WalletApp({ theme, onSelectTheme }: {
     setUnlockPassword('');
     setShowUnlockPassword(false);
     setUnlockPasswordError('');
+
+    if (screenRef.current === 'dice') {
+      diceEntropyResetRef.current();
+      setDiceSessionKey((current) => current + 1);
+    }
 
     if (screenRef.current === 'import') {
       setScreen(vaultSessionStateRef.current.status !== 'absent' ? 'unlock' : 'landing');
@@ -3100,6 +3110,20 @@ function WalletApp({ theme, onSelectTheme }: {
       );
     }
 
+    if (screen === 'dice') {
+      return (
+        <DiceEntropyScreen
+          key={diceSessionKey}
+          t={t}
+          pendingAction={pendingAction}
+          actionLocked={actionLocked}
+          resetRef={diceEntropyResetRef}
+          onContinue={(userPoolBase64) => { void createWallet(userPoolBase64); }}
+          onBack={() => { resetFeedback(); setScreen('landing'); }}
+        />
+      );
+    }
+
     if (screen === 'import') {
       return (
         <ImportScreen
@@ -3199,7 +3223,11 @@ function WalletApp({ theme, onSelectTheme }: {
         t={t}
         pendingAction={pendingAction}
         actionLocked={actionLocked}
-        onCreate={createWallet}
+        onCreate={() => {
+          resetFeedback();
+          setDiceSessionKey((current) => current + 1);
+          setScreen('dice');
+        }}
         onImport={() => { resetFeedback(); setShowImportSeed(false); setScreen('import'); }}
       />
     );

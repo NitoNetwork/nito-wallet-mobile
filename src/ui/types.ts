@@ -4,6 +4,7 @@ export type AppScreen =
   | 'loading'
   | 'initializationError'
   | 'landing'
+  | 'dice'
   | 'unlock'
   | 'import'
   | 'wallet'

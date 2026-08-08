@@ -188,4 +188,28 @@ describe('shouldLockWalletForAppState', () => {
 
     expect(clearTransientSecrets).not.toHaveBeenCalled();
   });
+
+  it('abandons dice entropy on background but not on a transient inactive state', () => {
+    const clearTransientSecrets = vi.fn();
+    const refs = {
+      appStateRef: { current: 'active' },
+      screenRef: { current: 'dice' },
+      systemPromptActiveRef: { current: false },
+      vaultBiometricsEnabledRef: { current: false },
+      biometricUnavailableReasonRef: { current: '' },
+      biometricInterruptedRef: { current: false },
+      biometricDismissedRef: { current: false },
+      lockedDuringSessionRef: { current: false },
+      lockWalletRef: { current: vi.fn() },
+      clearTransientSecretsRef: { current: clearTransientSecrets },
+      unlockSavedWalletRef: { current: vi.fn() },
+    };
+    const handler = createWalletAppStateChangeHandler(refs);
+
+    handler('inactive');
+    expect(clearTransientSecrets).not.toHaveBeenCalled();
+
+    handler('background');
+    expect(clearTransientSecrets).toHaveBeenCalledOnce();
+  });
 });

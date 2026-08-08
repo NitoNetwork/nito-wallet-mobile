@@ -40,9 +40,11 @@ describe('Nito Wallet Rust bridge contract', () => {
 
     await expect(bridge.randomBytes(4)).resolves.toEqual({ bytesBase64: 'AAECAw==' });
     await expect(bridge.generateMnemonic()).resolves.toEqual({ mnemonic: 'test mnemonic' });
+    await expect(bridge.generateMnemonic('AQID')).resolves.toEqual({ mnemonic: 'test mnemonic' });
     expect(requests).toEqual([
       { operation: 'randomBytes', request: '{"length":4}' },
       { operation: 'generateMnemonic', request: '{}' },
+      { operation: 'generateMnemonic', request: '{"userPoolBase64":"AQID"}' },
     ]);
   });
 });

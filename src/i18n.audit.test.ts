@@ -54,6 +54,25 @@ describe('i18n coverage', () => {
     }
   });
 
+  it('resolves the dice entropy label in every language', () => {
+    const expected = {
+      en: '256-bit seed · your roll included',
+      zh: '256 位种子 · 已混入你的掷骰',
+      de: '256-Bit-Seed · dein Wurf beigemischt',
+      es: 'Seed de 256 bits · tu tirada integrada',
+      fr: 'Graine 256 bits · votre lancer intégré',
+      ja: '256 ビットシード · あなたの出目を混合',
+      tr: '256 bit BIP39 girdisi · zar atışın karıştırıldı',
+      pt: 'Seed de 256 bits · sua jogada integrada',
+      ru: '256-битная основа · ваш бросок добавлен',
+    } satisfies Record<LanguageCode, string>;
+
+    for (const code of Object.keys(expected) as LanguageCode[]) {
+      expect(makeTranslator(code)('dice.entropyLabel')).toBe(expected[code]);
+      expect(makeTranslator(code)('dice.result', { value: 6 })).toContain('6');
+    }
+  });
+
   it('resolves the internal transaction network-fee label in every language', () => {
     const expected = {
       en: 'Network fee',
