@@ -530,6 +530,14 @@ describe('password policy is declared once', () => {
     }
   });
 
+  it('runs the current zero-vulnerability audit in every device workflow', () => {
+    for (const workflowSource of [androidWorkflowSource, iosWorkflowSource]) {
+      expect(workflowSource).toContain('npm run audit:production 2>&1 | tee npm-audit.log');
+      expect(workflowSource).not.toContain('audit:production:self-test');
+      expect(workflowSource).not.toContain('npm-audit-self-test.log');
+    }
+  });
+
   it('always XORs fresh OS entropy with optional additional entropy instead of replacing it', () => {
     const generatorSource = nativeCryptoSource.slice(
       nativeCryptoSource.indexOf('fn mix_seed_entropy_with'),
