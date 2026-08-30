@@ -1,19 +1,19 @@
 diff --git a/node_modules/expo-file-system/android/build.gradle b/node_modules/expo-file-system/android/build.gradle
-index 79e920d..cabeb75 100644
+index 334030a..8b6e0b7 100644
 --- a/node_modules/expo-file-system/android/build.gradle
 +++ b/node_modules/expo-file-system/android/build.gradle
 @@ -7,11 +7,11 @@ group = 'host.exp.exponent'
- version = '57.0.2'
-
+ version = '57.0.6'
+ 
  android {
 -  namespace "expo.modules.filesystem"
 +  namespace = "expo.modules.filesystem"
    defaultConfig {
 -    versionCode 30
--    versionName "57.0.2"
+-    versionName "57.0.6"
 -    testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
 +    versionCode = 30
-+    versionName = "57.0.2"
++    versionName = "57.0.6"
 +    testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
    }
    testOptions {
@@ -40,7 +40,7 @@ index 04385d0..1283b3e 100644
 +++ b/node_modules/expo-file-system/android/src/main/java/expo/modules/filesystem/FileSystemWatcher.kt
 @@ -1,6 +1,7 @@
  package expo.modules.filesystem
-
+ 
  import android.net.Uri
 +import android.os.Build
  import android.os.FileObserver
@@ -49,7 +49,7 @@ index 04385d0..1283b3e 100644
 @@ -91,7 +92,11 @@ internal class FileSystemWatcher(
        return
      }
-
+ 
 -    observer = object : FileObserver(watchedFile.path, WATCH_MASK) {
 +    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
 +      throw WatcherUnsupportedPathException(watchedUri.toString())
