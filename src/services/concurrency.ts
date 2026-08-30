@@ -26,7 +26,8 @@ export const createConcurrencyLimiter = (concurrency: number): ConcurrencyLimite
       const queued = queue.shift();
       if (!queued) return;
       active += 1;
-      void queued.run()
+      void Promise.resolve()
+        .then(queued.run)
         .then(queued.resolve, queued.reject)
         .finally(() => {
           active -= 1;
