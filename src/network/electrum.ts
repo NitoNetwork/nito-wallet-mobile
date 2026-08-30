@@ -144,6 +144,8 @@ export type ElectrumConnectionState = Readonly<{
 }>;
 type ConnectionStateListener = (state: ElectrumConnectionState) => void;
 
+const MAX_TRANSACTION_HEX_LENGTH = 800_000 * 2;
+
 const isRecord = (value: unknown): value is Record<string, unknown> => (
   typeof value === 'object' && value !== null && !Array.isArray(value)
 );
@@ -158,11 +160,12 @@ const isTxid = (value: unknown): value is string => (
 const isTransactionHex = (value: unknown): value is string => (
   typeof value === 'string'
   && value.length > 0
+  && value.length <= MAX_TRANSACTION_HEX_LENGTH
   && value.length % 2 === 0
   && /^[0-9a-f]+$/iu.test(value)
 );
 const isSubscriptionStatus = (value: unknown): value is string | null => (
-  value === null || typeof value === 'string'
+  value === null || isTxid(value)
 );
 
 const validateHeader = (
@@ -738,7 +741,7 @@ export class NitoElectrumClient {
         if (!isSubscriptionStatus(status)) {
           throw new ElectrumInvalidResponseError(
             'blockchain.scripthash.subscribe',
-            'status must be a string or null',
+            'status must be 64 hexadecimal characters or null',
           );
         }
         this.scripthashListeners.get(scripthash)?.forEach((listener) => listener(status));
@@ -868,7 +871,7 @@ export class NitoElectrumClient {
       if (!isSubscriptionStatus(status)) {
         throw new ElectrumInvalidResponseError(
           'blockchain.scripthash.subscribe',
-          'status must be a string or null',
+          'status must be 64 hexadecimal characters or null',
         );
       }
       return { status, unsubscribe };
@@ -1130,7 +1133,7 @@ export class NitoElectrumClient {
       if (typeof scripthash !== 'string' || !isSubscriptionStatus(status)) {
         throw new ElectrumInvalidResponseError(
           'blockchain.scripthash.subscribe',
-          'notification must contain a scripthash and a string or null status',
+          'notification must contain a scripthash and a 64-character hexadecimal status or null',
         );
       }
       const listeners = this.scripthashListeners.get(scripthash);
