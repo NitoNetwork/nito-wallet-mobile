@@ -7,6 +7,7 @@ import { reportNonFinancialFailure } from './diagnostics';
 
 const TRANSPARENT_SEND_ERROR_KEYS = {
   'invalid-amount-format': 'errors.invalidAmount',
+  'amount-above-max-money': 'errors.invalidAmount',
   'amount-not-positive': 'errors.invalidAmount',
   'amount-below-dust': 'errors.invalidAmount',
   'signing-material-unavailable': 'errors.txPrepareFailed',

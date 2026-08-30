@@ -8,7 +8,10 @@ import {
 } from 'react-native';
 import QRCode from 'react-native-qrcode-svg';
 
-import { CONSOLIDATION_MIN_UTXOS } from '../constants/nito';
+import {
+  CONSOLIDATION_MIN_UTXOS,
+  MAX_NITO_AMOUNT_INPUT_LENGTH,
+} from '../constants/nito';
 import type { LanguageCode, Translator } from '../i18n';
 import { makeConsolidationTranslator } from '../i18n.consolidation';
 import { formatNitoDateTime } from '../i18n.datetime';
@@ -173,6 +176,7 @@ export function SendTab({
                   placeholder={t('send.amount')}
                   placeholderTextColor={themeColor('#6d7892')}
                   keyboardType="decimal-pad"
+                  maxLength={MAX_NITO_AMOUNT_INPUT_LENGTH}
                   style={[styles.input, styles.amountInput]}
                 />
                 <TouchableOpacity

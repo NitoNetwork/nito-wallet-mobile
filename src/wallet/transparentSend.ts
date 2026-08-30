@@ -4,6 +4,8 @@ import {
   CONSOLIDATION_MIN_SATS_PER_OUTPUT,
   CONSOLIDATION_MIN_UTXOS,
   CONSOLIDATION_TARGET_OUTPUTS,
+  MAX_MONEY_SATS,
+  MAX_NITO_AMOUNT_INPUT_LENGTH,
 } from '../constants/nito';
 import { nitoWalletCrypto } from '../native/nitoWalletCrypto';
 import type {
@@ -30,6 +32,7 @@ export const DUST_LIMIT_SATS = 546n;
 
 export type TransparentSendErrorCode =
   | 'invalid-amount-format'
+  | 'amount-above-max-money'
   | 'amount-not-positive'
   | 'amount-below-dust'
   | 'signing-material-unavailable'
@@ -107,6 +110,10 @@ export type TransparentSendEstimate = Omit<MaxTransparentSendAmount, 'amountSats
 };
 
 export const parseNitoAmountToSats = (amount: string) => {
+  if (amount.length > MAX_NITO_AMOUNT_INPUT_LENGTH) {
+    throw new TransparentSendError('invalid-amount-format');
+  }
+
   const normalized = amount.trim().replace(/[\s\u00a0\u202f']/g, '').replace(',', '.');
 
   if (!/^\d+(\.\d{1,8})?$/.test(normalized)) {
@@ -118,6 +125,10 @@ export const parseNitoAmountToSats = (amount: string) => {
 
   if (sats <= 0n) {
     throw new TransparentSendError('amount-not-positive');
+  }
+
+  if (sats > MAX_MONEY_SATS) {
+    throw new TransparentSendError('amount-above-max-money');
   }
 
   if (sats < DUST_LIMIT_SATS) {
@@ -311,6 +322,7 @@ const normalizeSendOutputs = (outputs: TransparentSendOutput[]) => {
     throw new TransparentSendError('recipient-required');
   }
 
+  let totalSats = 0n;
   return outputs.map((output) => {
     const address = output.address.trim();
     if (!address) {
@@ -318,6 +330,13 @@ const normalizeSendOutputs = (outputs: TransparentSendOutput[]) => {
     }
     if (output.amountSats < DUST_LIMIT_SATS) {
       throw new TransparentSendError('recipient-output-dust');
+    }
+    if (output.amountSats > MAX_MONEY_SATS) {
+      throw new TransparentSendError('amount-above-max-money');
+    }
+    totalSats += output.amountSats;
+    if (totalSats > MAX_MONEY_SATS) {
+      throw new TransparentSendError('amount-above-max-money');
     }
     return { address, amountSats: output.amountSats };
   });
@@ -354,7 +373,9 @@ export const calculateMaxTransparentSendAmount = (
   }
   const fixedTotalSats = fixedOutputs.reduce((total, output) => total + output.amountSats, 0n);
   let low = DUST_LIMIT_SATS;
-  let high = totalSats - fixedTotalSats;
+  const availableForTarget = totalSats - fixedTotalSats;
+  const policyForTarget = MAX_MONEY_SATS - fixedTotalSats;
+  let high = availableForTarget < policyForTarget ? availableForTarget : policyForTarget;
   let best: MaxTransparentSendAmount | null = null;
 
   while (low <= high) {

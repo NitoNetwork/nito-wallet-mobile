@@ -311,6 +311,7 @@ describe('mobile wallet UX and security invariants', () => {
   it('keeps field validation beside the edited value and removes recipient review numbering', () => {
     expect(tabsSource).toContain('recipientErrors[recipient.id]?.address');
     expect(tabsSource).toContain('recipientErrors[recipient.id]?.amount');
+    expect(tabsSource).toContain('maxLength={MAX_NITO_AMOUNT_INPUT_LENGTH}');
     expect(settingsSource).toContain('customServerError');
     expect(tabsSource).not.toContain('`${index + 1}. ${satoshisToNito');
     expect(appSource).toContain('setUnlockPasswordError');

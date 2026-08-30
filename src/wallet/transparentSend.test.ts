@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest';
 
+import { MAX_MONEY_SATS, MAX_NITO_AMOUNT_INPUT_LENGTH } from '../constants/nito';
 import type { TransparentWalletSnapshot } from './transparentScan';
 import { deriveP2wpkhAddress } from './transparentScan';
 import { createNitoWalletCryptoTestDouble } from '../test/nitoWalletCryptoTestDouble';
 import {
+  DUST_LIMIT_SATS,
   TransparentSendError,
   assertTransparentSendFitsAvailable,
   buildTransparentMultiSend,
@@ -63,6 +65,43 @@ describe('transparent send builder', () => {
         code: 'invalid-amount-format',
       }),
     );
+  });
+
+  it('accepts the consensus money limit and rejects larger or oversized input', () => {
+    expect(parseNitoAmountToSats('1284565890.00000000')).toBe(MAX_MONEY_SATS);
+    expect(() => parseNitoAmountToSats('1284565890.00000001')).toThrowError(
+      expect.objectContaining({
+        name: 'TransparentSendError',
+        code: 'amount-above-max-money',
+      }),
+    );
+    expect(() => parseNitoAmountToSats(`1${'0'.repeat(MAX_NITO_AMOUNT_INPUT_LENGTH)}`)).toThrowError(
+      expect.objectContaining({
+        name: 'TransparentSendError',
+        code: 'invalid-amount-format',
+      }),
+    );
+  });
+
+  it('rejects a final recipient total above the consensus money limit', async () => {
+    await expect(buildTransparentMultiSend({
+      mnemonic,
+      snapshot: await makeSnapshot(),
+      outputs: [
+        {
+          address: 'nito1qcr8te4kr609gcawutmrza0j4xv80jy8z540c02',
+          amountSats: MAX_MONEY_SATS,
+        },
+        {
+          address: 'nito1qcr8te4kr609gcawutmrza0j4xv80jy8z540c02',
+          amountSats: DUST_LIMIT_SATS,
+        },
+      ],
+      crypto,
+    })).rejects.toMatchObject({
+      name: 'TransparentSendError',
+      code: 'amount-above-max-money',
+    });
   });
 
   it('builds and signs a local P2WPKH transaction without broadcasting', async () => {
