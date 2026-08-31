@@ -196,9 +196,9 @@ describe('mobile wallet UX and security invariants', () => {
 
   it('binds deferred wallet writes to the active wallet session', () => {
     expect(networkControllerSource).toContain('readonly sessions = new WalletSessionGuard();');
-    expect(networkControllerSource).toContain('return this.sessions.begin(walletAddress);');
+    expect(networkControllerSource).toContain('return this.sessions.begin(walletId);');
     expect(networkControllerSource).toMatch(/cancel\(\): void \{[\s\S]*?this\.sessions\.invalidate\(\);/);
-    expect(appSource).toContain('walletNetworkController.sessions.capture(activeWallet.address)');
+    expect(appSource).toContain('walletNetworkController.sessions.capture(activeWallet.walletId)');
     expect(appSource.match(/walletNetworkController\.isCurrent\(session\)/g)?.length ?? 0).toBeGreaterThanOrEqual(12);
     expect(appSource).toContain('startBroadcastReconciliation([txid], session)');
     expect(appSource).toContain('startBroadcastReconciliation(txids, session)');
@@ -395,7 +395,7 @@ describe('mobile wallet UX and security invariants', () => {
       /try \{\s*await deleteBiometricSecret\(\);[\s\S]*?await saveVault\(encrypted\);[\s\S]*?catch \(caught\) \{\s*setError\(translatedErrorMessage\([\s\S]*?errors\.saveFailed/,
     );
     expect(appSource).toMatch(
-      /await Clipboard\.setStringAsync\(wallet\.address\);[\s\S]*?catch \(caught\) \{\s*setError\(translatedErrorMessage\([\s\S]*?errors\.addressCopyFailed/,
+      /await Clipboard\.setStringAsync\(wallet\.receiveAddress\);[\s\S]*?catch \(caught\) \{\s*setError\(translatedErrorMessage\([\s\S]*?errors\.addressCopyFailed/,
     );
     expect(appSource).toMatch(
       /await openTransactionExplorer\(txid\);[\s\S]*?catch \(caught\) \{\s*setError\(translatedErrorMessage\([\s\S]*?errors\.explorerUnavailable/,
@@ -426,8 +426,8 @@ describe('mobile wallet UX and security invariants', () => {
     const resyncStart = appSource.indexOf('const resynchronizeWalletHistory = async () =>');
     const resyncEnd = appSource.indexOf('const askResynchronizeWalletHistory = () =>', resyncStart);
     const resyncSource = appSource.slice(resyncStart, resyncEnd);
-    const sqliteClear = resyncSource.indexOf('await clearWalletHistoryCache(activeWallet.address);');
-    const memoryReset = resyncSource.indexOf("}, activeWallet.address, 'replace');");
+    const sqliteClear = resyncSource.indexOf('await clearWalletHistoryCache(activeWallet.walletId);');
+    const memoryReset = resyncSource.indexOf("}, activeWallet.walletId, 'replace');");
     const attemptedReset = resyncSource.indexOf('enrichAttemptedRef.current.clear();');
     const freshScan = resyncSource.indexOf(
       'syncTransparentNetwork(true, { force: true, rescanGap: true })',

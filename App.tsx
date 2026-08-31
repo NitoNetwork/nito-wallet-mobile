@@ -196,8 +196,11 @@ import {
   type WalletSyncOptions,
 } from './src/services/walletNetworkController';
 import { applyOptimisticWalletBroadcast } from './src/wallet/optimisticConsolidation';
+import {
+  deriveLegacyCompatibleWallet,
+  restoreLegacyCompatibleWallet,
+} from './src/wallet/walletIdentity';
 
-const PRIMARY_DERIVATION_PATH = "m/84'/0'/0'/0/0";
 const BALANCE_REFRESH_COOLDOWN_KEY = 'nito.wallet.balance-refresh-until.v1';
 const BALANCE_REFRESH_COOLDOWN_MS = 120_000;
 const MNEMONIC_REVEAL_MS = 60_000;
@@ -325,20 +328,6 @@ const generateMnemonic24 = async (additionalEntropyBase64?: string) => (
   await nitoWalletCrypto.generateMnemonic(additionalEntropyBase64)
 ).mnemonic;
 
-const derivePrimaryAddress = async (mnemonic: string): Promise<Wallet> => {
-  const [derived] = await nitoWalletCrypto.deriveAddresses(mnemonic, [
-    { path: PRIMARY_DERIVATION_PATH, scriptType: 'p2wpkh' },
-  ]);
-  if (!derived) {
-    throw new Error('Unable to derive the primary HD address.');
-  }
-  return {
-    mnemonic,
-    address: derived.address,
-    derivationPath: PRIMARY_DERIVATION_PATH,
-  };
-};
-
 const validateImportMnemonic = (value: string, t: Translator) => {
   const normalized = normalizeMnemonic(value);
   const words = normalized.split(' ').filter(Boolean).length;
@@ -433,10 +422,10 @@ function WalletApp({ theme, onSelectTheme }: {
   const [historyEnrichmentRetryScheduler] =
     useState(() => new HistoryEnrichmentRetryScheduler());
   const electrumClientRef = useRef<NitoElectrumClient | null>(null);
-  const pendingNetworkRef = useRef<{ address: string; snapshot: TransparentWalletSnapshot; height: number } | null>(null);
+  const pendingNetworkRef = useRef<{ walletId: string; snapshot: TransparentWalletSnapshot; height: number } | null>(null);
   const walletRef = useRef<Wallet | null>(null);
   const networkRef = useRef<NetworkState>(createEmptyNetworkState());
-  const networkOwnerAddressRef = useRef<string | null>(null);
+  const networkOwnerWalletIdRef = useRef<string | null>(null);
   const silentNextAutoSyncRef = useRef(false);
   const subscriptionSyncFlushRef = useRef<() => void>(() => undefined);
   const autoBiometricAttemptedRef = useRef(false);
@@ -460,16 +449,16 @@ function WalletApp({ theme, onSelectTheme }: {
   const [network, setNetwork] = useState<NetworkState>(createEmptyNetworkState);
   const publishNetworkState = useCallback((
     incoming: NetworkState,
-    walletAddress = walletRef.current?.address ?? null,
+    walletId = walletRef.current?.walletId ?? null,
     historyMode: WalletNetworkHistoryPublicationMode = 'partial',
   ): NetworkState => {
     const nextNetwork = mergeWalletNetworkPublication(
       networkRef.current,
       incoming,
-      walletAddress !== null && networkOwnerAddressRef.current === walletAddress,
+      walletId !== null && networkOwnerWalletIdRef.current === walletId,
       historyMode,
     );
-    networkOwnerAddressRef.current = walletAddress;
+    networkOwnerWalletIdRef.current = walletId;
     networkRef.current = nextNetwork;
     setNetwork(nextNetwork);
     return nextNetwork;
@@ -616,7 +605,7 @@ function WalletApp({ theme, onSelectTheme }: {
         mnemonic: wallet.mnemonic,
         snapshot,
         outputs,
-        changeAddress: wallet.address,
+        changeAddress: wallet.walletId,
       }).then((estimate) => {
         if (cancelled) return;
         const summary = summarizeRecipientSpend(
@@ -868,7 +857,7 @@ function WalletApp({ theme, onSelectTheme }: {
       cachedHistory,
     });
     const { pendingPreload, network: nextNetwork } = entry;
-    walletNetworkController.beginWalletSession(nextWallet.address);
+    walletNetworkController.beginWalletSession(nextWallet.walletId);
     walletRef.current = nextWallet;
 
     if (pendingPreload) {
@@ -892,7 +881,7 @@ function WalletApp({ theme, onSelectTheme }: {
     setHistoryProgress(null);
     setHistorySyncing(false);
     setBroadcasting(false);
-    publishNetworkState(nextNetwork, nextWallet.address);
+    publishNetworkState(nextNetwork, nextWallet.walletId);
     resetSendDraft();
     setPreparedTx(null);
     setPreparedConsolidation(null);
@@ -915,7 +904,7 @@ function WalletApp({ theme, onSelectTheme }: {
       if (!walletNetworkController.isCurrentPrefetch(generation)) {
         return;
       }
-      pendingNetworkRef.current = { address: nextWallet.address, ...prefetched };
+      pendingNetworkRef.current = { walletId: nextWallet.walletId, ...prefetched };
     } catch (caught) {
       if (walletNetworkController.isCurrentPrefetch(generation)) {
         pendingNetworkRef.current = null;
@@ -932,7 +921,7 @@ function WalletApp({ theme, onSelectTheme }: {
   const scheduleHistoryEnrichmentRetries = useCallback(() => {
     const activeWallet = walletRef.current;
     const session = activeWallet
-      ? walletNetworkController.sessions.capture(activeWallet.address)
+      ? walletNetworkController.sessions.capture(activeWallet.walletId)
       : null;
     if (!session || screenRef.current !== 'wallet') {
       historyEnrichmentRetryScheduler.cancel();
@@ -966,7 +955,7 @@ function WalletApp({ theme, onSelectTheme }: {
       walletNetworkController.finishEnrichment(enrichWalletHistoryRef.current);
       return;
     }
-    const session = walletNetworkController.sessions.capture(activeWallet.address);
+    const session = walletNetworkController.sessions.capture(activeWallet.walletId);
     if (!session) {
       walletNetworkController.finishEnrichment(enrichWalletHistoryRef.current);
       return;
@@ -1013,7 +1002,7 @@ function WalletApp({ theme, onSelectTheme }: {
                 pending: batch,
                 client,
                 loadCachedOutputs: (txids) => loadTransactionOutputCache(
-                  activeWallet.address,
+                  activeWallet.walletId,
                   txids,
                 ),
                 onCacheReadError: (caught) => {
@@ -1027,7 +1016,7 @@ function WalletApp({ theme, onSelectTheme }: {
             publishBatch: async ({ records, outputs }) => {
               requireCurrentSession();
               await saveHistoryEnrichmentBatch(
-                activeWallet.address,
+                activeWallet.walletId,
                 records
                   .map((record) => ({
                     txid: record.txid,
@@ -1055,7 +1044,7 @@ function WalletApp({ theme, onSelectTheme }: {
                 snapshot: mergeHistoryEnrichment(current.snapshot, records),
               };
               requireCurrentSession();
-              publishNetworkState(nextNetwork, activeWallet.address);
+              publishNetworkState(nextNetwork, activeWallet.walletId);
             },
             onBatchPublished: () => {
               recordHistoryEnrichmentBatchOutcome(
@@ -1108,7 +1097,7 @@ function WalletApp({ theme, onSelectTheme }: {
           status: 'error',
           error: message,
         };
-        publishNetworkState(nextNetwork, activeWallet.address);
+        publishNetworkState(nextNetwork, activeWallet.walletId);
         setError(message);
       }
     } finally {
@@ -1152,7 +1141,7 @@ function WalletApp({ theme, onSelectTheme }: {
       publishNetwork: (nextNetwork, historyMode) => {
         const publishedNetwork = publishNetworkState(
           nextNetwork,
-          walletRef.current?.address ?? null,
+          walletRef.current?.walletId ?? null,
           historyMode,
         );
         // Deliberately release failed enrichment keys after every successful
@@ -1236,9 +1225,9 @@ function WalletApp({ theme, onSelectTheme }: {
   const advanceBlockHeight = useCallback((height: number) => {
     const activeWallet = walletRef.current;
     if (!activeWallet) return;
-    const session = walletNetworkController.sessions.capture(activeWallet.address);
+    const session = walletNetworkController.sessions.capture(activeWallet.walletId);
     if (!walletNetworkController.isCurrent(session)) return;
-    publishNetworkState({ ...networkRef.current, height }, activeWallet.address);
+    publishNetworkState({ ...networkRef.current, height }, activeWallet.walletId);
   }, [publishNetworkState, walletNetworkController]);
 
   const requestSync = useCallback((options: Parameters<typeof syncTransparentNetwork>[1]) => {
@@ -1275,7 +1264,7 @@ function WalletApp({ theme, onSelectTheme }: {
   } = useWalletSubscriptions({
     enabled: screen === 'wallet' && Boolean(wallet),
     wallet: {
-      address: wallet?.address,
+      walletId: wallet?.walletId,
       snapshot: network.snapshot,
     },
     electrum: {
@@ -1291,11 +1280,11 @@ function WalletApp({ theme, onSelectTheme }: {
   });
 
   const invalidateElectrumRuntime = useCallback(() => {
-    const activeWalletAddress = walletRef.current?.address ?? null;
+    const activeWalletId = walletRef.current?.walletId ?? null;
     invalidateElectrumRuntimeForServerChange({
       client: electrumClientRef.current,
       controller: walletNetworkController,
-      walletAddress: activeWalletAddress,
+      walletId: activeWalletId,
       clearClient: () => {
         electrumClientRef.current = null;
       },
@@ -1467,7 +1456,7 @@ function WalletApp({ theme, onSelectTheme }: {
         additionalEntropyBase64 !== undefined
         && secretGeneration !== transientSecretGenerationRef.current
       ) return;
-      const nextWallet = await derivePrimaryAddress(mnemonic);
+      const nextWallet = await deriveLegacyCompatibleWallet(mnemonic);
       walletLockAppliedRef.current = false;
       setPendingWallet(nextWallet);
       setPendingWalletRequiresSeedBackup(true);
@@ -1511,7 +1500,7 @@ function WalletApp({ theme, onSelectTheme }: {
     }
 
     try {
-      const nextWallet = await derivePrimaryAddress(mnemonic);
+      const nextWallet = await deriveLegacyCompatibleWallet(mnemonic);
       if (
         transientSecretGeneration !== transientSecretGenerationRef.current
         || screenRef.current !== 'import'
@@ -1597,11 +1586,7 @@ function WalletApp({ theme, onSelectTheme }: {
       const candidateCachedHistory = candidateCachedHistoryRead.status === 'hit'
         ? candidateCachedHistoryRead.value
         : null;
-      const unlockedWallet: Wallet = {
-        mnemonic: payload.mnemonic,
-        address: payload.address,
-        derivationPath: payload.derivationPath,
-      };
+      const unlockedWallet = restoreLegacyCompatibleWallet(payload);
       const cachedNetwork = vault.address === payload.address
         ? candidateCachedNetwork
         : await readOptionalCache(() => loadWalletSnapshotCache(payload.address)).then(
@@ -1616,12 +1601,12 @@ function WalletApp({ theme, onSelectTheme }: {
       applyVaultTransition({ type: 'unlock' });
       setUnlockPassword('');
       enterWallet(unlockedWallet, true, t('status.walletUnlocked'), cachedNetwork, cachedHistory);
-      const unlockedSession = walletNetworkController.sessions.capture(unlockedWallet.address);
+      const unlockedSession = walletNetworkController.sessions.capture(unlockedWallet.walletId);
       if (cachedNetwork && unlockedSession) {
         void (async () => {
           if (!walletNetworkController.isCurrent(unlockedSession)) return;
           await saveWalletSnapshotCache(
-            unlockedWallet.address,
+            unlockedWallet.walletId,
             toQuickWalletSnapshot(cachedNetwork.snapshot),
             cachedNetwork.height,
           );
@@ -1758,8 +1743,8 @@ function WalletApp({ theme, onSelectTheme }: {
         {
           version: 1,
           mnemonic: walletToPersist.mnemonic,
-          address: walletToPersist.address,
-          derivationPath: walletToPersist.derivationPath,
+          address: walletToPersist.walletId,
+          derivationPath: walletToPersist.walletIdDerivationPath,
           createdAt: new Date().toISOString(),
         },
         persistPassword,
@@ -1841,7 +1826,7 @@ function WalletApp({ theme, onSelectTheme }: {
 
   const removeSavedWallet = () => {
     resetFeedback();
-    const walletId = wallet?.address;
+    const walletId = wallet?.walletId;
     Alert.alert(
       t('dialog.deleteTitle'),
       t('dialog.deleteBody'),
@@ -2039,7 +2024,7 @@ function WalletApp({ theme, onSelectTheme }: {
     }
 
     try {
-      await Clipboard.setStringAsync(wallet.address);
+      await Clipboard.setStringAsync(wallet.receiveAddress);
     } catch (caught) {
       setError(translatedErrorMessage(
         caught,
@@ -2056,7 +2041,7 @@ function WalletApp({ theme, onSelectTheme }: {
           reportNonFinancialFailure('clipboard cleanup read', caught);
           return '';
         });
-        if (current === wallet.address) {
+        if (current === wallet.receiveAddress) {
           await Clipboard.setStringAsync('').catch((caught) => {
             reportNonFinancialFailure('clipboard cleanup write', caught);
           });
@@ -2110,7 +2095,7 @@ function WalletApp({ theme, onSelectTheme }: {
         mnemonic: wallet.mnemonic,
         snapshot: network.snapshot,
         outputs,
-        changeAddress: wallet.address,
+        changeAddress: wallet.walletId,
       });
       const summary = summarizeRecipientSpend(
         outputs.map((output) => output.amountSats),
@@ -2122,7 +2107,7 @@ function WalletApp({ theme, onSelectTheme }: {
         mnemonic: wallet.mnemonic,
         snapshot: network.snapshot,
         outputs,
-        changeAddress: wallet.address,
+        changeAddress: wallet.walletId,
       });
 
       setPreparedConsolidation(null);
@@ -2167,7 +2152,7 @@ function WalletApp({ theme, onSelectTheme }: {
           snapshot: network.snapshot,
           outputs,
           targetIndex,
-          changeAddress: wallet.address,
+          changeAddress: wallet.walletId,
         });
 
         setSendRecipients((current) => current.map((recipient) => (
@@ -2239,7 +2224,7 @@ function WalletApp({ theme, onSelectTheme }: {
     }
     const activeWallet = walletRef.current;
     const session = activeWallet
-      ? walletNetworkController.sessions.capture(activeWallet.address)
+      ? walletNetworkController.sessions.capture(activeWallet.walletId)
       : null;
     if (!session) {
       setError(t('errors.noActiveWallet'));
@@ -2264,7 +2249,7 @@ function WalletApp({ theme, onSelectTheme }: {
             txid,
           }),
         };
-        publishNetworkState(optimisticNetwork, session.walletAddress);
+        publishNetworkState(optimisticNetwork, session.walletId);
       }
 
       setPreparedTx(null);
@@ -2315,7 +2300,7 @@ function WalletApp({ theme, onSelectTheme }: {
         const plan = await buildTransparentConsolidation({
           mnemonic: wallet.mnemonic,
           snapshot: network.snapshot,
-          toAddress: wallet.address,
+          toAddress: wallet.walletId,
         });
         setPreparedTx(null);
         setPreparedConsolidation(plan);
@@ -2347,7 +2332,7 @@ function WalletApp({ theme, onSelectTheme }: {
       }
       const activeWallet = walletRef.current;
       const session = activeWallet
-        ? walletNetworkController.sessions.capture(activeWallet.address)
+        ? walletNetworkController.sessions.capture(activeWallet.walletId)
         : null;
       if (!session) {
         setError(t('errors.noActiveWallet'));
@@ -2374,7 +2359,7 @@ function WalletApp({ theme, onSelectTheme }: {
               txid,
             });
             const optimisticNetwork = { ...currentNetwork, snapshot: optimisticSnapshot };
-            publishNetworkState(optimisticNetwork, session.walletAddress);
+            publishNetworkState(optimisticNetwork, session.walletId);
           }
         }
         setPreparedConsolidation(null);
@@ -2591,7 +2576,7 @@ function WalletApp({ theme, onSelectTheme }: {
       resetFeedback();
       const activeWallet = walletRef.current;
       const session = activeWallet
-        ? walletNetworkController.sessions.capture(activeWallet.address)
+        ? walletNetworkController.sessions.capture(activeWallet.walletId)
         : null;
       try {
         if (!activeWallet || !session) {
@@ -2630,7 +2615,7 @@ function WalletApp({ theme, onSelectTheme }: {
               walletAddresses: snapshot.addresses.map((address) => address.address),
               reader: client,
               loadCachedOutputs: (txids) => loadTransactionOutputCache(
-                activeWallet.address,
+                activeWallet.walletId,
                 txids,
               ),
               onCacheReadError: (caught) => {
@@ -2649,7 +2634,7 @@ function WalletApp({ theme, onSelectTheme }: {
             }
             if (!walletNetworkController.isCurrent(session)) return;
             await saveHistoryEnrichmentBatch(
-              activeWallet.address,
+              activeWallet.walletId,
               fresh
                 .map((record) => ({
                   txid: record.txid,
@@ -2674,7 +2659,7 @@ function WalletApp({ theme, onSelectTheme }: {
                 ...current,
                 snapshot: mergeHistoryEnrichment(current.snapshot, fresh),
               };
-              publishNetworkState(nextNetwork, activeWallet.address);
+              publishNetworkState(nextNetwork, activeWallet.walletId);
             }
             if (!walletNetworkController.isCurrent(session)) return;
             recordHistoryEnrichmentBatchOutcome(
@@ -2733,7 +2718,7 @@ function WalletApp({ theme, onSelectTheme }: {
         setError(t('errors.walletSyncing'));
         return;
       }
-      const session = walletNetworkController.sessions.capture(activeWallet.address);
+      const session = walletNetworkController.sessions.capture(activeWallet.walletId);
       if (!session) {
         setError(t('errors.noActiveWallet'));
         return;
@@ -2742,7 +2727,7 @@ function WalletApp({ theme, onSelectTheme }: {
       try {
         setWalletTab('history');
         clearAddressSubscriptions();
-        await clearWalletHistoryCache(activeWallet.address);
+        await clearWalletHistoryCache(activeWallet.walletId);
         if (!walletNetworkController.isCurrent(session)) return;
         historyEnrichmentRetryScheduler.cancel();
         const currentNetwork = networkRef.current;
@@ -2753,7 +2738,7 @@ function WalletApp({ theme, onSelectTheme }: {
               ...currentNetwork.snapshot,
               history: [],
             },
-          }, activeWallet.address, 'replace');
+          }, activeWallet.walletId, 'replace');
         }
         enrichAttemptedRef.current.clear();
         enrichFailedRef.current.clear();
@@ -2811,7 +2796,7 @@ function WalletApp({ theme, onSelectTheme }: {
     const now = Date.now();
     const activeWallet = walletRef.current;
     if (balanceRefreshing || walletNetworkController.syncInFlight || pendingActionRef.current || !activeWallet) return;
-    const session = walletNetworkController.sessions.capture(activeWallet.address);
+    const session = walletNetworkController.sessions.capture(activeWallet.walletId);
     if (!session) return;
     if (now < refreshCooldownUntil) {
       Alert.alert(
@@ -3007,7 +2992,7 @@ function WalletApp({ theme, onSelectTheme }: {
         <HistoryTab
           t={t}
           language={language}
-          walletId={wallet.address}
+          walletId={wallet.walletId}
           network={network}
           actionLocked={actionLocked}
           pendingAction={pendingAction}

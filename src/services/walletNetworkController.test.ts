@@ -32,8 +32,10 @@ vi.mock('../wallet/transparentScan', async (importOriginal) => {
 
 const wallet: Wallet = {
   mnemonic: 'test mnemonic',
-  address: 'wallet-a',
-  derivationPath: "m/84'/0'/0'/0/0",
+  walletId: 'wallet-a',
+  walletIdDerivationPath: "m/84'/0'/0'/0/0",
+  receiveAddress: 'wallet-a',
+  receiveDerivationPath: "m/84'/0'/0'/0/0",
 };
 const snapshot: TransparentWalletSnapshot = {
   confirmedSats: 0,
@@ -122,7 +124,7 @@ describe('WalletNetworkController', () => {
 
   it('does not write or publish after the active wallet changes during a cache read', async () => {
     const controller = new WalletNetworkController();
-    controller.beginWalletSession(wallet.address);
+    controller.beginWalletSession(wallet.walletId);
     const saveHistory = vi.fn();
     const saveSnapshot = vi.fn();
     const publishNetwork = vi.fn();
@@ -158,7 +160,7 @@ describe('WalletNetworkController', () => {
 
   it('publishes a complete fresh-cache snapshot for the current session', async () => {
     const controller = new WalletNetworkController();
-    controller.beginWalletSession(wallet.address);
+    controller.beginWalletSession(wallet.walletId);
     const publishNetwork = vi.fn();
     const settlement: string[] = [];
     const finishSync = vi.fn(() => {
@@ -212,7 +214,7 @@ describe('WalletNetworkController', () => {
 
   it('preserves cached wallet data when a saved custom server is unreachable', async () => {
     const controller = new WalletNetworkController();
-    controller.beginWalletSession(wallet.address);
+    controller.beginWalletSession(wallet.walletId);
     let currentNetwork = network;
     const publishNetwork = vi.fn((next: NetworkState) => {
       currentNetwork = next;
@@ -256,7 +258,7 @@ describe('WalletNetworkController', () => {
 
   it('never exposes a raw SQLite driver error during synchronization', async () => {
     const controller = new WalletNetworkController();
-    controller.beginWalletSession(wallet.address);
+    controller.beginWalletSession(wallet.walletId);
     const setError = vi.fn();
     const publishNetwork = vi.fn();
 
@@ -294,9 +296,9 @@ describe('WalletNetworkController', () => {
 
   it('preserves enrichment published while a synchronization scan is in flight', async () => {
     const controller = new WalletNetworkController();
-    controller.beginWalletSession(wallet.address);
+    controller.beginWalletSession(wallet.walletId);
     const txid = 'a'.repeat(64);
-    const rawEntry = { txid, height: 100, address: wallet.address };
+    const rawEntry = { txid, height: 100, address: wallet.walletId };
     const enrichedEntry = {
       ...rawEntry,
       direction: 'received' as const,
@@ -392,7 +394,7 @@ describe('wallet network publication invariant', () => {
   const enrichedEntry = {
     txid,
     height: 100,
-    address: wallet.address,
+    address: wallet.walletId,
     direction: 'sent' as const,
     amountSats: 42_000_000,
     feeSats: 12_345,
@@ -413,8 +415,8 @@ describe('wallet network publication invariant', () => {
       snapshot: {
         ...snapshot,
         history: [
-          { txid, height: 100, address: wallet.address },
-          { txid: 'b'.repeat(64), height: 0, address: wallet.address },
+          { txid, height: 100, address: wallet.walletId },
+          { txid: 'b'.repeat(64), height: 0, address: wallet.walletId },
         ],
       },
     }],
@@ -444,7 +446,7 @@ describe('wallet network publication invariant', () => {
       ...network,
       snapshot: {
         ...snapshot,
-        history: [{ txid, height: 0, address: wallet.address }],
+        history: [{ txid, height: 0, address: wallet.walletId }],
       },
     });
     const confirmed = mergeWalletNetworkPublication(republished, {
@@ -452,7 +454,7 @@ describe('wallet network publication invariant', () => {
       height: 101,
       snapshot: {
         ...snapshot,
-        history: [{ txid, height: 101, address: wallet.address }],
+        history: [{ txid, height: 101, address: wallet.walletId }],
       },
     });
 
@@ -472,7 +474,7 @@ describe('wallet network publication invariant', () => {
     const staleMempool = {
       txid: 'c'.repeat(64),
       height: 0,
-      address: wallet.address,
+      address: wallet.walletId,
     };
     const current: NetworkState = {
       ...enrichedNetwork,
@@ -488,7 +490,7 @@ describe('wallet network publication invariant', () => {
       ...network,
       snapshot: {
         ...snapshot,
-        history: [{ txid, height: 103, address: wallet.address }],
+        history: [{ txid, height: 103, address: wallet.walletId }],
       },
     };
 
@@ -524,7 +526,7 @@ describe('wallet network publication invariant', () => {
         ...network,
         snapshot: {
           ...snapshot,
-          history: [{ txid, height: 100, address: wallet.address }],
+          history: [{ txid, height: 100, address: wallet.walletId }],
         },
       },
       true,
@@ -557,14 +559,14 @@ describe('wallet network publication invariant', () => {
         ...network,
         snapshot: {
           ...snapshot,
-          history: [{ txid, height: 100, address: wallet.address }],
+          history: [{ txid, height: 100, address: wallet.walletId }],
         },
       },
       true,
       'authoritative',
     );
     expect(freshScan.snapshot?.history).toEqual([
-      { txid, height: 100, address: wallet.address },
+      { txid, height: 100, address: wallet.walletId },
     ]);
     expect(freshScan.snapshot?.history.every(needsHistoryEnrichment)).toBe(true);
   });
@@ -596,7 +598,7 @@ describe('wallet network publication invariant', () => {
         ...network,
         snapshot: {
           ...snapshot,
-          history: [{ txid, height: 103, address: wallet.address }],
+          history: [{ txid, height: 103, address: wallet.walletId }],
         },
       },
       true,

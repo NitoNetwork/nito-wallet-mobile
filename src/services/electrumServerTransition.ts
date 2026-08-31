@@ -5,7 +5,7 @@ import type { WalletNetworkController } from './walletNetworkController';
 export const invalidateElectrumRuntimeForServerChange = ({
   client,
   controller,
-  walletAddress,
+  walletId,
   clearClient,
   clearPreparedTransaction,
   clearPreparedConsolidation,
@@ -13,7 +13,7 @@ export const invalidateElectrumRuntimeForServerChange = ({
 }: {
   client: NitoElectrumClient | null;
   controller: WalletNetworkController;
-  walletAddress: string | null;
+  walletId: string | null;
   clearClient: () => void;
   clearPreparedTransaction: () => void;
   clearPreparedConsolidation: () => void;
@@ -29,7 +29,7 @@ export const invalidateElectrumRuntimeForServerChange = ({
   clearPreparedTransaction();
   clearPreparedConsolidation();
   clearDeferredNetworkWork();
-  if (walletAddress) {
-    controller.beginWalletSession(walletAddress);
+  if (walletId) {
+    controller.beginWalletSession(walletId);
   }
 };

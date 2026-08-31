@@ -54,10 +54,10 @@ export function ReceiveTab({ wallet, t, pendingAction, actionLocked, onCopyAddre
     <View style={styles.card}>
       <Text style={styles.sectionTitle}>{t('receive.title')}</Text>
       <View style={styles.qrPlaceholder}>
-        <QRCode value={wallet.address} size={204} quietZone={12} color={qrColors.foreground} backgroundColor={qrColors.background} />
+        <QRCode value={wallet.receiveAddress} size={204} quietZone={12} color={qrColors.foreground} backgroundColor={qrColors.background} />
       </View>
       <Text style={styles.label}>{t('receive.bech32Address')}</Text>
-      <Text selectable style={styles.address}>{wallet.address}</Text>
+      <Text selectable style={styles.address}>{wallet.receiveAddress}</Text>
       <ActionButton label={t('actions.copyAddress')} loading={pendingAction === 'copy'} disabled={actionLocked} onPress={onCopyAddress} />
     </View>
   );
@@ -648,7 +648,7 @@ export function HomeTab({
       </View>
       <View style={styles.preview}>
         <Text style={styles.label}>{t('home.mainAddress')}</Text>
-        <Text style={styles.previewAddress}>{shortAddress(wallet.address)}</Text>
+        <Text style={styles.previewAddress}>{shortAddress(wallet.receiveAddress)}</Text>
       </View>
       {!preparedConsolidation && network.snapshot && eligibleUtxos.length >= CONSOLIDATION_MIN_UTXOS ? (
         <ActionButton

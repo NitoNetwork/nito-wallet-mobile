@@ -120,12 +120,12 @@ export const prepareWalletEntry = ({
   cachedNetwork,
   cachedHistory,
 }: {
-  pendingNetwork: ({ address: string } & WalletSnapshotCache) | null;
+  pendingNetwork: ({ walletId: string } & WalletSnapshotCache) | null;
   wallet: Wallet;
   cachedNetwork?: WalletSnapshotCache | null;
   cachedHistory?: WalletHistoryCache | null;
 }) => {
-  const pendingPreload = pendingNetwork?.address === wallet.address ? pendingNetwork : null;
+  const pendingPreload = pendingNetwork?.walletId === wallet.walletId ? pendingNetwork : null;
   const fullHistoryEnabled = (cachedHistory?.fullHistoryHeight ?? 0) > 0;
   const quickCachedSnapshot = cachedNetwork
     ? toQuickWalletSnapshot(cachedNetwork.snapshot)
@@ -326,15 +326,15 @@ type WalletNetworkSyncPorts = {
   getClient: () => NitoElectrumClient | null;
   setClient: (client: NitoElectrumClient) => void;
   actionPending: () => boolean;
-  readHistoryCache: (walletAddress: string) => Promise<OptionalCacheRead<WalletHistoryCache>>;
+  readHistoryCache: (walletId: string) => Promise<OptionalCacheRead<WalletHistoryCache>>;
   saveHistory: (
-    walletAddress: string,
+    walletId: string,
     history: TransparentWalletSnapshot['history'],
     height: number,
     historyMode: WalletHistoryPublicationMode,
   ) => Promise<void>;
   saveSnapshot: (
-    walletAddress: string,
+    walletId: string,
     snapshot: TransparentWalletSnapshot,
     height: number,
   ) => Promise<void>;
@@ -381,7 +381,7 @@ export const synchronizeWalletNetwork = async (
     ports.setError(ports.messages.noActiveWallet);
     return;
   }
-  const session = ports.controller.sessions.capture(activeWallet.address);
+  const session = ports.controller.sessions.capture(activeWallet.walletId);
   if (!session) return;
   if ((ports.actionPending() && !options.force) || !ports.controller.startSync()) return;
   if (!includeHistory) ports.setBalanceRefreshing(true);
@@ -400,7 +400,7 @@ export const synchronizeWalletNetwork = async (
     };
     if (!ports.controller.isCurrent(session)) return;
     const knownHeight = client.blockHeight || currentNetwork.height;
-    const cacheRead = await ports.readHistoryCache(activeWallet.address);
+    const cacheRead = await ports.readHistoryCache(activeWallet.walletId);
     const cacheReadFailed = cacheRead.status === 'failed';
     const cache = cacheRead.status === 'hit'
       ? cacheRead.value
@@ -448,7 +448,7 @@ export const synchronizeWalletNetwork = async (
         height: knownHeight,
         fullHistoryEnabled: true,
       };
-      await ports.saveSnapshot(activeWallet.address, toQuickWalletSnapshot(snapshot), knownHeight);
+      await ports.saveSnapshot(activeWallet.walletId, toQuickWalletSnapshot(snapshot), knownHeight);
       if (!ports.controller.isCurrent(session)) return;
       requireConnectedSession();
       publishNetwork(nextNetwork);
@@ -500,7 +500,7 @@ export const synchronizeWalletNetwork = async (
     if (!cacheAlreadyFresh || options.force || options.rescanGap) {
       requireConnectedSession();
       await ports.saveHistory(
-        activeWallet.address,
+        activeWallet.walletId,
         mergedHistory,
         historyMode === 'authoritative' ? knownHeight : cache.fullHistoryHeight,
         historyMode,
@@ -517,7 +517,7 @@ export const synchronizeWalletNetwork = async (
       height: knownHeight,
       fullHistoryEnabled: true,
     };
-    await ports.saveSnapshot(activeWallet.address, toQuickWalletSnapshot(snapshot), knownHeight);
+    await ports.saveSnapshot(activeWallet.walletId, toQuickWalletSnapshot(snapshot), knownHeight);
     if (!ports.controller.isCurrent(session)) return;
     requireConnectedSession();
     publishNetwork(nextNetwork, historyMode);
@@ -589,13 +589,13 @@ export class WalletNetworkController {
   private syncing = false;
   private enriching = false;
 
-  beginWalletSession(walletAddress: string): WalletSessionToken {
+  beginWalletSession(walletId: string): WalletSessionToken {
     this.prefetchGeneration += 1;
     this.syncing = false;
     this.enriching = false;
     this.dirty.clear();
     this.dirtyEnrichment.clear();
-    return this.sessions.begin(walletAddress);
+    return this.sessions.begin(walletId);
   }
 
   cancel(): void {
