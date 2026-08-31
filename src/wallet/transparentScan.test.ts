@@ -103,6 +103,61 @@ describe('transparent HD scan', () => {
     }));
   });
 
+  it('restores a used internal Taproot address and its spendable output within the gap', async () => {
+    const internal = (await crypto.deriveAddresses(mnemonic, [{
+      path: "m/86'/0'/0'/1/7",
+      scriptType: 'p2tr',
+    }]))[0]!;
+    const reader = {
+      async getAddressBalance(address: string): Promise<ElectrumBalance> {
+        return address === internal.address
+          ? { confirmedSats: 75_000, unconfirmedSats: 0, totalSats: 75_000 }
+          : { confirmedSats: 0, unconfirmedSats: 0, totalSats: 0 };
+      },
+      async getAddressUtxos(address: string): Promise<ElectrumUtxo[]> {
+        return address === internal.address ? [{
+          txid: '7a'.repeat(32),
+          vout: 1,
+          valueSats: 75_000,
+          height: 500,
+          address,
+          confirmations: 120,
+          isCoinbase: false,
+        }] : [];
+      },
+      async getAddressHistory(address: string): Promise<ElectrumHistoryEntry[]> {
+        return address === internal.address
+          ? [{ txid: '7a'.repeat(32), height: 500, address }]
+          : [];
+      },
+    };
+
+    const restored = await scanP2wpkhAccount({
+      mnemonic,
+      electrum: reader,
+      gapLimit: 20,
+      crypto,
+      issuedAddresses: [{
+        accountKey: 'taproot',
+        branch: 'internal',
+        highestIssuedIndex: 7,
+      }],
+    });
+
+    expect(restored.addresses).toContainEqual(expect.objectContaining({
+      accountKey: 'taproot',
+      branch: 'internal',
+      index: 7,
+      address: internal.address,
+      used: true,
+    }));
+    expect(restored.utxos).toContainEqual(expect.objectContaining({
+      txid: '7a'.repeat(32),
+      address: internal.address,
+      valueSats: 75_000,
+    }));
+  });
+
   it('refreshes a pending known address without deriving or scanning new gap addresses', async () => {
     const usedAddress = (await deriveP2wpkhAddress(mnemonic, 'external', 0, crypto)).address;
     let confirmed = false;

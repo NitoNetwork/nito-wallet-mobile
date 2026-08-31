@@ -81,6 +81,7 @@ import type {
 
 import {
   ElectrumSessionUnhealthyError,
+  isElectrumTransactionNotFoundError,
   type NitoElectrumClient,
   scriptPubKeyForNitoAddress,
 } from './src/network/electrum';
@@ -132,6 +133,7 @@ import {
   clearWalletHistoryCache,
   loadCurrentHdAddressIndex,
   loadHdAddressRequirements,
+  loadTransactionLifecycles,
   loadTransactionOutputCache,
   loadWalletHistoryCache,
   loadWalletSnapshotCache,
@@ -139,6 +141,13 @@ import {
   saveWalletHistoryCache,
   saveWalletSnapshotCache,
   reserveNextHdAddressIndex,
+  attachInternalTransactionAddresses,
+  markTransactionLifecycleBroadcastUncertain,
+  markTransactionLifecyclePublished,
+  markTransactionLifecycleSigned,
+  reconcileTransactionLifecycles,
+  reserveInternalTaprootTransactions,
+  reserveTransactionWithoutAddress,
 } from './src/services/walletHistoryDb';
 import {
   satoshisToNito,
@@ -146,13 +155,17 @@ import {
 } from './src/wallet/transparentScan';
 import {
   assertTransparentSendFitsAvailable,
-  buildTransparentConsolidation,
-  buildTransparentMultiSend,
+  assertTransparentConsolidationPlanMatches,
+  assertTransparentSendPlanMatches,
+  assertUnsignedTransparentInputsAvailable,
   calculateMaxTransparentSendAmount,
   estimateTransparentMultiSend,
   parseNitoAmountToSats,
-  type PreparedTransparentConsolidation,
-  type PreparedTransparentSend,
+  prepareUnsignedTransparentConsolidation,
+  prepareUnsignedTransparentMultiSend,
+  signUnsignedTransparentTx,
+  type UnsignedTransparentConsolidation,
+  type UnsignedTransparentSend,
   type TransparentSendOutput,
 } from './src/wallet/transparentSend';
 import { makeConsolidationTranslator } from './src/i18n.consolidation';
@@ -335,6 +348,28 @@ type SendEstimateState = {
   fitsAvailable: boolean;
 };
 
+const internalTaprootReservationRange = ({
+  snapshot,
+  highestIssuedIndex,
+  count,
+}: {
+  snapshot: TransparentWalletSnapshot;
+  highestIssuedIndex: number;
+  count: number;
+}) => {
+  const sequence = { accountKey: 'taproot' as const, branch: 'internal' as const };
+  const highestUsed = highestUsedHdIndex(snapshot.addresses, sequence);
+  const minimumIndex = Math.max(highestIssuedIndex + 1, highestUsed + 1, 0);
+  const maximumIndex = highestUsed + snapshot.gapLimit;
+  assertGapSafeIssuedIndex({
+    addresses: snapshot.addresses,
+    sequence,
+    index: minimumIndex + count - 1,
+    gapLimit: snapshot.gapLimit,
+  });
+  return { minimumIndex, maximumIndex };
+};
+
 const generateMnemonic24 = async (additionalEntropyBase64?: string) => (
   await nitoWalletCrypto.generateMnemonic(additionalEntropyBase64)
 ).mnemonic;
@@ -485,9 +520,9 @@ function WalletApp({ theme, onSelectTheme }: {
   const qrRecipientIdRef = useRef<number | null>(null);
   const [sendEstimate, setSendEstimate] = useState<SendEstimateState | null>(null);
   const [sendEstimatePending, setSendEstimatePending] = useState(false);
-  const [preparedTx, setPreparedTx] = useState<PreparedTransparentSend | null>(null);
+  const [preparedTx, setPreparedTx] = useState<UnsignedTransparentSend | null>(null);
   const [preparedConsolidation, setPreparedConsolidation] =
-    useState<PreparedTransparentConsolidation | null>(null);
+    useState<UnsignedTransparentConsolidation | null>(null);
   const [broadcasting, setBroadcasting] = useState(false);
   const [seedSaved, setSeedSaved] = useState(false);
   const [vaultUnlockMode, setVaultUnlockMode] = useState<'password' | 'biometric'>('password');
@@ -614,12 +649,14 @@ function WalletApp({ theme, onSelectTheme }: {
 
     const snapshot = network.snapshot;
     const timer = setTimeout(() => {
-      void estimateTransparentMultiSend({
-        mnemonic: wallet.mnemonic,
-        snapshot,
-        outputs,
-        changeAddress: wallet.walletId,
-      }).then((estimate) => {
+      void deriveHdAddress(wallet.mnemonic, 'taproot', 'internal', 0).then((previewChange) => (
+        estimateTransparentMultiSend({
+          mnemonic: wallet.mnemonic,
+          snapshot,
+          outputs,
+          changeAddress: previewChange.address,
+        })
+      )).then((estimate) => {
         if (cancelled) return;
         const summary = summarizeRecipientSpend(
           outputs.map((output) => output.amountSats),
@@ -1189,6 +1226,49 @@ function WalletApp({ theme, onSelectTheme }: {
         walletStorageUnavailable: t('errors.walletStorageUnavailable'),
       },
     }, includeHistory, options);
+    const activeWallet = walletRef.current;
+    const currentNetwork = networkRef.current;
+    if (activeWallet && currentNetwork.status === 'connected' && currentNetwork.snapshot) {
+      try {
+        await reconcileTransactionLifecycles(
+          activeWallet.walletId,
+          currentNetwork.snapshot.history,
+        );
+        const lifecycles = await loadTransactionLifecycles(activeWallet.walletId);
+        const uncertain = lifecycles.filter((record) => (
+          record.state === 'broadcast-uncertain' && record.txid
+        ));
+        const client = electrumClientRef.current;
+        if (client) {
+          for (const record of uncertain) {
+            if (!record.txid || walletRef.current?.walletId !== activeWallet.walletId) break;
+            let found = false;
+            try {
+              await client.getTransactionHex(record.txid);
+              found = true;
+            } catch (caught) {
+              if (!isElectrumTransactionNotFoundError(caught)) {
+                reportNonFinancialFailure('transaction lifecycle network reconciliation', caught);
+                break;
+              }
+            }
+            if (found) {
+              await markTransactionLifecyclePublished(
+                activeWallet.walletId,
+                record.lifecycleId,
+              );
+            }
+          }
+        }
+      } catch (caught) {
+        setError(translatedErrorMessage(
+          caught,
+          t,
+          t('errors.walletStorageUnavailable'),
+          'transaction lifecycle reconciliation',
+        ));
+      }
+    }
   }, [
     historyEnrichmentRetryScheduler,
     publishNetworkState,
@@ -2265,11 +2345,17 @@ function WalletApp({ theme, onSelectTheme }: {
         address: recipient.address,
         amountSats: parseNitoAmountToSats(recipient.amount),
       }));
+      const previewChange = await deriveHdAddress(
+        wallet.mnemonic,
+        'taproot',
+        'internal',
+        0,
+      );
       const estimate = await estimateTransparentMultiSend({
         mnemonic: wallet.mnemonic,
         snapshot: network.snapshot,
         outputs,
-        changeAddress: wallet.walletId,
+        changeAddress: previewChange.address,
       });
       const summary = summarizeRecipientSpend(
         outputs.map((output) => output.amountSats),
@@ -2277,11 +2363,11 @@ function WalletApp({ theme, onSelectTheme }: {
         BigInt(network.snapshot.spendableSats),
       );
       assertTransparentSendFitsAvailable(estimate.fitsAvailable && summary.fitsAvailable);
-      const tx = await buildTransparentMultiSend({
+      const tx = await prepareUnsignedTransparentMultiSend({
         mnemonic: wallet.mnemonic,
         snapshot: network.snapshot,
         outputs,
-        changeAddress: wallet.walletId,
+        changeAddress: previewChange.address,
       });
 
       setPreparedConsolidation(null);
@@ -2317,6 +2403,12 @@ function WalletApp({ theme, onSelectTheme }: {
       }
 
       try {
+        const previewChange = await deriveHdAddress(
+          wallet.mnemonic,
+          'taproot',
+          'internal',
+          0,
+        );
         const outputs = sendRecipients.map((recipient, index) => ({
           address: recipient.address,
           amountSats: index === targetIndex ? 0n : parseNitoAmountToSats(recipient.amount),
@@ -2326,7 +2418,7 @@ function WalletApp({ theme, onSelectTheme }: {
           snapshot: network.snapshot,
           outputs,
           targetIndex,
-          changeAddress: wallet.walletId,
+          changeAddress: previewChange.address,
         });
 
         setSendRecipients((current) => current.map((recipient) => (
@@ -2405,12 +2497,100 @@ function WalletApp({ theme, onSelectTheme }: {
       return;
     }
 
+    let signedTxid: string | null = null;
+    let broadcastAttempted = false;
     try {
       setBroadcasting(true);
+      const activeSnapshot = networkRef.current.snapshot;
+      if (!activeSnapshot || !activeWallet) {
+        setError(t('errors.walletSyncing'));
+        return;
+      }
+      const preview = preparedTx;
+      let changeAddress = (await deriveHdAddress(
+        activeWallet.mnemonic,
+        'taproot',
+        'internal',
+        0,
+      )).address;
+      let lifecycle: Awaited<ReturnType<typeof reserveTransactionWithoutAddress>>;
+      if (preview.changeUsed) {
+        const requirements = await loadHdAddressRequirements(activeWallet.walletId);
+        const highestIssuedIndex = requirements.find((requirement) => (
+          requirement.accountKey === 'taproot' && requirement.branch === 'internal'
+        ))?.highestIssuedIndex ?? -1;
+        const range = internalTaprootReservationRange({
+          snapshot: activeSnapshot,
+          highestIssuedIndex,
+          count: 1,
+        });
+        const [reserved] = await reserveInternalTaprootTransactions({
+          walletId: activeWallet.walletId,
+          purpose: 'send',
+          count: 1,
+          ...range,
+        });
+        if (!reserved || reserved.addressIndex === null) {
+          throw new Error('Internal Taproot reservation is incomplete.');
+        }
+        const derived = await deriveHdAddress(
+          activeWallet.mnemonic,
+          'taproot',
+          'internal',
+          reserved.addressIndex,
+        );
+        await attachInternalTransactionAddresses(activeWallet.walletId, [{
+          lifecycleId: reserved.lifecycleId,
+          address: derived.address,
+        }]);
+        lifecycle = { ...reserved, address: derived.address };
+        changeAddress = derived.address;
+      } else {
+        lifecycle = await reserveTransactionWithoutAddress(activeWallet.walletId, 'send');
+      }
+      if (!walletNetworkController.isCurrent(session)) return;
+      const rebuildSnapshot = networkRef.current.snapshot;
+      if (!rebuildSnapshot) throw new Error('Wallet snapshot unavailable before reconstruction.');
+      const rebuilt = await prepareUnsignedTransparentMultiSend({
+        mnemonic: activeWallet.mnemonic,
+        snapshot: rebuildSnapshot,
+        outputs: preview.recipients,
+        changeAddress,
+      });
+      assertTransparentSendPlanMatches(preview, rebuilt);
+      if (
+        rebuilt.changeUsed
+        && !rebuilt.walletOutputs.some((output) => output.address === changeAddress)
+      ) {
+        throw new Error('Reserved internal Taproot address is missing from the transaction.');
+      }
+      const signingSnapshot = networkRef.current.snapshot;
+      if (!signingSnapshot) throw new Error('Wallet snapshot unavailable before signing.');
+      assertUnsignedTransparentInputsAvailable(rebuilt, signingSnapshot);
+      const signed = await signUnsignedTransparentTx({
+        mnemonic: activeWallet.mnemonic,
+        transaction: rebuilt,
+      });
+      signedTxid = signed.txid;
+      await markTransactionLifecycleSigned(
+        activeWallet.walletId,
+        lifecycle.lifecycleId,
+        signed.txid,
+        signed.hex,
+      );
+      setPreparedTx(null);
+      setPreparedConsolidation(null);
+      if (!walletNetworkController.isCurrent(session)) return;
+      await markTransactionLifecycleBroadcastUncertain(
+        activeWallet.walletId,
+        lifecycle.lifecycleId,
+      );
       const client = electrumClientRef.current || createElectrumClient();
       electrumClientRef.current = client;
-      const transaction = preparedTx;
+      broadcastAttempted = true;
+      const transaction = { ...signed, recipients: rebuilt.recipients };
       const txid = await client.broadcastTransaction(transaction.hex, transaction.txid);
+      await markTransactionLifecyclePublished(activeWallet.walletId, lifecycle.lifecycleId);
       if (!walletNetworkController.isCurrent(session)) return;
 
       const currentNetwork = networkRef.current;
@@ -2426,8 +2606,6 @@ function WalletApp({ theme, onSelectTheme }: {
         publishNetworkState(optimisticNetwork, session.walletId);
       }
 
-      setPreparedTx(null);
-      setPreparedConsolidation(null);
       resetSendDraft();
       setStatus(t('status.transactionSent', { txid }));
       Alert.alert(
@@ -2452,6 +2630,9 @@ function WalletApp({ theme, onSelectTheme }: {
           t('errors.sendFailed'),
           'transparent transaction broadcast',
         ));
+        if (signedTxid && broadcastAttempted) {
+          startBroadcastReconciliation([signedTxid], session);
+        }
       }
     } finally {
       if (walletNetworkController.isCurrent(session)) {
@@ -2471,10 +2652,16 @@ function WalletApp({ theme, onSelectTheme }: {
         return;
       }
       try {
-        const plan = await buildTransparentConsolidation({
+        const previewAddress = await deriveHdAddress(
+          wallet.mnemonic,
+          'taproot',
+          'internal',
+          0,
+        );
+        const plan = await prepareUnsignedTransparentConsolidation({
           mnemonic: wallet.mnemonic,
           snapshot: network.snapshot,
-          toAddress: wallet.walletId,
+          toAddresses: [previewAddress.address],
         });
         setPreparedTx(null);
         setPreparedConsolidation(plan);
@@ -2514,16 +2701,110 @@ function WalletApp({ theme, onSelectTheme }: {
       }
 
       setBroadcasting(true);
-      const client = electrumClientRef.current || createElectrumClient();
-      electrumClientRef.current = client;
-      const txids: string[] = [];
+      const reconciliationTxids: string[] = [];
       let sentCount = 0;
+      let signingStarted = false;
       try {
-        for (const transaction of preparedConsolidation.transactions) {
+        const activeSnapshot = networkRef.current.snapshot;
+        if (!activeSnapshot || !activeWallet) {
+          setError(t('errors.walletSyncing'));
+          return;
+        }
+        const requirements = await loadHdAddressRequirements(activeWallet.walletId);
+        const highestIssuedIndex = requirements.find((requirement) => (
+          requirement.accountKey === 'taproot' && requirement.branch === 'internal'
+        ))?.highestIssuedIndex ?? -1;
+        const count = preparedConsolidation.transactions.length;
+        const range = internalTaprootReservationRange({
+          snapshot: activeSnapshot,
+          highestIssuedIndex,
+          count,
+        });
+        const reservations = await reserveInternalTaprootTransactions({
+          walletId: activeWallet.walletId,
+          purpose: 'consolidation',
+          count,
+          ...range,
+        });
+        const destinations: string[] = [];
+        for (const reservation of reservations) {
+          if (reservation.addressIndex === null) {
+            throw new Error('Internal Taproot reservation is incomplete.');
+          }
+          const derived = await deriveHdAddress(
+            activeWallet.mnemonic,
+            'taproot',
+            'internal',
+            reservation.addressIndex,
+          );
+          destinations.push(derived.address);
+        }
+        if (new Set(destinations).size !== count) {
+          throw new Error('Consolidation internal Taproot addresses are not unique.');
+        }
+        await attachInternalTransactionAddresses(
+          activeWallet.walletId,
+          reservations.map((reservation, index) => ({
+            lifecycleId: reservation.lifecycleId,
+            address: destinations[index]!,
+          })),
+        );
+        if (!walletNetworkController.isCurrent(session)) return;
+        const rebuildSnapshot = networkRef.current.snapshot;
+        if (!rebuildSnapshot) throw new Error('Wallet snapshot unavailable before reconstruction.');
+        const rebuilt = await prepareUnsignedTransparentConsolidation({
+          mnemonic: activeWallet.mnemonic,
+          snapshot: rebuildSnapshot,
+          toAddresses: destinations,
+        });
+        assertTransparentConsolidationPlanMatches(preparedConsolidation, rebuilt);
+        rebuilt.transactions.forEach((transaction, index) => {
+          const destination = destinations[index];
+          if (
+            !destination
+            || transaction.walletOutputs.length !== transaction.outputCount
+            || transaction.walletOutputs.some((output) => output.address !== destination)
+          ) {
+            throw new Error('Consolidation output does not use its reserved Taproot address.');
+          }
+        });
+        const signedTransactions: {
+          transaction: Awaited<ReturnType<typeof signUnsignedTransparentTx>>;
+          lifecycleId: string;
+        }[] = [];
+        signingStarted = true;
+        for (const [index, unsigned] of rebuilt.transactions.entries()) {
+          const reservation = reservations[index];
+          if (!reservation) throw new Error('Consolidation reservation is missing.');
+          const signingSnapshot = networkRef.current.snapshot;
+          if (!signingSnapshot) throw new Error('Wallet snapshot unavailable before signing.');
+          assertUnsignedTransparentInputsAvailable(unsigned, signingSnapshot);
+          const transaction = await signUnsignedTransparentTx({
+            mnemonic: activeWallet.mnemonic,
+            transaction: unsigned,
+          });
+          await markTransactionLifecycleSigned(
+            activeWallet.walletId,
+            reservation.lifecycleId,
+            transaction.txid,
+            transaction.hex,
+          );
+          signedTransactions.push({ transaction, lifecycleId: reservation.lifecycleId });
+        }
+        setPreparedConsolidation(null);
+        setPreparedTx(null);
+        const client = electrumClientRef.current || createElectrumClient();
+        electrumClientRef.current = client;
+        for (const { transaction, lifecycleId } of signedTransactions) {
           if (!walletNetworkController.isCurrent(session)) return;
+          await markTransactionLifecycleBroadcastUncertain(
+            activeWallet.walletId,
+            lifecycleId,
+          );
+          reconciliationTxids.push(transaction.txid);
           const txid = await client.broadcastTransaction(transaction.hex, transaction.txid);
+          await markTransactionLifecyclePublished(activeWallet.walletId, lifecycleId);
           if (!walletNetworkController.isCurrent(session)) return;
-          txids.push(txid);
           sentCount += 1;
           const currentNetwork = networkRef.current;
           if (currentNetwork.snapshot) {
@@ -2536,27 +2817,26 @@ function WalletApp({ theme, onSelectTheme }: {
             publishNetworkState(optimisticNetwork, session.walletId);
           }
         }
-        setPreparedConsolidation(null);
         Alert.alert(consolidationT('successTitle'), consolidationT('successBody'), [
           { text: t('actions.ok'), style: 'cancel' },
         ]);
       } catch (caught) {
         if (!walletNetworkController.isCurrent(session)) return;
         reportNonFinancialFailure('transparent consolidation broadcast', caught);
-        const remaining = preparedConsolidation.transactions.slice(sentCount);
-        setPreparedConsolidation(remaining.length > 0 ? {
-          transactions: remaining,
-          inputCount: remaining.reduce((total, transaction) => total + transaction.inputCount, 0),
-          outputCount: remaining.reduce((total, transaction) => total + transaction.outputCount, 0),
-          totalFeeSats: remaining.reduce((total, transaction) => total + transaction.feeSats, 0),
-        } : null);
-        Alert.alert(consolidationT('partialTitle'), consolidationT('partialBody'));
-        setError(consolidationT('partialBody'));
+        if (signingStarted) setPreparedConsolidation(null);
+        if (sentCount > 0) {
+          Alert.alert(consolidationT('partialTitle'), consolidationT('partialBody'));
+          setError(consolidationT('partialBody'));
+        } else {
+          setError(consolidationT('unavailable'));
+        }
       } finally {
         if (walletNetworkController.isCurrent(session)) {
           setBroadcasting(false);
         }
-        if (txids.length > 0) startBroadcastReconciliation(txids, session);
+        if (reconciliationTxids.length > 0) {
+          startBroadcastReconciliation(reconciliationTxids, session);
+        }
       }
     });
   };

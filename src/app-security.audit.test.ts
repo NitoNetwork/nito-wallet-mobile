@@ -201,7 +201,7 @@ describe('mobile wallet UX and security invariants', () => {
     expect(appSource).toContain('walletNetworkController.sessions.capture(activeWallet.walletId)');
     expect(appSource.match(/walletNetworkController\.isCurrent\(session\)/g)?.length ?? 0).toBeGreaterThanOrEqual(12);
     expect(appSource).toContain('startBroadcastReconciliation([txid], session)');
-    expect(appSource).toContain('startBroadcastReconciliation(txids, session)');
+    expect(appSource).toContain('startBroadcastReconciliation(reconciliationTxids, session)');
     expect(appSource).toMatch(
       /reconcileBroadcasts\(txids, session\)\.catch\(reportNetworkFailure\)/,
     );
@@ -381,6 +381,34 @@ describe('mobile wallet UX and security invariants', () => {
     expect(appSource).toMatch(
       /const prepareTransparentConsolidation[\s\S]*?setPreparedTx\(null\);\s*setPreparedConsolidation\(plan\);/,
     );
+  });
+
+  it('keeps previews unsigned and reserves internal state before final signing', () => {
+    const sendPreview = appSource.slice(
+      appSource.indexOf('const prepareTransparentSend = async'),
+      appSource.indexOf('const fillMaxSendAmount = async'),
+    );
+    expect(sendPreview).toContain('prepareUnsignedTransparentMultiSend');
+    expect(sendPreview).not.toContain('signUnsignedTransparentTx');
+
+    const sendFinal = appSource.slice(
+      appSource.indexOf('const broadcastPreparedTx = async'),
+      appSource.indexOf('const prepareTransparentConsolidation = async'),
+    );
+    expect(sendFinal.indexOf('reserveInternalTaprootTransactions')).toBeGreaterThanOrEqual(0);
+    expect(sendFinal.indexOf('signUnsignedTransparentTx')).toBeGreaterThan(
+      sendFinal.indexOf('reserveInternalTaprootTransactions'),
+    );
+    expect(sendFinal.indexOf('markTransactionLifecycleBroadcastUncertain')).toBeGreaterThan(
+      sendFinal.indexOf('signUnsignedTransparentTx'),
+    );
+
+    const consolidationPreview = appSource.slice(
+      appSource.indexOf('const prepareTransparentConsolidation = async'),
+      appSource.indexOf('const confirmTransparentConsolidation = ()'),
+    );
+    expect(consolidationPreview).toContain('prepareUnsignedTransparentConsolidation');
+    expect(consolidationPreview).not.toContain('signUnsignedTransparentTx');
   });
 
   it('never recreates or replaces a vault after a stale PBKDF2 upgrade', () => {

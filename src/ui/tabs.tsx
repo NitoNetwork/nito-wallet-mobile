@@ -25,7 +25,10 @@ import {
   type HdAccountKey,
 } from '../wallet/hdAddress';
 import { satoshisToNito } from '../wallet/transparentScan';
-import type { PreparedTransparentConsolidation, PreparedTransparentSend } from '../wallet/transparentSend';
+import type {
+  UnsignedTransparentConsolidation,
+  UnsignedTransparentSend,
+} from '../wallet/transparentSend';
 import { ActionButton } from './components';
 import {
   canShowHistoryExport,
@@ -165,8 +168,8 @@ export function SendTab({
   recipientErrors: SendRecipientFieldErrors;
   sendEstimate: { feeSats: number; totalSats: bigint; fitsAvailable: boolean } | null;
   sendEstimatePending: boolean;
-  preparedTx: PreparedTransparentSend | null;
-  preparedConsolidation: PreparedTransparentConsolidation | null;
+  preparedTx: UnsignedTransparentSend | null;
+  preparedConsolidation: UnsignedTransparentConsolidation | null;
   onChangeRecipient: (recipientId: number, field: 'address' | 'amount', value: string) => void;
   onAddRecipient: () => void;
   onRemoveRecipient: (recipientId: number) => void;
@@ -318,7 +321,6 @@ export function SendTab({
           ))}
           <Text style={styles.previewAddress}>{t('send.fee', { amount: satoshisToNito(preparedTx.feeSats, language) })}</Text>
           <Text style={styles.helper}>{t('send.inputsOutputs', { inputs: preparedTx.inputCount, outputs: preparedTx.outputCount })}</Text>
-          <Text selectable style={styles.address}>{preparedTx.txid}</Text>
           <ActionButton
             label={broadcasting ? t('send.sending') : t('actions.sendNow')}
             loading={pendingAction === 'broadcast' || broadcasting}
@@ -654,7 +656,7 @@ export function HomeTab({
   actionLocked: boolean;
   pendingAction: PendingAction | null;
   balanceRefreshing: boolean;
-  preparedConsolidation: PreparedTransparentConsolidation | null;
+  preparedConsolidation: UnsignedTransparentConsolidation | null;
   onRefreshBalance: () => void;
   onConfirmConsolidation: () => void;
 }) {

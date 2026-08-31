@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { MAX_MONEY_SATS, MAX_NITO_AMOUNT_INPUT_LENGTH } from '../constants/nito';
 import type { TransparentWalletSnapshot } from './transparentScan';
@@ -8,11 +8,15 @@ import {
   DUST_LIMIT_SATS,
   TransparentSendError,
   assertTransparentSendFitsAvailable,
+  assertTransparentSendPlanMatches,
+  assertUnsignedTransparentInputsAvailable,
   buildTransparentMultiSend,
   buildTransparentSend,
   calculateMaxTransparentSendAmount,
   estimateTransparentMultiSend,
   parseNitoAmountToSats,
+  prepareUnsignedTransparentMultiSend,
+  signUnsignedTransparentTx,
 } from './transparentSend';
 
 const mnemonic = 'abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about';
@@ -372,5 +376,168 @@ describe('transparent send builder', () => {
     );
     expect(() => assertTransparentSendFitsAvailable(true)).not.toThrow();
     expect(new TransparentSendError('insufficient-funds').message).toBe('insufficient-funds');
+  });
+
+  it('keeps review unsigned and signs only after a matching final reconstruction', async () => {
+    const snapshot = await makeSnapshot();
+    const signPsbt = vi.fn(crypto.signPsbt);
+    const signingCrypto = { ...crypto, signPsbt };
+    const outputs = [{
+      address: 'nito1qcr8te4kr609gcawutmrza0j4xv80jy8z540c02',
+      amountSats: 25_000_000n,
+    }];
+    const preview = await prepareUnsignedTransparentMultiSend({
+      mnemonic,
+      snapshot,
+      outputs,
+      crypto: signingCrypto,
+    });
+
+    expect(signPsbt).not.toHaveBeenCalled();
+    expect(preview).not.toHaveProperty('txid');
+    expect(preview).not.toHaveProperty('hex');
+
+    const rebuilt = await prepareUnsignedTransparentMultiSend({
+      mnemonic,
+      snapshot,
+      outputs,
+      crypto: signingCrypto,
+    });
+    expect(() => assertTransparentSendPlanMatches(preview, rebuilt)).not.toThrow();
+    const signed = await signUnsignedTransparentTx({
+      mnemonic,
+      transaction: rebuilt,
+      crypto: signingCrypto,
+    });
+
+    expect(signPsbt).toHaveBeenCalledTimes(1);
+    expect(signed.txid).toHaveLength(64);
+    expect(signed.hex.length).toBeGreaterThan(100);
+  });
+
+  it('refuses to sign when the rebuilt fee differs from the reviewed plan', async () => {
+    const snapshot = await makeSnapshot();
+    const outputs = [{
+      address: 'nito1qcr8te4kr609gcawutmrza0j4xv80jy8z540c02',
+      amountSats: 25_000_000n,
+    }];
+    const preview = await prepareUnsignedTransparentMultiSend({
+      mnemonic,
+      snapshot,
+      outputs,
+      feePerVbyte: 2n,
+      crypto,
+    });
+    const rebuilt = await prepareUnsignedTransparentMultiSend({
+      mnemonic,
+      snapshot,
+      outputs,
+      feePerVbyte: 3n,
+      crypto,
+    });
+
+    expect(() => assertTransparentSendPlanMatches(preview, rebuilt)).toThrowError(
+      expect.objectContaining({ code: 'insufficient-funds' }),
+    );
+  });
+
+  it('refuses a reviewed plan when its selected input disappeared before signing', async () => {
+    const snapshot = await makeSnapshot();
+    const transaction = await prepareUnsignedTransparentMultiSend({
+      mnemonic,
+      snapshot,
+      outputs: [{
+        address: 'nito1qcr8te4kr609gcawutmrza0j4xv80jy8z540c02',
+        amountSats: 25_000_000n,
+      }],
+      crypto,
+    });
+    const changed = { ...snapshot, utxos: [] };
+
+    expect(() => assertUnsignedTransparentInputsAvailable(transaction, changed)).toThrowError(
+      expect.objectContaining({ code: 'insufficient-funds' }),
+    );
+  });
+
+  it('rejects a signer response that changes a reviewed transaction output', async () => {
+    const snapshot = await makeSnapshot();
+    const address = 'nito1qcr8te4kr609gcawutmrza0j4xv80jy8z540c02';
+    const reviewed = await prepareUnsignedTransparentMultiSend({
+      mnemonic,
+      snapshot,
+      outputs: [{ address, amountSats: 25_000_000n }],
+      crypto,
+    });
+    const altered = await prepareUnsignedTransparentMultiSend({
+      mnemonic,
+      snapshot,
+      outputs: [{ address, amountSats: 20_000_000n }],
+      crypto,
+    });
+    const tamperingCrypto = {
+      ...crypto,
+      signPsbt: async () => crypto.signPsbt({
+        mnemonic,
+        psbtBase64: altered.psbtBase64,
+        signers: altered.signers,
+      }),
+    };
+
+    await expect(signUnsignedTransparentTx({
+      mnemonic,
+      transaction: reviewed,
+      crypto: tamperingCrypto,
+    })).rejects.toMatchObject({
+      name: 'TransparentSendError',
+      code: 'signing-material-unavailable',
+    });
+  });
+
+  it('receives and spends a restored internal Taproot output with the native signing boundary', async () => {
+    const snapshot = await makeSnapshot();
+    const [internal] = await crypto.deriveAddresses(mnemonic, [{
+      path: "m/86'/0'/0'/1/4",
+      scriptType: 'p2tr',
+    }]);
+    expect(internal).toBeDefined();
+    snapshot.addresses = [{
+      ...snapshot.addresses[0]!,
+      accountKey: 'taproot',
+      accountLabel: 'Taproot',
+      accountPath: "m/86'/0'/0'",
+      scriptType: 'p2tr',
+      branch: 'internal',
+      index: 4,
+      path: internal!.path,
+      address: internal!.address,
+      balance: { confirmedSats: 100_000_000, unconfirmedSats: 0, totalSats: 100_000_000 },
+    }];
+    snapshot.usedAddresses = snapshot.addresses;
+    snapshot.spendableAddresses = snapshot.addresses;
+    snapshot.utxos = [{
+      txid: '4a'.repeat(32),
+      vout: 0,
+      valueSats: 100_000_000,
+      height: 500,
+      address: internal!.address,
+      confirmations: 8,
+      isCoinbase: false,
+    }];
+
+    const transaction = await buildTransparentSend({
+      mnemonic,
+      snapshot,
+      toAddress: 'nito1qcr8te4kr609gcawutmrza0j4xv80jy8z540c02',
+      amountSats: 25_000_000n,
+      changeAddress: internal!.address,
+      crypto,
+    });
+
+    expect(transaction.walletInputs).toEqual([expect.objectContaining({
+      txid: '4a'.repeat(32),
+      address: internal!.address,
+      valueSats: 100_000_000,
+    })]);
+    expect(transaction.txid).toHaveLength(64);
   });
 });

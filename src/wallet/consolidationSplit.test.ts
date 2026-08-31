@@ -1,9 +1,12 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import type { ScannedAddress, TransparentWalletSnapshot } from './transparentScan';
 import { deriveP2wpkhAddress } from './transparentScan';
 import { createNitoWalletCryptoTestDouble } from '../test/nitoWalletCryptoTestDouble';
-import { buildTransparentConsolidation } from './transparentSend';
+import {
+  buildTransparentConsolidation,
+  prepareUnsignedTransparentConsolidation,
+} from './transparentSend';
 
 const mnemonic = 'abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about';
 const crypto = createNitoWalletCryptoTestDouble();
@@ -11,7 +14,7 @@ const crypto = createNitoWalletCryptoTestDouble();
 const makeConsolidationSnapshot = async (count: number, valueSats: number): Promise<TransparentWalletSnapshot> => {
   const primary = await deriveP2wpkhAddress(mnemonic, 'external', 0, crypto);
   const utxos = Array.from({ length: count }, (_, index) => ({
-    txid: (index + 1).toString(16).padStart(2, '0').repeat(32),
+    txid: (index + 1).toString(16).padStart(64, '0'),
     vout: 0,
     valueSats,
     height: 100 + index,
@@ -103,6 +106,31 @@ describe('consolidation multi-output', () => {
     ).rejects.toMatchObject({
       name: 'TransparentSendError',
       code: 'consolidation-not-enough-utxos',
+    });
+  });
+
+  it('keeps consolidation review unsigned and assigns one Taproot address per transaction', async () => {
+    const snapshot = await makeConsolidationSnapshot(1400, 100_000);
+    const destinations = await crypto.deriveAddresses(mnemonic, [
+      { path: "m/86'/0'/0'/1/0", scriptType: 'p2tr' },
+      { path: "m/86'/0'/0'/1/1", scriptType: 'p2tr' },
+    ]);
+    const signPsbt = vi.fn(crypto.signPsbt);
+    const plan = await prepareUnsignedTransparentConsolidation({
+      mnemonic,
+      snapshot,
+      toAddresses: destinations.map(({ address }) => address),
+      crypto: { ...crypto, signPsbt },
+    });
+
+    expect(plan.transactions).toHaveLength(2);
+    expect(signPsbt).not.toHaveBeenCalled();
+    plan.transactions.forEach((transaction, index) => {
+      expect(transaction).not.toHaveProperty('txid');
+      expect(transaction.walletOutputs.length).toBeGreaterThan(0);
+      expect(transaction.walletOutputs.every((output) => (
+        output.address === destinations[index]?.address
+      ))).toBe(true);
     });
   });
 });

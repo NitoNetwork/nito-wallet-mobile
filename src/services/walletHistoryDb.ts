@@ -2,11 +2,21 @@ import * as SQLite from 'expo-sqlite';
 
 import type { ElectrumHistoryEntry } from '../network/electrum';
 import type { TransparentWalletSnapshot } from '../wallet/transparentScan';
-import type {
-  HdAccountKey,
-  HdBranch,
-  HdScanRequirement,
+import {
+  deriveHdPath,
+  type HdAccountKey,
+  type HdBranch,
+  type HdScanRequirement,
 } from '../wallet/hdAddress';
+import type {
+  TransactionLifecyclePurpose,
+  TransactionLifecycleRecord,
+  TransactionLifecycleState,
+} from './transactionLifecycle';
+import {
+  assertLifecycleTransition,
+  reconciledLifecycleState,
+} from './transactionLifecycle';
 import type { CachedTransactionOutput } from './historyExport';
 import { isDuplicateColumnError, retrySqliteWrite } from './sqliteReliability';
 import { runWalletStorageOperation } from './walletStorageError';
@@ -63,6 +73,20 @@ type HdSequenceRow = {
   account_key: string;
   branch: string;
   highest_issued_index: number;
+};
+
+type TransactionLifecycleRow = {
+  lifecycle_id: string;
+  wallet_id: string;
+  account_key: string | null;
+  branch: string | null;
+  purpose: string;
+  address_index: number | null;
+  derivation_path: string | null;
+  address: string | null;
+  state: string;
+  txid: string | null;
+  raw_tx_hex: string | null;
 };
 
 export type WalletHistoryCache = {
@@ -166,6 +190,33 @@ const initializeHistoryDb = async () => {
           PRIMARY KEY (wallet_id, account_key, branch)
         );
         PRAGMA user_version = 3;
+      `);
+    });
+  }
+  if ((version?.user_version ?? 0) < 4) {
+    await runWriteTransaction(db, async () => {
+      await db.execAsync(`
+        CREATE TABLE IF NOT EXISTS wallet_transaction_lifecycle (
+          lifecycle_id TEXT PRIMARY KEY NOT NULL,
+          wallet_id TEXT NOT NULL,
+          account_key TEXT,
+          branch TEXT,
+          address_index INTEGER,
+          derivation_path TEXT,
+          address TEXT,
+          purpose TEXT NOT NULL,
+          state TEXT NOT NULL,
+          txid TEXT,
+          raw_tx_hex TEXT,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          UNIQUE (wallet_id, account_key, branch, address_index)
+        );
+        CREATE INDEX IF NOT EXISTS idx_wallet_transaction_lifecycle_txid
+          ON wallet_transaction_lifecycle(wallet_id, txid);
+        CREATE INDEX IF NOT EXISTS idx_wallet_transaction_lifecycle_state
+          ON wallet_transaction_lifecycle(wallet_id, state);
+        PRAGMA user_version = 4;
       `);
     });
   }
@@ -361,6 +412,326 @@ export const reserveNextHdAddressIndex = async ({
       now,
     );
     return nextIndex;
+  });
+});
+
+const isTransactionLifecycleState = (value: string): value is TransactionLifecycleState => (
+  value === 'reserved'
+  || value === 'signed'
+  || value === 'broadcast-uncertain'
+  || value === 'published'
+  || value === 'confirmed'
+);
+
+const isTransactionLifecyclePurpose = (value: string): value is TransactionLifecyclePurpose => (
+  value === 'send' || value === 'consolidation'
+);
+
+const validateTransactionLifecycleRow = (
+  row: TransactionLifecycleRow,
+): TransactionLifecycleRecord => {
+  if (
+    !row.lifecycle_id
+    || !isTransactionLifecyclePurpose(row.purpose)
+    || !isTransactionLifecycleState(row.state)
+    || (row.address_index !== null && (
+      row.account_key !== 'taproot'
+      || row.branch !== 'internal'
+      ||
+      !Number.isSafeInteger(row.address_index)
+      || row.address_index < 0
+      || row.derivation_path !== deriveHdPath('taproot', 'internal', row.address_index)
+    ))
+    || (row.address_index === null && (
+      row.account_key !== null
+      || row.branch !== null
+      || row.derivation_path !== null
+    ))
+  ) {
+    throw new Error('Invalid transaction lifecycle state.');
+  }
+  return {
+    lifecycleId: row.lifecycle_id,
+    walletId: row.wallet_id,
+    purpose: row.purpose,
+    addressIndex: row.address_index,
+    derivationPath: row.derivation_path,
+    address: row.address,
+    state: row.state,
+    txid: row.txid,
+    rawTxHex: row.raw_tx_hex,
+  };
+};
+
+export const reserveInternalTaprootTransactions = async ({
+  walletId,
+  purpose,
+  count,
+  minimumIndex,
+  maximumIndex,
+}: {
+  walletId: string;
+  purpose: TransactionLifecyclePurpose;
+  count: number;
+  minimumIndex: number;
+  maximumIndex: number;
+}): Promise<TransactionLifecycleRecord[]> => runWalletStorageOperation(
+  'internal transaction address reservation write',
+  async () => {
+    if (
+      !Number.isSafeInteger(count)
+      || count < 1
+      || !Number.isSafeInteger(minimumIndex)
+      || minimumIndex < 0
+      || !Number.isSafeInteger(maximumIndex)
+      || maximumIndex < minimumIndex
+    ) {
+      throw new Error('Invalid internal address reservation range.');
+    }
+    const db = await openHistoryDb();
+    return runWriteTransaction(db, async () => {
+      const current = await db.getFirstAsync<HdSequenceRow>(
+        `SELECT account_key, branch, highest_issued_index
+         FROM wallet_hd_sequences
+         WHERE wallet_id = ? AND account_key = 'taproot' AND branch = 'internal'`,
+        walletId,
+      );
+      const currentIndex = current ? validateHdSequenceRow(current).highestIssuedIndex : -1;
+      const firstIndex = Math.max(currentIndex + 1, minimumIndex);
+      const lastIndex = firstIndex + count - 1;
+      if (!Number.isSafeInteger(lastIndex) || lastIndex > maximumIndex) {
+        throw new Error('HD_ADDRESS_GAP_LIMIT_REACHED');
+      }
+      const now = new Date().toISOString();
+      await db.runAsync(
+        `INSERT INTO wallet_hd_sequences
+           (wallet_id, account_key, branch, highest_issued_index, updated_at)
+         VALUES (?, 'taproot', 'internal', ?, ?)
+         ON CONFLICT(wallet_id, account_key, branch) DO UPDATE SET
+           highest_issued_index = excluded.highest_issued_index,
+           updated_at = excluded.updated_at`,
+        walletId,
+        lastIndex,
+        now,
+      );
+      const reservations: TransactionLifecycleRecord[] = [];
+      for (let addressIndex = firstIndex; addressIndex <= lastIndex; addressIndex += 1) {
+        const derivationPath = deriveHdPath('taproot', 'internal', addressIndex);
+        const idRow = await db.getFirstAsync<{ lifecycle_id: string }>(
+          'SELECT lower(hex(randomblob(16))) AS lifecycle_id',
+        );
+        if (!idRow?.lifecycle_id) throw new Error('Transaction lifecycle identifier unavailable.');
+        await db.runAsync(
+          `INSERT INTO wallet_transaction_lifecycle
+             (lifecycle_id, wallet_id, account_key, branch, address_index, derivation_path, address,
+              purpose, state, txid, raw_tx_hex, created_at, updated_at)
+           VALUES (?, ?, 'taproot', 'internal', ?, ?, NULL, ?, 'reserved', NULL, NULL, ?, ?)`,
+          idRow.lifecycle_id,
+          walletId,
+          addressIndex,
+          derivationPath,
+          purpose,
+          now,
+          now,
+        );
+        reservations.push({
+          lifecycleId: idRow.lifecycle_id,
+          walletId,
+          purpose,
+          addressIndex,
+          derivationPath,
+          address: null,
+          state: 'reserved',
+          txid: null,
+          rawTxHex: null,
+        });
+      }
+      return reservations;
+    });
+  },
+);
+
+export const reserveTransactionWithoutAddress = async (
+  walletId: string,
+  purpose: TransactionLifecyclePurpose,
+): Promise<TransactionLifecycleRecord> => runWalletStorageOperation(
+  'transaction reservation write',
+  async () => {
+    const db = await openHistoryDb();
+    return runWriteTransaction(db, async () => {
+      const idRow = await db.getFirstAsync<{ lifecycle_id: string }>(
+        'SELECT lower(hex(randomblob(16))) AS lifecycle_id',
+      );
+      if (!idRow?.lifecycle_id) throw new Error('Transaction lifecycle identifier unavailable.');
+      const now = new Date().toISOString();
+      await db.runAsync(
+        `INSERT INTO wallet_transaction_lifecycle
+           (lifecycle_id, wallet_id, account_key, branch, address_index, derivation_path, address,
+            purpose, state, txid, raw_tx_hex, created_at, updated_at)
+         VALUES (?, ?, NULL, NULL, NULL, NULL, NULL, ?, 'reserved', NULL, NULL, ?, ?)`,
+        idRow.lifecycle_id,
+        walletId,
+        purpose,
+        now,
+        now,
+      );
+      return {
+        lifecycleId: idRow.lifecycle_id,
+        walletId,
+        purpose,
+        addressIndex: null,
+        derivationPath: null,
+        address: null,
+        state: 'reserved',
+        txid: null,
+        rawTxHex: null,
+      };
+    });
+  },
+);
+
+export const attachInternalTransactionAddresses = async (
+  walletId: string,
+  addresses: readonly { lifecycleId: string; address: string }[],
+): Promise<void> => runWalletStorageOperation('internal transaction address write', async () => {
+  const db = await openHistoryDb();
+  await runWriteTransaction(db, async () => {
+    const now = new Date().toISOString();
+    for (const item of addresses) {
+      const result = await db.runAsync(
+        `UPDATE wallet_transaction_lifecycle
+         SET address = ?, updated_at = ?
+         WHERE lifecycle_id = ? AND wallet_id = ? AND state = 'reserved'`,
+        item.address,
+        now,
+        item.lifecycleId,
+        walletId,
+      );
+      if (result.changes !== 1) throw new Error('Reserved internal address was not found.');
+    }
+  });
+});
+
+const transitionTransactionLifecycle = async ({
+  walletId,
+  lifecycleId,
+  state,
+  txid,
+  rawTxHex,
+}: {
+  walletId: string;
+  lifecycleId: string;
+  state: TransactionLifecycleState;
+  txid?: string;
+  rawTxHex?: string;
+}): Promise<void> => runWalletStorageOperation('transaction lifecycle write', async () => {
+  const db = await openHistoryDb();
+  await runWriteTransaction(db, async () => {
+    const row = await db.getFirstAsync<TransactionLifecycleRow>(
+      `SELECT lifecycle_id, wallet_id, account_key, branch, purpose, address_index, derivation_path, address, state, txid, raw_tx_hex
+       FROM wallet_transaction_lifecycle
+       WHERE lifecycle_id = ? AND wallet_id = ?`,
+      lifecycleId,
+      walletId,
+    );
+    if (!row) throw new Error('Transaction lifecycle reservation was not found.');
+    const current = validateTransactionLifecycleRow(row);
+    assertLifecycleTransition(current.state, state);
+    const nextTxid = txid ?? current.txid;
+    const nextRawTxHex = rawTxHex ?? current.rawTxHex;
+    if (state !== 'reserved' && (!nextTxid || !nextRawTxHex)) {
+      throw new Error('Signed transaction lifecycle data is incomplete.');
+    }
+    await db.runAsync(
+      `UPDATE wallet_transaction_lifecycle
+       SET state = ?, txid = ?, raw_tx_hex = ?, updated_at = ?
+       WHERE lifecycle_id = ? AND wallet_id = ?`,
+      state,
+      nextTxid,
+      nextRawTxHex,
+      new Date().toISOString(),
+      lifecycleId,
+      walletId,
+    );
+  });
+});
+
+export const markTransactionLifecycleSigned = (
+  walletId: string,
+  lifecycleId: string,
+  txid: string,
+  rawTxHex: string,
+): Promise<void> => transitionTransactionLifecycle({
+  walletId,
+  lifecycleId,
+  state: 'signed',
+  txid,
+  rawTxHex,
+});
+
+export const markTransactionLifecycleBroadcastUncertain = (
+  walletId: string,
+  lifecycleId: string,
+): Promise<void> => transitionTransactionLifecycle({
+  walletId,
+  lifecycleId,
+  state: 'broadcast-uncertain',
+});
+
+export const markTransactionLifecyclePublished = (
+  walletId: string,
+  lifecycleId: string,
+): Promise<void> => transitionTransactionLifecycle({
+  walletId,
+  lifecycleId,
+  state: 'published',
+});
+
+export const loadTransactionLifecycles = async (
+  walletId: string,
+): Promise<TransactionLifecycleRecord[]> => runWalletStorageOperation(
+  'transaction lifecycle read',
+  async () => {
+    const db = await openHistoryDb();
+    const rows = await db.getAllAsync<TransactionLifecycleRow>(
+      `SELECT lifecycle_id, wallet_id, account_key, branch, purpose, address_index, derivation_path, address, state, txid, raw_tx_hex
+       FROM wallet_transaction_lifecycle
+       WHERE wallet_id = ?
+       ORDER BY address_index`,
+      walletId,
+    );
+    return rows.map(validateTransactionLifecycleRow);
+  },
+);
+
+export const reconcileTransactionLifecycles = async (
+  walletId: string,
+  history: readonly ElectrumHistoryEntry[],
+): Promise<void> => runWalletStorageOperation('transaction lifecycle reconciliation', async () => {
+  const db = await openHistoryDb();
+  await runWriteTransaction(db, async () => {
+    const rows = await db.getAllAsync<TransactionLifecycleRow>(
+      `SELECT lifecycle_id, wallet_id, account_key, branch, purpose, address_index, derivation_path, address, state, txid, raw_tx_hex
+       FROM wallet_transaction_lifecycle
+       WHERE wallet_id = ? AND state IN ('broadcast-uncertain', 'published')`,
+      walletId,
+    );
+    const now = new Date().toISOString();
+    for (const row of rows) {
+      const current = validateTransactionLifecycleRow(row);
+      const next = reconciledLifecycleState(current.state, current.txid, history);
+      if (next === current.state) continue;
+      assertLifecycleTransition(current.state, next);
+      await db.runAsync(
+        `UPDATE wallet_transaction_lifecycle
+         SET state = ?, updated_at = ?
+         WHERE lifecycle_id = ? AND wallet_id = ?`,
+        next,
+        now,
+        current.lifecycleId,
+        walletId,
+      );
+    }
   });
 });
 
@@ -635,6 +1006,7 @@ export const clearWalletPublicData = async (walletId: string): Promise<void> => 
       await db.runAsync('DELETE FROM wallet_sync_state WHERE wallet_id = ?', walletId);
       await db.runAsync('DELETE FROM wallet_snapshot_cache WHERE wallet_id = ?', walletId);
       await db.runAsync('DELETE FROM wallet_hd_sequences WHERE wallet_id = ?', walletId);
+      await db.runAsync('DELETE FROM wallet_transaction_lifecycle WHERE wallet_id = ?', walletId);
     });
   })
 );
