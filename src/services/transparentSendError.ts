@@ -19,6 +19,7 @@ const TRANSPARENT_SEND_ERROR_KEYS = {
   'recipient-output-dust': 'errors.invalidAmount',
   'max-recipient-unavailable': 'errors.txPrepareFailed',
   'insufficient-funds': 'errors.sendInsufficientFunds',
+  'review-changed': 'errors.txPrepareFailed',
   'consolidation-not-enough-utxos': 'errors.txPrepareFailed',
   'consolidation-unavailable': 'errors.txPrepareFailed',
   'consolidation-too-large': 'errors.txPrepareFailed',

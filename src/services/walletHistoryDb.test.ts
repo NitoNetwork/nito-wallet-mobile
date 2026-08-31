@@ -165,7 +165,7 @@ describe('wallet transaction output cache', () => {
     let highestIssuedIndex = 0;
     const events: string[] = [];
     db.getFirstAsync.mockImplementation(async (sql: string) => {
-      if (sql === 'PRAGMA user_version') return { user_version: 4 };
+      if (sql === 'PRAGMA user_version') return { user_version: 5 };
       if (String(sql).includes('FROM wallet_hd_sequences')) {
         return highestIssuedIndex > 0 ? {
           account_key: 'taproot',
@@ -365,7 +365,7 @@ describe('wallet transaction output cache', () => {
     };
 
     db.getFirstAsync.mockImplementation(async (sql: string) => (
-      sql === 'PRAGMA user_version' ? { user_version: 4 } : null
+      sql === 'PRAGMA user_version' ? { user_version: 5 } : null
     ));
     db.getAllAsync.mockImplementation(async (sql: string) => (
       String(sql).includes('SELECT txid FROM wallet_transactions')
@@ -560,7 +560,7 @@ describe('wallet transaction output cache', () => {
     };
 
     db.getFirstAsync.mockImplementation(async (sql: string) => (
-      sql === 'PRAGMA user_version' ? { user_version: 4 } : null
+      sql === 'PRAGMA user_version' ? { user_version: 5 } : null
     ));
     db.execAsync.mockImplementation(async (sql: string) => {
       if (sql === 'BEGIN IMMEDIATE TRANSACTION') {
@@ -612,7 +612,7 @@ describe('wallet transaction output cache', () => {
   it('chunks history and output inserts below the SQLite binding limit', async () => {
     vi.resetModules();
     db.getFirstAsync.mockImplementation(async (sql: string) => (
-      sql === 'PRAGMA user_version' ? { user_version: 4 } : null
+      sql === 'PRAGMA user_version' ? { user_version: 5 } : null
     ));
     db.runAsync.mockResolvedValue({ changes: 1, lastInsertRowId: 0 });
     sqlite.openDatabaseAsync.mockResolvedValue(db);
@@ -674,7 +674,7 @@ describe('wallet transaction output cache', () => {
       execAsync: vi.fn(async (_sql: string) => undefined),
       getAllAsync: vi.fn(async (_sql: string, ..._params: unknown[]) => []),
       getFirstAsync: vi.fn(async (sql: string) => (
-        sql === 'PRAGMA user_version' ? { user_version: 4 } : null
+        sql === 'PRAGMA user_version' ? { user_version: 5 } : null
       )),
       runAsync: vi.fn(async (_sql: string, ..._params: unknown[]) => ({
         changes: 1,
@@ -761,8 +761,43 @@ describe('wallet transaction output cache', () => {
       sql.includes('CREATE TABLE IF NOT EXISTS wallet_transaction_lifecycle')
       && sql.includes('PRAGMA user_version = 4')
     ))).toBe(true);
+    expect(migrationSql.some((sql) => (
+      sql.includes('ADD COLUMN recovery_attempts')
+      && sql.includes('ADD COLUMN broadcast_invocations')
+      && sql.includes('PRAGMA user_version = 5')
+    ))).toBe(true);
     expect(migrationSql.some((sql) => sql.includes('UPDATE wallet_transactions'))).toBe(false);
     expect(legacyConnection.runAsync).not.toHaveBeenCalled();
+  });
+
+  it('adds bounded broadcast recovery metadata to an existing lifecycle database', async () => {
+    vi.resetModules();
+    const existingConnection = {
+      execAsync: vi.fn(async (_sql: string) => undefined),
+      getAllAsync: vi.fn(async (_sql: string, ..._params: unknown[]) => []),
+      getFirstAsync: vi.fn(async (sql: string) => (
+        sql === 'PRAGMA user_version' ? { user_version: 4 } : null
+      )),
+      runAsync: vi.fn(async (_sql: string, ..._params: unknown[]) => ({
+        changes: 1,
+        lastInsertRowId: 0,
+      })),
+    };
+    sqlite.openDatabaseAsync.mockResolvedValue(existingConnection);
+    const { loadTransactionLifecycles } = await import('./walletHistoryDb');
+
+    await expect(loadTransactionLifecycles('wallet-address')).resolves.toEqual([]);
+
+    const migrationSql = existingConnection.execAsync.mock.calls.map(([sql]) => String(sql));
+    expect(migrationSql.some((sql) => (
+      sql.includes('ADD COLUMN recovery_attempts')
+      && sql.includes('ADD COLUMN broadcast_invocations')
+      && sql.includes('ADD COLUMN next_broadcast_attempt_at')
+      && sql.includes('ADD COLUMN last_broadcast_attempt_at')
+      && sql.includes('PRAGMA user_version = 5')
+    ))).toBe(true);
+    expect(migrationSql.some((sql) => sql.includes('UPDATE wallet_transactions'))).toBe(false);
+    expect(existingConnection.runAsync).not.toHaveBeenCalled();
   });
 
   it('reserves distinct internal Taproot addresses atomically under concurrency', async () => {
@@ -771,7 +806,7 @@ describe('wallet transaction output cache', () => {
     let id = 0;
     const events: string[] = [];
     db.getFirstAsync.mockImplementation(async (sql: string) => {
-      if (sql === 'PRAGMA user_version') return { user_version: 4 };
+      if (sql === 'PRAGMA user_version') return { user_version: 5 };
       if (sql.includes('randomblob')) return { lifecycle_id: `reservation-${++id}` };
       if (sql.includes('FROM wallet_hd_sequences')) {
         return highestIssuedIndex >= 0 ? {
@@ -827,7 +862,7 @@ describe('wallet transaction output cache', () => {
   it('reloads signed transaction state after a database restart', async () => {
     vi.resetModules();
     db.getFirstAsync.mockImplementation(async (sql: string) => (
-      sql === 'PRAGMA user_version' ? { user_version: 4 } : null
+      sql === 'PRAGMA user_version' ? { user_version: 5 } : null
     ));
     db.getAllAsync.mockImplementation(async (sql: string) => (
       sql.includes('FROM wallet_transaction_lifecycle') ? [{
@@ -842,6 +877,10 @@ describe('wallet transaction output cache', () => {
         state: 'signed',
         txid: 'ab'.repeat(32),
         raw_tx_hex: '00ff',
+        recovery_attempts: 0,
+        broadcast_invocations: 0,
+        next_broadcast_attempt_at: null,
+        last_broadcast_attempt_at: null,
       }] : []
     ));
     sqlite.openDatabaseAsync.mockResolvedValue(db);
@@ -857,7 +896,82 @@ describe('wallet transaction output cache', () => {
       state: 'signed',
       txid: 'ab'.repeat(32),
       rawTxHex: '00ff',
+      recoveryAttempts: 0,
+      broadcastInvocations: 0,
+      nextBroadcastAttemptAt: null,
+      lastBroadcastAttemptAt: null,
     }]);
+  });
+
+  it('claims one persisted broadcast attempt atomically and records its retry deadline', async () => {
+    vi.resetModules();
+    const row = {
+      lifecycle_id: 'claimable',
+      wallet_id: 'wallet-address',
+      account_key: 'taproot',
+      branch: 'internal',
+      purpose: 'send',
+      address_index: 7,
+      derivation_path: "m/86'/0'/0'/1/7",
+      address: 'nito1pclaimable',
+      state: 'signed',
+      txid: 'ab'.repeat(32),
+      raw_tx_hex: '00ff',
+      recovery_attempts: 0,
+      broadcast_invocations: 0,
+      next_broadcast_attempt_at: null as number | null,
+      last_broadcast_attempt_at: null as number | null,
+    };
+    db.getFirstAsync.mockImplementation(async (sql: string) => {
+      if (sql === 'PRAGMA user_version') return { user_version: 5 };
+      if (sql.includes('FROM wallet_transaction_lifecycle')) return { ...row };
+      return null;
+    });
+    db.runAsync.mockImplementation(async (sql: string, ...params: unknown[]) => {
+      if (sql.includes("SET state = 'broadcast-uncertain'")) {
+        if (row.state !== params[5] || row.recovery_attempts !== params[6]) {
+          return { changes: 0, lastInsertRowId: 0 };
+        }
+        row.state = 'broadcast-uncertain';
+        row.recovery_attempts = Number(params[0]);
+        row.next_broadcast_attempt_at = Number(params[1]);
+      }
+      if (sql.includes('SET broadcast_invocations = ?')) {
+        if (row.state !== 'broadcast-uncertain' || row.broadcast_invocations !== params[5]) {
+          return { changes: 0, lastInsertRowId: 0 };
+        }
+        row.broadcast_invocations = Number(params[0]);
+        row.last_broadcast_attempt_at = Number(params[1]);
+      }
+      return { changes: 1, lastInsertRowId: 0 };
+    });
+    sqlite.openDatabaseAsync.mockResolvedValue(db);
+    const {
+      claimTransactionLifecycleBroadcastAttempt,
+      recordTransactionLifecycleBroadcastInvocation,
+    } = await import('./walletHistoryDb');
+
+    const [first, second] = await Promise.all([
+      claimTransactionLifecycleBroadcastAttempt('wallet-address', 'claimable', 1_000),
+      claimTransactionLifecycleBroadcastAttempt('wallet-address', 'claimable', 1_000),
+    ]);
+
+    expect(first).toMatchObject({
+      state: 'broadcast-uncertain',
+      recoveryAttempts: 1,
+      broadcastInvocations: 0,
+      lastBroadcastAttemptAt: null,
+      nextBroadcastAttemptAt: 16_000,
+    });
+    expect(second).toBeNull();
+    await expect(recordTransactionLifecycleBroadcastInvocation(
+      'wallet-address',
+      'claimable',
+      1_000,
+    )).resolves.toMatchObject({
+      broadcastInvocations: 1,
+      lastBroadcastAttemptAt: 1_000,
+    });
   });
 
   it('persists signed, uncertain, published and confirmed lifecycle states in order', async () => {
@@ -874,10 +988,14 @@ describe('wallet transaction output cache', () => {
       state: 'reserved',
       txid: null as string | null,
       raw_tx_hex: null as string | null,
+      recovery_attempts: 0,
+      broadcast_invocations: 0,
+      next_broadcast_attempt_at: null as number | null,
+      last_broadcast_attempt_at: null as number | null,
     };
     const states: string[] = [];
     db.getFirstAsync.mockImplementation(async (sql: string) => {
-      if (sql === 'PRAGMA user_version') return { user_version: 4 };
+      if (sql === 'PRAGMA user_version') return { user_version: 5 };
       if (sql.includes('FROM wallet_transaction_lifecycle')) return { ...row };
       return null;
     });

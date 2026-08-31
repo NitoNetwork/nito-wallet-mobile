@@ -15,7 +15,9 @@ import type {
 } from './transactionLifecycle';
 import {
   assertLifecycleTransition,
+  nextTransactionBroadcastAttemptAt,
   reconciledLifecycleState,
+  TRANSACTION_BROADCAST_MAX_ATTEMPTS,
 } from './transactionLifecycle';
 import type { CachedTransactionOutput } from './historyExport';
 import { isDuplicateColumnError, retrySqliteWrite } from './sqliteReliability';
@@ -87,6 +89,10 @@ type TransactionLifecycleRow = {
   state: string;
   txid: string | null;
   raw_tx_hex: string | null;
+  recovery_attempts: number;
+  broadcast_invocations: number;
+  next_broadcast_attempt_at: number | null;
+  last_broadcast_attempt_at: number | null;
 };
 
 export type WalletHistoryCache = {
@@ -217,6 +223,21 @@ const initializeHistoryDb = async () => {
         CREATE INDEX IF NOT EXISTS idx_wallet_transaction_lifecycle_state
           ON wallet_transaction_lifecycle(wallet_id, state);
         PRAGMA user_version = 4;
+      `);
+    });
+  }
+  if ((version?.user_version ?? 0) < 5) {
+    await runWriteTransaction(db, async () => {
+      await db.execAsync(`
+        ALTER TABLE wallet_transaction_lifecycle
+          ADD COLUMN recovery_attempts INTEGER NOT NULL DEFAULT 0;
+        ALTER TABLE wallet_transaction_lifecycle
+          ADD COLUMN broadcast_invocations INTEGER NOT NULL DEFAULT 0;
+        ALTER TABLE wallet_transaction_lifecycle
+          ADD COLUMN next_broadcast_attempt_at INTEGER;
+        ALTER TABLE wallet_transaction_lifecycle
+          ADD COLUMN last_broadcast_attempt_at INTEGER;
+        PRAGMA user_version = 5;
       `);
     });
   }
@@ -434,6 +455,18 @@ const validateTransactionLifecycleRow = (
     !row.lifecycle_id
     || !isTransactionLifecyclePurpose(row.purpose)
     || !isTransactionLifecycleState(row.state)
+    || !Number.isSafeInteger(row.recovery_attempts)
+    || row.recovery_attempts < 0
+    || !Number.isSafeInteger(row.broadcast_invocations)
+    || row.broadcast_invocations < 0
+    || (row.next_broadcast_attempt_at !== null && (
+      !Number.isSafeInteger(row.next_broadcast_attempt_at)
+      || row.next_broadcast_attempt_at < 0
+    ))
+    || (row.last_broadcast_attempt_at !== null && (
+      !Number.isSafeInteger(row.last_broadcast_attempt_at)
+      || row.last_broadcast_attempt_at < 0
+    ))
     || (row.address_index !== null && (
       row.account_key !== 'taproot'
       || row.branch !== 'internal'
@@ -460,6 +493,10 @@ const validateTransactionLifecycleRow = (
     state: row.state,
     txid: row.txid,
     rawTxHex: row.raw_tx_hex,
+    recoveryAttempts: row.recovery_attempts,
+    broadcastInvocations: row.broadcast_invocations,
+    nextBroadcastAttemptAt: row.next_broadcast_attempt_at,
+    lastBroadcastAttemptAt: row.last_broadcast_attempt_at,
   };
 };
 
@@ -544,6 +581,10 @@ export const reserveInternalTaprootTransactions = async ({
           state: 'reserved',
           txid: null,
           rawTxHex: null,
+          recoveryAttempts: 0,
+          broadcastInvocations: 0,
+          nextBroadcastAttemptAt: null,
+          lastBroadcastAttemptAt: null,
         });
       }
       return reservations;
@@ -585,6 +626,10 @@ export const reserveTransactionWithoutAddress = async (
         state: 'reserved',
         txid: null,
         rawTxHex: null,
+        recoveryAttempts: 0,
+        broadcastInvocations: 0,
+        nextBroadcastAttemptAt: null,
+        lastBroadcastAttemptAt: null,
       };
     });
   },
@@ -628,7 +673,9 @@ const transitionTransactionLifecycle = async ({
   const db = await openHistoryDb();
   await runWriteTransaction(db, async () => {
     const row = await db.getFirstAsync<TransactionLifecycleRow>(
-      `SELECT lifecycle_id, wallet_id, account_key, branch, purpose, address_index, derivation_path, address, state, txid, raw_tx_hex
+      `SELECT lifecycle_id, wallet_id, account_key, branch, purpose, address_index, derivation_path, address, state, txid, raw_tx_hex,
+              recovery_attempts, broadcast_invocations,
+              next_broadcast_attempt_at, last_broadcast_attempt_at
        FROM wallet_transaction_lifecycle
        WHERE lifecycle_id = ? AND wallet_id = ?`,
       lifecycleId,
@@ -678,6 +725,119 @@ export const markTransactionLifecycleBroadcastUncertain = (
   state: 'broadcast-uncertain',
 });
 
+export const claimTransactionLifecycleBroadcastAttempt = async (
+  walletId: string,
+  lifecycleId: string,
+  now: number,
+): Promise<TransactionLifecycleRecord | null> => runWalletStorageOperation(
+  'transaction broadcast attempt write',
+  async () => {
+    if (!Number.isSafeInteger(now) || now < 0) {
+      throw new Error('Invalid transaction broadcast attempt time.');
+    }
+    const db = await openHistoryDb();
+    return runWriteTransaction(db, async () => {
+      const row = await db.getFirstAsync<TransactionLifecycleRow>(
+        `SELECT lifecycle_id, wallet_id, account_key, branch, purpose, address_index, derivation_path, address, state, txid, raw_tx_hex,
+                recovery_attempts, broadcast_invocations,
+                next_broadcast_attempt_at, last_broadcast_attempt_at
+         FROM wallet_transaction_lifecycle
+         WHERE lifecycle_id = ? AND wallet_id = ?`,
+        lifecycleId,
+        walletId,
+      );
+      if (!row) return null;
+      const current = validateTransactionLifecycleRow(row);
+      if (
+        (current.state !== 'signed' && current.state !== 'broadcast-uncertain')
+        || !current.txid
+        || !current.rawTxHex
+        || current.broadcastInvocations >= TRANSACTION_BROADCAST_MAX_ATTEMPTS
+        || (
+          current.state === 'broadcast-uncertain'
+          && current.nextBroadcastAttemptAt !== null
+          && current.nextBroadcastAttemptAt > now
+        )
+      ) {
+        return null;
+      }
+      const recoveryAttempts = current.recoveryAttempts + 1;
+      const nextBroadcastAttemptAt = nextTransactionBroadcastAttemptAt(recoveryAttempts, now);
+      const result = await db.runAsync(
+        `UPDATE wallet_transaction_lifecycle
+         SET state = 'broadcast-uncertain', recovery_attempts = ?,
+             next_broadcast_attempt_at = ?, updated_at = ?
+         WHERE lifecycle_id = ? AND wallet_id = ?
+           AND state = ? AND recovery_attempts = ?`,
+        recoveryAttempts,
+        nextBroadcastAttemptAt,
+        new Date(now).toISOString(),
+        lifecycleId,
+        walletId,
+        current.state,
+        current.recoveryAttempts,
+      );
+      if (result.changes !== 1) return null;
+      return {
+        ...current,
+        state: 'broadcast-uncertain',
+        recoveryAttempts,
+        nextBroadcastAttemptAt,
+      };
+    });
+  },
+);
+
+export const recordTransactionLifecycleBroadcastInvocation = async (
+  walletId: string,
+  lifecycleId: string,
+  now: number,
+): Promise<TransactionLifecycleRecord | null> => runWalletStorageOperation(
+  'transaction broadcast invocation write',
+  async () => {
+    if (!Number.isSafeInteger(now) || now < 0) {
+      throw new Error('Invalid transaction broadcast invocation time.');
+    }
+    const db = await openHistoryDb();
+    return runWriteTransaction(db, async () => {
+      const row = await db.getFirstAsync<TransactionLifecycleRow>(
+        `SELECT lifecycle_id, wallet_id, account_key, branch, purpose, address_index, derivation_path, address, state, txid, raw_tx_hex,
+                recovery_attempts, broadcast_invocations,
+                next_broadcast_attempt_at, last_broadcast_attempt_at
+         FROM wallet_transaction_lifecycle
+         WHERE lifecycle_id = ? AND wallet_id = ?`,
+        lifecycleId,
+        walletId,
+      );
+      if (!row) return null;
+      const current = validateTransactionLifecycleRow(row);
+      if (
+        current.state !== 'broadcast-uncertain'
+        || !current.txid
+        || !current.rawTxHex
+        || current.broadcastInvocations >= TRANSACTION_BROADCAST_MAX_ATTEMPTS
+      ) {
+        return null;
+      }
+      const broadcastInvocations = current.broadcastInvocations + 1;
+      const result = await db.runAsync(
+        `UPDATE wallet_transaction_lifecycle
+         SET broadcast_invocations = ?, last_broadcast_attempt_at = ?, updated_at = ?
+         WHERE lifecycle_id = ? AND wallet_id = ?
+           AND state = 'broadcast-uncertain' AND broadcast_invocations = ?`,
+        broadcastInvocations,
+        now,
+        new Date(now).toISOString(),
+        lifecycleId,
+        walletId,
+        current.broadcastInvocations,
+      );
+      if (result.changes !== 1) return null;
+      return { ...current, broadcastInvocations, lastBroadcastAttemptAt: now };
+    });
+  },
+);
+
 export const markTransactionLifecyclePublished = (
   walletId: string,
   lifecycleId: string,
@@ -694,7 +854,9 @@ export const loadTransactionLifecycles = async (
   async () => {
     const db = await openHistoryDb();
     const rows = await db.getAllAsync<TransactionLifecycleRow>(
-      `SELECT lifecycle_id, wallet_id, account_key, branch, purpose, address_index, derivation_path, address, state, txid, raw_tx_hex
+      `SELECT lifecycle_id, wallet_id, account_key, branch, purpose, address_index, derivation_path, address, state, txid, raw_tx_hex,
+              recovery_attempts, broadcast_invocations,
+              next_broadcast_attempt_at, last_broadcast_attempt_at
        FROM wallet_transaction_lifecycle
        WHERE wallet_id = ?
        ORDER BY address_index`,
@@ -711,7 +873,9 @@ export const reconcileTransactionLifecycles = async (
   const db = await openHistoryDb();
   await runWriteTransaction(db, async () => {
     const rows = await db.getAllAsync<TransactionLifecycleRow>(
-      `SELECT lifecycle_id, wallet_id, account_key, branch, purpose, address_index, derivation_path, address, state, txid, raw_tx_hex
+      `SELECT lifecycle_id, wallet_id, account_key, branch, purpose, address_index, derivation_path, address, state, txid, raw_tx_hex,
+              recovery_attempts, broadcast_invocations,
+              next_broadcast_attempt_at, last_broadcast_attempt_at
        FROM wallet_transaction_lifecycle
        WHERE wallet_id = ? AND state IN ('broadcast-uncertain', 'published')`,
       walletId,

@@ -44,6 +44,7 @@ export type TransparentSendErrorCode =
   | 'recipient-output-dust'
   | 'max-recipient-unavailable'
   | 'insufficient-funds'
+  | 'review-changed'
   | 'consolidation-not-enough-utxos'
   | 'consolidation-unavailable'
   | 'consolidation-too-large';
@@ -59,6 +60,10 @@ export class TransparentSendError extends Error {
     this.detail = detail;
   }
 }
+
+export const isTransparentSendReviewChanged = (caught: unknown): boolean => (
+  caught instanceof TransparentSendError && caught.code === 'review-changed'
+);
 
 export const assertTransparentSendFitsAvailable = (fitsAvailable: boolean): void => {
   if (!fitsAvailable) {
@@ -864,7 +869,7 @@ const assertTransactionPlanMatches = (
       value !== rebuiltOutputValues[index]
     ))
   ) {
-    throw new TransparentSendError('insufficient-funds');
+    throw new TransparentSendError('review-changed');
   }
 };
 
@@ -900,7 +905,7 @@ export const assertTransparentSendPlanMatches = (
         || candidate.amountSats !== recipient.amountSats;
     })
   ) {
-    throw new TransparentSendError('insufficient-funds');
+    throw new TransparentSendError('review-changed');
   }
 };
 
@@ -909,11 +914,11 @@ export const assertTransparentConsolidationPlanMatches = (
   rebuilt: UnsignedTransparentConsolidation,
 ): void => {
   if (preview.transactions.length !== rebuilt.transactions.length) {
-    throw new TransparentSendError('consolidation-unavailable');
+    throw new TransparentSendError('review-changed');
   }
   preview.transactions.forEach((transaction, index) => {
     const candidate = rebuilt.transactions[index];
-    if (!candidate) throw new TransparentSendError('consolidation-unavailable');
+    if (!candidate) throw new TransparentSendError('review-changed');
     assertTransactionPlanMatches(transaction, candidate);
   });
 };

@@ -142,13 +142,19 @@ import {
   saveWalletSnapshotCache,
   reserveNextHdAddressIndex,
   attachInternalTransactionAddresses,
-  markTransactionLifecycleBroadcastUncertain,
+  claimTransactionLifecycleBroadcastAttempt,
+  recordTransactionLifecycleBroadcastInvocation,
   markTransactionLifecyclePublished,
   markTransactionLifecycleSigned,
   reconcileTransactionLifecycles,
   reserveInternalTaprootTransactions,
   reserveTransactionWithoutAddress,
 } from './src/services/walletHistoryDb';
+import {
+  processPersistentTransactionSequence,
+  recoverPersistedTransactionBroadcasts,
+  TransactionBroadcastRetryScheduler,
+} from './src/services/transactionRecovery';
 import {
   satoshisToNito,
   type TransparentWalletSnapshot,
@@ -160,6 +166,7 @@ import {
   assertUnsignedTransparentInputsAvailable,
   calculateMaxTransparentSendAmount,
   estimateTransparentMultiSend,
+  isTransparentSendReviewChanged,
   parseNitoAmountToSats,
   prepareUnsignedTransparentConsolidation,
   prepareUnsignedTransparentMultiSend,
@@ -469,6 +476,8 @@ function WalletApp({ theme, onSelectTheme }: {
   const [walletNetworkController] = useState(() => new WalletNetworkController());
   const [historyEnrichmentRetryScheduler] =
     useState(() => new HistoryEnrichmentRetryScheduler());
+  const [transactionBroadcastRetryScheduler] =
+    useState(() => new TransactionBroadcastRetryScheduler());
   const electrumClientRef = useRef<NitoElectrumClient | null>(null);
   const pendingNetworkRef = useRef<{ walletId: string; snapshot: TransparentWalletSnapshot; height: number } | null>(null);
   const walletRef = useRef<Wallet | null>(null);
@@ -559,6 +568,10 @@ function WalletApp({ theme, onSelectTheme }: {
   const historyPageRef = useRef(historyPage);
   const historyEnrichmentQueueRef = useRef<HistoryEnrichmentQueue | null>(null);
   const enrichWalletHistoryRef = useRef<() => void>(() => undefined);
+  const syncTransparentNetworkRef = useRef<(
+    includeHistory?: boolean,
+    options?: WalletSyncOptions,
+  ) => Promise<void>>(async () => undefined);
   const [historyProgress, setHistoryProgress] = useState<{ done: number; total: number } | null>(null);
   const [historySyncing, setHistorySyncing] = useState(false);
   const { language, t, selected: selectedLanguage, pickerOpen: languagePickerOpen, togglePicker: toggleLanguagePicker, select: selectLanguage } = useLanguage();
@@ -927,6 +940,7 @@ function WalletApp({ theme, onSelectTheme }: {
     setWalletTab('home');
     setHistoryPage(0);
     historyEnrichmentRetryScheduler.cancel();
+    transactionBroadcastRetryScheduler.cancel();
     enrichAttemptedRef.current.clear();
     enrichFailedRef.current.clear();
     setBalanceRefreshing(!pendingPreload);
@@ -1175,6 +1189,45 @@ function WalletApp({ theme, onSelectTheme }: {
     };
   }, [enrichWalletHistory]);
 
+  const recoverTransactionBroadcasts = useCallback(async (
+    walletId: string,
+    records?: Awaited<ReturnType<typeof loadTransactionLifecycles>>,
+  ) => {
+    const candidates = records ?? await loadTransactionLifecycles(walletId);
+    const client = electrumClientRef.current ?? createElectrumClient();
+    electrumClientRef.current = client;
+    const result = await recoverPersistedTransactionBroadcasts({
+      now: Date.now(),
+      records: candidates,
+      claimAttempt: (record, now) => (
+        walletRef.current?.walletId === walletId
+          ? claimTransactionLifecycleBroadcastAttempt(walletId, record.lifecycleId, now)
+          : Promise.resolve(null)
+      ),
+      recordBroadcastInvocation: (record, now) => (
+        recordTransactionLifecycleBroadcastInvocation(walletId, record.lifecycleId, now)
+      ),
+      lookupTransaction: async (txid) => {
+        await client.getTransactionHex(txid);
+      },
+      isTransactionNotFound: isElectrumTransactionNotFoundError,
+      broadcastTransaction: (rawTxHex, expectedTxid) => (
+        client.broadcastTransaction(rawTxHex, expectedTxid)
+      ),
+      markPublished: (record) => (
+        markTransactionLifecyclePublished(walletId, record.lifecycleId)
+      ),
+    });
+    result.failures.forEach(({ error: caught }) => {
+      reportNonFinancialFailure('persistent transaction broadcast recovery', caught);
+    });
+    transactionBroadcastRetryScheduler.schedule(result.nextAttemptAt, () => {
+      if (walletRef.current?.walletId !== walletId || screenRef.current !== 'wallet') return;
+      void syncTransparentNetworkRef.current(false, { force: true, silent: true });
+    });
+    return result;
+  }, [transactionBroadcastRetryScheduler]);
+
   const syncTransparentNetwork = useCallback(async (
     includeHistory = false,
     options: WalletSyncOptions = {},
@@ -1235,31 +1288,7 @@ function WalletApp({ theme, onSelectTheme }: {
           currentNetwork.snapshot.history,
         );
         const lifecycles = await loadTransactionLifecycles(activeWallet.walletId);
-        const uncertain = lifecycles.filter((record) => (
-          record.state === 'broadcast-uncertain' && record.txid
-        ));
-        const client = electrumClientRef.current;
-        if (client) {
-          for (const record of uncertain) {
-            if (!record.txid || walletRef.current?.walletId !== activeWallet.walletId) break;
-            let found = false;
-            try {
-              await client.getTransactionHex(record.txid);
-              found = true;
-            } catch (caught) {
-              if (!isElectrumTransactionNotFoundError(caught)) {
-                reportNonFinancialFailure('transaction lifecycle network reconciliation', caught);
-                break;
-              }
-            }
-            if (found) {
-              await markTransactionLifecyclePublished(
-                activeWallet.walletId,
-                record.lifecycleId,
-              );
-            }
-          }
-        }
+        await recoverTransactionBroadcasts(activeWallet.walletId, lifecycles);
       } catch (caught) {
         setError(translatedErrorMessage(
           caught,
@@ -1272,9 +1301,19 @@ function WalletApp({ theme, onSelectTheme }: {
   }, [
     historyEnrichmentRetryScheduler,
     publishNetworkState,
+    recoverTransactionBroadcasts,
     t,
     walletNetworkController,
   ]);
+
+  useLayoutEffect(() => {
+    syncTransparentNetworkRef.current = syncTransparentNetwork;
+  }, [syncTransparentNetwork]);
+
+  useEffect(
+    () => () => transactionBroadcastRetryScheduler.cancel(),
+    [transactionBroadcastRetryScheduler],
+  );
 
   useEffect(() => {
     if (screen !== 'wallet' || !network.snapshot) return;
@@ -1389,6 +1428,7 @@ function WalletApp({ theme, onSelectTheme }: {
       clearPreparedConsolidation: () => setPreparedConsolidation(null),
       clearDeferredNetworkWork: () => {
         historyEnrichmentRetryScheduler.cancel();
+        transactionBroadcastRetryScheduler.cancel();
         pendingNetworkRef.current = null;
         silentNextAutoSyncRef.current = false;
         historyEnrichmentQueueRef.current = null;
@@ -1401,6 +1441,7 @@ function WalletApp({ theme, onSelectTheme }: {
   }, [
     clearAddressSubscriptions,
     historyEnrichmentRetryScheduler,
+    transactionBroadcastRetryScheduler,
     walletNetworkController,
   ]);
 
@@ -1950,6 +1991,7 @@ function WalletApp({ theme, onSelectTheme }: {
                 await deleteBiometricSecret();
                 await deleteVault();
                 historyEnrichmentRetryScheduler.cancel();
+                transactionBroadcastRetryScheduler.cancel();
                 walletNetworkController.cancel();
                 clearAddressSubscriptions();
                 electrumClientRef.current?.disconnect(new Error('Wallet deleted.'));
@@ -2021,6 +2063,7 @@ function WalletApp({ theme, onSelectTheme }: {
     lockedDuringSessionRef.current = true;
     applyVaultTransition({ type: 'lock' });
     historyEnrichmentRetryScheduler.cancel();
+    transactionBroadcastRetryScheduler.cancel();
     walletNetworkController.cancel();
     pendingNetworkRef.current = null;
     receiveAddressOperationRef.current += 1;
@@ -2070,6 +2113,7 @@ function WalletApp({ theme, onSelectTheme }: {
     applyVaultTransition,
     clearAddressSubscriptions,
     historyEnrichmentRetryScheduler,
+    transactionBroadcastRetryScheduler,
     resetFeedback,
     resetSendDraft,
     publishNetworkState,
@@ -2497,8 +2541,6 @@ function WalletApp({ theme, onSelectTheme }: {
       return;
     }
 
-    let signedTxid: string | null = null;
-    let broadcastAttempted = false;
     try {
       setBroadcasting(true);
       const activeSnapshot = networkRef.current.snapshot;
@@ -2557,7 +2599,17 @@ function WalletApp({ theme, onSelectTheme }: {
         outputs: preview.recipients,
         changeAddress,
       });
-      assertTransparentSendPlanMatches(preview, rebuilt);
+      try {
+        assertTransparentSendPlanMatches(preview, rebuilt);
+      } catch (caught) {
+        if (!isTransparentSendReviewChanged(caught)) throw caught;
+        setPreparedTx(rebuilt);
+        setPreparedConsolidation(null);
+        setStatus(t('status.transactionReady', {
+          fee: satoshisToNito(rebuilt.feeSats, language),
+        }));
+        return;
+      }
       if (
         rebuilt.changeUsed
         && !rebuilt.walletOutputs.some((output) => output.address === changeAddress)
@@ -2571,7 +2623,6 @@ function WalletApp({ theme, onSelectTheme }: {
         mnemonic: activeWallet.mnemonic,
         transaction: rebuilt,
       });
-      signedTxid = signed.txid;
       await markTransactionLifecycleSigned(
         activeWallet.walletId,
         lifecycle.lifecycleId,
@@ -2581,16 +2632,12 @@ function WalletApp({ theme, onSelectTheme }: {
       setPreparedTx(null);
       setPreparedConsolidation(null);
       if (!walletNetworkController.isCurrent(session)) return;
-      await markTransactionLifecycleBroadcastUncertain(
-        activeWallet.walletId,
-        lifecycle.lifecycleId,
-      );
-      const client = electrumClientRef.current || createElectrumClient();
-      electrumClientRef.current = client;
-      broadcastAttempted = true;
       const transaction = { ...signed, recipients: rebuilt.recipients };
-      const txid = await client.broadcastTransaction(transaction.hex, transaction.txid);
-      await markTransactionLifecyclePublished(activeWallet.walletId, lifecycle.lifecycleId);
+      const recovery = await recoverTransactionBroadcasts(activeWallet.walletId);
+      if (!recovery.publishedTxids.includes(transaction.txid)) {
+        throw recovery.failures[0]?.error ?? new Error('Transaction broadcast was deferred.');
+      }
+      const txid = transaction.txid;
       if (!walletNetworkController.isCurrent(session)) return;
 
       const currentNetwork = networkRef.current;
@@ -2630,9 +2677,6 @@ function WalletApp({ theme, onSelectTheme }: {
           t('errors.sendFailed'),
           'transparent transaction broadcast',
         ));
-        if (signedTxid && broadcastAttempted) {
-          startBroadcastReconciliation([signedTxid], session);
-        }
       }
     } finally {
       if (walletNetworkController.isCurrent(session)) {
@@ -2757,7 +2801,15 @@ function WalletApp({ theme, onSelectTheme }: {
           snapshot: rebuildSnapshot,
           toAddresses: destinations,
         });
-        assertTransparentConsolidationPlanMatches(preparedConsolidation, rebuilt);
+        try {
+          assertTransparentConsolidationPlanMatches(preparedConsolidation, rebuilt);
+        } catch (caught) {
+          if (!isTransparentSendReviewChanged(caught)) throw caught;
+          setPreparedTx(null);
+          setPreparedConsolidation(rebuilt);
+          setStatus(consolidationT('review'));
+          return;
+        }
         rebuilt.transactions.forEach((transaction, index) => {
           const destination = destinations[index];
           if (
@@ -2768,55 +2820,63 @@ function WalletApp({ theme, onSelectTheme }: {
             throw new Error('Consolidation output does not use its reserved Taproot address.');
           }
         });
-        const signedTransactions: {
-          transaction: Awaited<ReturnType<typeof signUnsignedTransparentTx>>;
-          lifecycleId: string;
-        }[] = [];
-        signingStarted = true;
-        for (const [index, unsigned] of rebuilt.transactions.entries()) {
-          const reservation = reservations[index];
-          if (!reservation) throw new Error('Consolidation reservation is missing.');
-          const signingSnapshot = networkRef.current.snapshot;
-          if (!signingSnapshot) throw new Error('Wallet snapshot unavailable before signing.');
-          assertUnsignedTransparentInputsAvailable(unsigned, signingSnapshot);
-          const transaction = await signUnsignedTransparentTx({
-            mnemonic: activeWallet.mnemonic,
-            transaction: unsigned,
-          });
-          await markTransactionLifecycleSigned(
-            activeWallet.walletId,
-            reservation.lifecycleId,
-            transaction.txid,
-            transaction.hex,
-          );
-          signedTransactions.push({ transaction, lifecycleId: reservation.lifecycleId });
-        }
         setPreparedConsolidation(null);
         setPreparedTx(null);
-        const client = electrumClientRef.current || createElectrumClient();
-        electrumClientRef.current = client;
-        for (const { transaction, lifecycleId } of signedTransactions) {
-          if (!walletNetworkController.isCurrent(session)) return;
-          await markTransactionLifecycleBroadcastUncertain(
-            activeWallet.walletId,
-            lifecycleId,
-          );
-          reconciliationTxids.push(transaction.txid);
-          const txid = await client.broadcastTransaction(transaction.hex, transaction.txid);
-          await markTransactionLifecyclePublished(activeWallet.walletId, lifecycleId);
-          if (!walletNetworkController.isCurrent(session)) return;
-          sentCount += 1;
-          const currentNetwork = networkRef.current;
-          if (currentNetwork.snapshot) {
-            const optimisticSnapshot = applyOptimisticWalletBroadcast({
-              snapshot: currentNetwork.snapshot,
-              transaction,
-              txid,
-            });
-            const optimisticNetwork = { ...currentNetwork, snapshot: optimisticSnapshot };
-            publishNetworkState(optimisticNetwork, session.walletId);
-          }
+        const sequence = rebuilt.transactions.map((transaction, index) => ({
+          transaction,
+          reservation: reservations[index],
+        }));
+        if (sequence.some(({ reservation }) => !reservation)) {
+          throw new Error('Consolidation reservation is missing.');
         }
+        await processPersistentTransactionSequence({
+          items: sequence,
+          sign: async ({ transaction: unsigned }) => {
+            const signingSnapshot = networkRef.current.snapshot;
+            if (!signingSnapshot) throw new Error('Wallet snapshot unavailable before signing.');
+            assertUnsignedTransparentInputsAvailable(unsigned, signingSnapshot);
+            signingStarted = true;
+            return signUnsignedTransparentTx({
+              mnemonic: activeWallet.mnemonic,
+              transaction: unsigned,
+            });
+          },
+          persistSigned: async ({ reservation }, transaction) => {
+            if (!reservation) throw new Error('Consolidation reservation is missing.');
+            await markTransactionLifecycleSigned(
+              activeWallet.walletId,
+              reservation.lifecycleId,
+              transaction.txid,
+              transaction.hex,
+            );
+          },
+          broadcastPersisted: async (_item, transaction) => {
+            if (!walletNetworkController.isCurrent(session)) {
+              throw new Error('Wallet session changed before transaction broadcast.');
+            }
+            reconciliationTxids.push(transaction.txid);
+            const recovery = await recoverTransactionBroadcasts(activeWallet.walletId);
+            if (!recovery.publishedTxids.includes(transaction.txid)) {
+              throw recovery.failures[0]?.error ?? new Error('Transaction broadcast was deferred.');
+            }
+          },
+          afterPublished: async (_item, transaction) => {
+            if (!walletNetworkController.isCurrent(session)) {
+              throw new Error('Wallet session changed after transaction broadcast.');
+            }
+            sentCount += 1;
+            const currentNetwork = networkRef.current;
+            if (currentNetwork.snapshot) {
+              const optimisticSnapshot = applyOptimisticWalletBroadcast({
+                snapshot: currentNetwork.snapshot,
+                transaction,
+                txid: transaction.txid,
+              });
+              const optimisticNetwork = { ...currentNetwork, snapshot: optimisticSnapshot };
+              publishNetworkState(optimisticNetwork, session.walletId);
+            }
+          },
+        });
         Alert.alert(consolidationT('successTitle'), consolidationT('successBody'), [
           { text: t('actions.ok'), style: 'cancel' },
         ]);

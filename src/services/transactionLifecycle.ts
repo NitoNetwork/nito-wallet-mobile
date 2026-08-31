@@ -19,6 +19,32 @@ export type TransactionLifecycleRecord = {
   state: TransactionLifecycleState;
   txid: string | null;
   rawTxHex: string | null;
+  recoveryAttempts: number;
+  broadcastInvocations: number;
+  nextBroadcastAttemptAt: number | null;
+  lastBroadcastAttemptAt: number | null;
+};
+
+export const TRANSACTION_BROADCAST_MAX_ATTEMPTS = 5;
+export const TRANSACTION_BROADCAST_RETRY_DELAYS_MS = [
+  15_000,
+  60_000,
+  300_000,
+  900_000,
+] as const;
+
+export const nextTransactionBroadcastAttemptAt = (
+  completedRecoveryAttempts: number,
+  now: number,
+): number => {
+  const delay = TRANSACTION_BROADCAST_RETRY_DELAYS_MS[Math.min(
+    completedRecoveryAttempts - 1,
+    TRANSACTION_BROADCAST_RETRY_DELAYS_MS.length - 1,
+  )];
+  if (delay === undefined) {
+    throw new Error('Invalid transaction recovery attempt count.');
+  }
+  return now + delay;
 };
 
 const STATE_ORDER: Record<TransactionLifecycleState, number> = {

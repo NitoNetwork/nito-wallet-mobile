@@ -399,7 +399,14 @@ describe('mobile wallet UX and security invariants', () => {
     expect(sendFinal.indexOf('signUnsignedTransparentTx')).toBeGreaterThan(
       sendFinal.indexOf('reserveInternalTaprootTransactions'),
     );
-    expect(sendFinal.indexOf('markTransactionLifecycleBroadcastUncertain')).toBeGreaterThan(
+    expect(sendFinal.indexOf('recoverTransactionBroadcasts')).toBeGreaterThan(
+      sendFinal.indexOf('signUnsignedTransparentTx'),
+    );
+    expect(sendFinal.indexOf('markTransactionLifecycleSigned')).toBeGreaterThan(
+      sendFinal.indexOf('signUnsignedTransparentTx'),
+    );
+    expect(sendFinal.indexOf('setPreparedTx(rebuilt)')).toBeGreaterThanOrEqual(0);
+    expect(sendFinal.indexOf('setPreparedTx(rebuilt)')).toBeLessThan(
       sendFinal.indexOf('signUnsignedTransparentTx'),
     );
 
@@ -409,6 +416,19 @@ describe('mobile wallet UX and security invariants', () => {
     );
     expect(consolidationPreview).toContain('prepareUnsignedTransparentConsolidation');
     expect(consolidationPreview).not.toContain('signUnsignedTransparentTx');
+
+    const consolidationFinal = appSource.slice(
+      appSource.indexOf('const broadcastPreparedConsolidation = async'),
+      appSource.indexOf('const verifySensitiveAction = async'),
+    );
+    expect(consolidationFinal).toContain('processPersistentTransactionSequence');
+    expect(consolidationFinal).not.toContain('signedTransactions');
+    expect(consolidationFinal.indexOf('persistSigned:')).toBeLessThan(
+      consolidationFinal.indexOf('broadcastPersisted:'),
+    );
+    expect(consolidationFinal.indexOf('setPreparedConsolidation(rebuilt)')).toBeLessThan(
+      consolidationFinal.indexOf('processPersistentTransactionSequence'),
+    );
   });
 
   it('never recreates or replaces a vault after a stale PBKDF2 upgrade', () => {

@@ -437,7 +437,7 @@ describe('transparent send builder', () => {
     });
 
     expect(() => assertTransparentSendPlanMatches(preview, rebuilt)).toThrowError(
-      expect.objectContaining({ code: 'insufficient-funds' }),
+      expect.objectContaining({ code: 'review-changed' }),
     );
   });
 

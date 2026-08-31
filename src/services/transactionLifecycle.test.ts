@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   assertLifecycleTransition,
+  nextTransactionBroadcastAttemptAt,
   reconciledLifecycleState,
 } from './transactionLifecycle';
 
@@ -20,5 +21,14 @@ describe('transaction lifecycle', () => {
     expect(() => assertLifecycleTransition('published', 'signed')).toThrow(
       'Invalid transaction lifecycle transition',
     );
+  });
+
+  it('backs recovery checks off to fifteen minutes without abandoning a first broadcast', () => {
+    expect(nextTransactionBroadcastAttemptAt(1, 1_000)).toBe(16_000);
+    expect(nextTransactionBroadcastAttemptAt(2, 1_000)).toBe(61_000);
+    expect(nextTransactionBroadcastAttemptAt(3, 1_000)).toBe(301_000);
+    expect(nextTransactionBroadcastAttemptAt(4, 1_000)).toBe(901_000);
+    expect(nextTransactionBroadcastAttemptAt(5, 1_000)).toBe(901_000);
+    expect(nextTransactionBroadcastAttemptAt(20, 1_000)).toBe(901_000);
   });
 });
