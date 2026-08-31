@@ -70,6 +70,39 @@ describe('transparent HD scan', () => {
     ]);
   });
 
+  it('keeps an explicitly issued empty address inside scan coverage', async () => {
+    const emptyReader = {
+      async getAddressBalance(): Promise<ElectrumBalance> {
+        return { confirmedSats: 0, unconfirmedSats: 0, totalSats: 0 };
+      },
+      async getAddressUtxos(): Promise<ElectrumUtxo[]> {
+        return [];
+      },
+      async getAddressHistory(): Promise<ElectrumHistoryEntry[]> {
+        return [];
+      },
+    };
+
+    const snapshot = await scanP2wpkhAccount({
+      mnemonic,
+      electrum: emptyReader,
+      gapLimit: 1,
+      crypto,
+      issuedAddresses: [{
+        accountKey: 'taproot',
+        branch: 'external',
+        highestIssuedIndex: 3,
+      }],
+    });
+
+    expect(snapshot.addresses).toContainEqual(expect.objectContaining({
+      accountKey: 'taproot',
+      branch: 'external',
+      index: 3,
+      path: "m/86'/0'/0'/0/3",
+    }));
+  });
+
   it('refreshes a pending known address without deriving or scanning new gap addresses', async () => {
     const usedAddress = (await deriveP2wpkhAddress(mnemonic, 'external', 0, crypto)).address;
     let confirmed = false;

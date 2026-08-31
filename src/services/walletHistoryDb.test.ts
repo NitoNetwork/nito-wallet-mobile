@@ -58,7 +58,7 @@ describe('wallet transaction output cache', () => {
     }));
   });
 
-  it('migrates version 1 with a separate minimal output table', async () => {
+  it('migrates version 1 through the public HD address state schema', async () => {
     const {
       loadTransactionOutputCache,
     } = await import('./walletHistoryDb');
@@ -68,6 +68,10 @@ describe('wallet transaction output cache', () => {
     expect(db.execAsync.mock.calls.some(([sql]) => (
       String(sql).includes('CREATE TABLE IF NOT EXISTS wallet_transaction_outputs')
       && String(sql).includes('PRAGMA user_version = 2')
+    ))).toBe(true);
+    expect(db.execAsync.mock.calls.some(([sql]) => (
+      String(sql).includes('CREATE TABLE IF NOT EXISTS wallet_hd_sequences')
+      && String(sql).includes('PRAGMA user_version = 3')
     ))).toBe(true);
   });
 
@@ -126,6 +130,75 @@ describe('wallet transaction output cache', () => {
       'DELETE FROM wallet_transaction_outputs WHERE wallet_id = ?',
       'wallet-address',
     );
+    expect(db.runAsync).not.toHaveBeenCalledWith(
+      'DELETE FROM wallet_hd_sequences WHERE wallet_id = ?',
+      'wallet-address',
+    );
+  });
+
+  it('purges HD address state only when the wallet itself is deleted', async () => {
+    const { clearWalletPublicData } = await import('./walletHistoryDb');
+    db.runAsync.mockClear();
+
+    await clearWalletPublicData('wallet-address');
+
+    expect(db.runAsync).toHaveBeenCalledWith(
+      'DELETE FROM wallet_hd_sequences WHERE wallet_id = ?',
+      'wallet-address',
+    );
+  });
+
+  it('reserves concurrent HD addresses atomically in order', async () => {
+    vi.resetModules();
+    let highestIssuedIndex = 0;
+    const events: string[] = [];
+    db.getFirstAsync.mockImplementation(async (sql: string) => {
+      if (sql === 'PRAGMA user_version') return { user_version: 3 };
+      if (String(sql).includes('FROM wallet_hd_sequences')) {
+        return highestIssuedIndex > 0 ? {
+          account_key: 'taproot',
+          branch: 'external',
+          highest_issued_index: highestIssuedIndex,
+        } : null;
+      }
+      return null;
+    });
+    db.execAsync.mockImplementation(async (sql: string) => {
+      if (sql === 'BEGIN IMMEDIATE TRANSACTION') events.push('begin');
+      if (sql === 'COMMIT') events.push('commit');
+    });
+    db.runAsync.mockImplementation(async (sql: string, ...params: unknown[]) => {
+      if (String(sql).includes('INSERT INTO wallet_hd_sequences')) {
+        highestIssuedIndex = Number(params[3]);
+        events.push(`write:${highestIssuedIndex}`);
+      }
+      return { changes: 1, lastInsertRowId: 0 };
+    });
+    sqlite.openDatabaseAsync.mockResolvedValue(db);
+    const { reserveNextHdAddressIndex } = await import('./walletHistoryDb');
+
+    const reservations = await Promise.all([
+      reserveNextHdAddressIndex({
+        walletId: 'wallet-address',
+        accountKey: 'taproot',
+        branch: 'external',
+        minimumIndex: 1,
+        maximumIndex: 20,
+      }),
+      reserveNextHdAddressIndex({
+        walletId: 'wallet-address',
+        accountKey: 'taproot',
+        branch: 'external',
+        minimumIndex: 1,
+        maximumIndex: 20,
+      }),
+    ]);
+
+    expect(reservations).toEqual([1, 2]);
+    expect(events).toEqual([
+      'begin', 'write:1', 'commit',
+      'begin', 'write:2', 'commit',
+    ]);
   });
 
   it('retries and propagates an output-cache write failure', async () => {
@@ -141,7 +214,7 @@ describe('wallet transaction output cache', () => {
         valueSats: 90_000_000,
         address: 'wallet-address',
       }],
-    )).rejects.toBeInstanceOf(WalletStorageError);
+    )).rejects.toMatchObject({ name: 'WalletStorageError' });
 
     expect(db.execAsync.mock.calls.filter(([sql]) => (
       sql === 'BEGIN IMMEDIATE TRANSACTION'
@@ -280,7 +353,7 @@ describe('wallet transaction output cache', () => {
     };
 
     db.getFirstAsync.mockImplementation(async (sql: string) => (
-      sql === 'PRAGMA user_version' ? { user_version: 2 } : null
+      sql === 'PRAGMA user_version' ? { user_version: 3 } : null
     ));
     db.getAllAsync.mockImplementation(async (sql: string) => (
       String(sql).includes('SELECT txid FROM wallet_transactions')
@@ -475,7 +548,7 @@ describe('wallet transaction output cache', () => {
     };
 
     db.getFirstAsync.mockImplementation(async (sql: string) => (
-      sql === 'PRAGMA user_version' ? { user_version: 2 } : null
+      sql === 'PRAGMA user_version' ? { user_version: 3 } : null
     ));
     db.execAsync.mockImplementation(async (sql: string) => {
       if (sql === 'BEGIN IMMEDIATE TRANSACTION') {
@@ -527,7 +600,7 @@ describe('wallet transaction output cache', () => {
   it('chunks history and output inserts below the SQLite binding limit', async () => {
     vi.resetModules();
     db.getFirstAsync.mockImplementation(async (sql: string) => (
-      sql === 'PRAGMA user_version' ? { user_version: 2 } : null
+      sql === 'PRAGMA user_version' ? { user_version: 3 } : null
     ));
     db.runAsync.mockResolvedValue({ changes: 1, lastInsertRowId: 0 });
     sqlite.openDatabaseAsync.mockResolvedValue(db);
@@ -589,7 +662,7 @@ describe('wallet transaction output cache', () => {
       execAsync: vi.fn(async (_sql: string) => undefined),
       getAllAsync: vi.fn(async (_sql: string, ..._params: unknown[]) => []),
       getFirstAsync: vi.fn(async (sql: string) => (
-        sql === 'PRAGMA user_version' ? { user_version: 2 } : null
+        sql === 'PRAGMA user_version' ? { user_version: 3 } : null
       )),
       runAsync: vi.fn(async (_sql: string, ..._params: unknown[]) => ({
         changes: 1,
@@ -624,5 +697,32 @@ describe('wallet transaction output cache', () => {
       expect(synchronousIndex).toBeGreaterThan(busyTimeoutIndex);
       expect(schemaIndex).toBeGreaterThan(synchronousIndex);
     }
+  });
+
+  it('upgrades a 1.3.1 version 2 database without rewriting history rows', async () => {
+    vi.resetModules();
+    const legacyConnection = {
+      execAsync: vi.fn(async (_sql: string) => undefined),
+      getAllAsync: vi.fn(async (_sql: string, ..._params: unknown[]) => []),
+      getFirstAsync: vi.fn(async (sql: string) => (
+        sql === 'PRAGMA user_version' ? { user_version: 2 } : null
+      )),
+      runAsync: vi.fn(async (_sql: string, ..._params: unknown[]) => ({
+        changes: 1,
+        lastInsertRowId: 0,
+      })),
+    };
+    sqlite.openDatabaseAsync.mockResolvedValue(legacyConnection);
+    const { loadHdAddressRequirements } = await import('./walletHistoryDb');
+
+    await expect(loadHdAddressRequirements('wallet-address')).resolves.toEqual([]);
+
+    const migrationSql = legacyConnection.execAsync.mock.calls.map(([sql]) => String(sql));
+    expect(migrationSql.some((sql) => (
+      sql.includes('CREATE TABLE IF NOT EXISTS wallet_hd_sequences')
+      && sql.includes('PRAGMA user_version = 3')
+    ))).toBe(true);
+    expect(migrationSql.some((sql) => sql.includes('UPDATE wallet_transactions'))).toBe(false);
+    expect(legacyConnection.runAsync).not.toHaveBeenCalled();
   });
 });

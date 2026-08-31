@@ -2,6 +2,11 @@ import * as SQLite from 'expo-sqlite';
 
 import type { ElectrumHistoryEntry } from '../network/electrum';
 import type { TransparentWalletSnapshot } from '../wallet/transparentScan';
+import type {
+  HdAccountKey,
+  HdBranch,
+  HdScanRequirement,
+} from '../wallet/hdAddress';
 import type { CachedTransactionOutput } from './historyExport';
 import { isDuplicateColumnError, retrySqliteWrite } from './sqliteReliability';
 import { runWalletStorageOperation } from './walletStorageError';
@@ -52,6 +57,12 @@ type TransactionOutputRow = {
   output_index: number;
   value_sats: number;
   address: string;
+};
+
+type HdSequenceRow = {
+  account_key: string;
+  branch: string;
+  highest_issued_index: number;
 };
 
 export type WalletHistoryCache = {
@@ -143,6 +154,21 @@ const initializeHistoryDb = async () => {
       `);
     });
   }
+  if ((version?.user_version ?? 0) < 3) {
+    await runWriteTransaction(db, async () => {
+      await db.execAsync(`
+        CREATE TABLE IF NOT EXISTS wallet_hd_sequences (
+          wallet_id TEXT NOT NULL,
+          account_key TEXT NOT NULL,
+          branch TEXT NOT NULL,
+          highest_issued_index INTEGER NOT NULL,
+          updated_at TEXT NOT NULL,
+          PRIMARY KEY (wallet_id, account_key, branch)
+        );
+        PRAGMA user_version = 3;
+      `);
+    });
+  }
 
   return db;
 };
@@ -202,14 +228,15 @@ const runSerializedWrite = async <T>(
   return pending;
 };
 
-const runWriteTransaction = async (
+const runWriteTransaction = async <T>(
   db: SQLite.SQLiteDatabase,
-  operation: () => Promise<void>,
-) => runSerializedWrite(db, () => retrySqliteWrite(async () => {
+  operation: () => Promise<T>,
+): Promise<T> => runSerializedWrite(db, () => retrySqliteWrite(async () => {
   await db.execAsync('BEGIN IMMEDIATE TRANSACTION');
   try {
-    await operation();
+    const result = await operation();
     await db.execAsync('COMMIT');
+    return result;
   } catch (caught) {
     try {
       await db.execAsync('ROLLBACK');
@@ -221,6 +248,121 @@ const runWriteTransaction = async (
     throw caught;
   }
 }));
+
+const isHdAccountKey = (value: string): value is HdAccountKey => (
+  value === 'legacy'
+  || value === 'nested'
+  || value === 'bech32'
+  || value === 'taproot'
+);
+
+const isHdBranch = (value: string): value is HdBranch => (
+  value === 'external' || value === 'internal'
+);
+
+const validateHdSequenceRow = (row: HdSequenceRow): HdScanRequirement => {
+  if (
+    !isHdAccountKey(row.account_key)
+    || !isHdBranch(row.branch)
+    || !Number.isSafeInteger(row.highest_issued_index)
+    || row.highest_issued_index < 0
+  ) {
+    throw new Error('Invalid HD address sequence state.');
+  }
+  return {
+    accountKey: row.account_key,
+    branch: row.branch,
+    highestIssuedIndex: row.highest_issued_index,
+  };
+};
+
+export const loadHdAddressRequirements = async (
+  walletId: string,
+): Promise<HdScanRequirement[]> => runWalletStorageOperation(
+  'HD address state read',
+  async () => {
+    const db = await openHistoryDb();
+    const rows = await db.getAllAsync<HdSequenceRow>(
+      `SELECT account_key, branch, highest_issued_index
+       FROM wallet_hd_sequences
+       WHERE wallet_id = ?
+       ORDER BY account_key, branch`,
+      walletId,
+    );
+    return rows.map(validateHdSequenceRow);
+  },
+);
+
+export const loadCurrentHdAddressIndex = async (
+  walletId: string,
+  accountKey: HdAccountKey,
+  branch: HdBranch,
+): Promise<number> => runWalletStorageOperation('HD address state read', async () => {
+  const db = await openHistoryDb();
+  const row = await db.getFirstAsync<HdSequenceRow>(
+    `SELECT account_key, branch, highest_issued_index
+     FROM wallet_hd_sequences
+     WHERE wallet_id = ? AND account_key = ? AND branch = ?`,
+    walletId,
+    accountKey,
+    branch,
+  );
+  return row ? validateHdSequenceRow(row).highestIssuedIndex : 0;
+});
+
+export const reserveNextHdAddressIndex = async ({
+  walletId,
+  accountKey,
+  branch,
+  minimumIndex,
+  maximumIndex = Number.MAX_SAFE_INTEGER,
+}: {
+  walletId: string;
+  accountKey: HdAccountKey;
+  branch: HdBranch;
+  minimumIndex: number;
+  maximumIndex?: number;
+}): Promise<number> => runWalletStorageOperation('HD address reservation write', async () => {
+  if (
+    !Number.isSafeInteger(minimumIndex)
+    || minimumIndex < 0
+    || !Number.isSafeInteger(maximumIndex)
+    || maximumIndex < 0
+  ) {
+    throw new Error('Invalid HD address reservation range.');
+  }
+  const db = await openHistoryDb();
+  return runWriteTransaction(db, async () => {
+    const current = await db.getFirstAsync<HdSequenceRow>(
+      `SELECT account_key, branch, highest_issued_index
+       FROM wallet_hd_sequences
+       WHERE wallet_id = ? AND account_key = ? AND branch = ?`,
+      walletId,
+      accountKey,
+      branch,
+    );
+    const currentIndex = current ? validateHdSequenceRow(current).highestIssuedIndex : 0;
+    const nextIndex = Math.max(currentIndex + 1, minimumIndex);
+    if (nextIndex > maximumIndex) {
+      throw new Error('HD_ADDRESS_GAP_LIMIT_REACHED');
+    }
+    const now = new Date().toISOString();
+    await db.runAsync(
+      `INSERT INTO wallet_hd_sequences
+         (wallet_id, account_key, branch, highest_issued_index, updated_at)
+       VALUES (?, ?, ?, ?, ?)
+       ON CONFLICT(wallet_id, account_key, branch) DO UPDATE SET
+         highest_issued_index = excluded.highest_issued_index,
+         updated_at = excluded.updated_at`,
+      walletId,
+      accountKey,
+      branch,
+      nextIndex,
+      now,
+    );
+    return nextIndex;
+  });
+});
 
 export const loadWalletHistoryCache = async (
   walletId: string,
@@ -480,6 +622,19 @@ export const clearWalletHistoryCache = async (walletId: string): Promise<void> =
       await db.runAsync('DELETE FROM wallet_transactions WHERE wallet_id = ?', walletId);
       await db.runAsync('DELETE FROM wallet_sync_state WHERE wallet_id = ?', walletId);
       await db.runAsync('DELETE FROM wallet_snapshot_cache WHERE wallet_id = ?', walletId);
+    });
+  })
+);
+
+export const clearWalletPublicData = async (walletId: string): Promise<void> => (
+  runWalletStorageOperation('wallet public data clear', async () => {
+    const db = await openHistoryDb();
+    await runWriteTransaction(db, async () => {
+      await db.runAsync('DELETE FROM wallet_transaction_outputs WHERE wallet_id = ?', walletId);
+      await db.runAsync('DELETE FROM wallet_transactions WHERE wallet_id = ?', walletId);
+      await db.runAsync('DELETE FROM wallet_sync_state WHERE wallet_id = ?', walletId);
+      await db.runAsync('DELETE FROM wallet_snapshot_cache WHERE wallet_id = ?', walletId);
+      await db.runAsync('DELETE FROM wallet_hd_sequences WHERE wallet_id = ?', walletId);
     });
   })
 );

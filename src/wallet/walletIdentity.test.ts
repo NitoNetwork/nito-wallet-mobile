@@ -18,24 +18,38 @@ describe('wallet identity compatibility', () => {
 
     expect(wallet.walletId).toBe('nito1qcr8te4kr609gcawutmrza0j4xv80jy8z540c02');
     expect(wallet.walletIdDerivationPath).toBe(LEGACY_WALLET_ID_DERIVATION_PATH);
-    expect(wallet.receiveAddress).toBe(wallet.walletId);
+    expect(wallet.receiveAccountKey).toBe('taproot');
+    expect(wallet.receiveIndex).toBe(0);
+    expect(wallet.receiveDerivationPath).toBe("m/86'/0'/0'/0/0");
+    expect(wallet.receiveAddress.startsWith('nito1p')).toBe(true);
+    expect(wallet.primaryAddress).toBe(wallet.receiveAddress);
   });
 
-  it('adapts a 1.3.1 vault payload without rewriting its stored identity', () => {
+  it('adapts a 1.3.1 vault payload without rewriting its stored identity', async () => {
     const stored = {
       mnemonic,
       address: 'nito1qhistoricalwalletid',
       derivationPath: LEGACY_WALLET_ID_DERIVATION_PATH,
     };
 
-    const wallet = restoreLegacyCompatibleWallet(stored);
+    const wallet = await restoreLegacyCompatibleWallet(
+      stored,
+      'taproot',
+      0,
+      createNitoWalletCryptoTestDouble(),
+    );
 
     expect(wallet).toEqual({
       mnemonic,
       walletId: stored.address,
       walletIdDerivationPath: stored.derivationPath,
-      receiveAddress: stored.address,
-      receiveDerivationPath: stored.derivationPath,
+      primaryAddress: expect.stringMatching(/^nito1p/),
+      primaryDerivationPath: "m/86'/0'/0'/0/0",
+      primaryIndex: 0,
+      receiveAccountKey: 'taproot',
+      receiveIndex: 0,
+      receiveAddress: expect.stringMatching(/^nito1p/),
+      receiveDerivationPath: "m/86'/0'/0'/0/0",
     });
     expect(stored).toEqual({
       mnemonic,

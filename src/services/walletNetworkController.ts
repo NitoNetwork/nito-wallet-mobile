@@ -8,6 +8,7 @@ import {
   refreshKnownUsedAddresses,
   scanTransparentWallet,
   TransparentScanIncompleteError,
+  type HdScanRequirement,
   type TransparentWalletSnapshot,
 } from '../wallet/transparentScan';
 import { pendingRefreshAddresses } from '../wallet/pendingRefresh';
@@ -186,6 +187,7 @@ export const canUseFreshHistoryCache = ({
 export const prefetchWalletSnapshot = async (
   wallet: Wallet,
   client: NitoElectrumClient,
+  issuedAddresses: readonly HdScanRequirement[] = [],
 ): Promise<WalletSnapshotCache> => {
   await client.connect();
   const snapshot = await scanTransparentWallet({
@@ -193,6 +195,7 @@ export const prefetchWalletSnapshot = async (
     electrum: client,
     gapLimit: 20,
     includeHistory: false,
+    issuedAddresses,
   });
   if (!client.connected) {
     throw new ElectrumSessionUnhealthyError(
@@ -274,6 +277,7 @@ export const scanWalletNetwork = async ({
   options,
   onProgress,
   isCurrent,
+  issuedAddresses,
 }: {
   wallet: Wallet;
   currentNetwork: NetworkState;
@@ -283,6 +287,7 @@ export const scanWalletNetwork = async ({
   options: WalletSyncOptions;
   onProgress: (done: number, total: number) => void;
   isCurrent: () => boolean;
+  issuedAddresses: readonly HdScanRequirement[];
 }): Promise<TransparentWalletSnapshot> => {
   const onlyAddresses = options.pendingOnly && currentNetwork.snapshot
     ? [...new Set([
@@ -307,6 +312,7 @@ export const scanWalletNetwork = async ({
         ),
         previousSnapshot: currentNetwork.snapshot,
         onProgress,
+        issuedAddresses,
       });
 
   try {
@@ -327,6 +333,7 @@ type WalletNetworkSyncPorts = {
   setClient: (client: NitoElectrumClient) => void;
   actionPending: () => boolean;
   readHistoryCache: (walletId: string) => Promise<OptionalCacheRead<WalletHistoryCache>>;
+  readHdAddressRequirements: (walletId: string) => Promise<readonly HdScanRequirement[]>;
   saveHistory: (
     walletId: string,
     history: TransparentWalletSnapshot['history'],
@@ -401,6 +408,7 @@ export const synchronizeWalletNetwork = async (
     if (!ports.controller.isCurrent(session)) return;
     const knownHeight = client.blockHeight || currentNetwork.height;
     const cacheRead = await ports.readHistoryCache(activeWallet.walletId);
+    const issuedAddresses = await ports.readHdAddressRequirements(activeWallet.walletId);
     const cacheReadFailed = cacheRead.status === 'failed';
     const cache = cacheRead.status === 'hit'
       ? cacheRead.value
@@ -480,6 +488,7 @@ export const synchronizeWalletNetwork = async (
       options,
       onProgress,
       isCurrent: () => ports.controller.isCurrent(session),
+      issuedAddresses,
     });
     if (!ports.controller.isCurrent(session)) return;
     requireConnectedSession();

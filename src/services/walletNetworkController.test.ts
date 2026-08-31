@@ -34,6 +34,11 @@ const wallet: Wallet = {
   mnemonic: 'test mnemonic',
   walletId: 'wallet-a',
   walletIdDerivationPath: "m/84'/0'/0'/0/0",
+  primaryAddress: 'taproot-wallet-a',
+  primaryDerivationPath: "m/86'/0'/0'/0/0",
+  primaryIndex: 0,
+  receiveAccountKey: 'taproot',
+  receiveIndex: 0,
   receiveAddress: 'wallet-a',
   receiveDerivationPath: "m/84'/0'/0'/0/0",
 };
@@ -141,6 +146,7 @@ describe('WalletNetworkController', () => {
         controller.beginWalletSession('wallet-b');
         return { status: 'hit', value: { history: [], fullHistoryHeight: 100 } };
       },
+      readHdAddressRequirements: async () => [],
       saveHistory,
       saveSnapshot,
       publishNetwork,
@@ -179,6 +185,7 @@ describe('WalletNetworkController', () => {
         status: 'hit',
         value: { history: [], fullHistoryHeight: 100 },
       }),
+      readHdAddressRequirements: async () => [],
       saveHistory: vi.fn(),
       saveSnapshot: vi.fn(async () => undefined),
       publishNetwork,
@@ -237,6 +244,7 @@ describe('WalletNetworkController', () => {
       setClient: vi.fn(),
       actionPending: () => false,
       readHistoryCache: vi.fn(),
+      readHdAddressRequirements: async () => [],
       saveHistory: vi.fn(),
       saveSnapshot: vi.fn(),
       publishNetwork,
@@ -273,6 +281,7 @@ describe('WalletNetworkController', () => {
         status: 'hit',
         value: { history: [], fullHistoryHeight: 100 },
       }),
+      readHdAddressRequirements: async () => [],
       saveHistory: vi.fn(),
       saveSnapshot: vi.fn(async () => {
         throw new WalletStorageError();
@@ -337,6 +346,7 @@ describe('WalletNetworkController', () => {
         status: 'hit',
         value: { history: [rawEntry], fullHistoryHeight: 0 },
       }),
+      readHdAddressRequirements: async () => [],
       saveHistory: vi.fn(),
       saveSnapshot: vi.fn(),
       publishNetwork: (next) => {

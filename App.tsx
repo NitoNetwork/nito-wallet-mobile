@@ -128,13 +128,17 @@ import {
 import { type Translator } from './src/i18n';
 import { nitoWalletCrypto } from './src/native/nitoWalletCrypto';
 import {
+  clearWalletPublicData,
   clearWalletHistoryCache,
+  loadCurrentHdAddressIndex,
+  loadHdAddressRequirements,
   loadTransactionOutputCache,
   loadWalletHistoryCache,
   loadWalletSnapshotCache,
   saveHistoryEnrichmentBatch,
   saveWalletHistoryCache,
   saveWalletSnapshotCache,
+  reserveNextHdAddressIndex,
 } from './src/services/walletHistoryDb';
 import {
   satoshisToNito,
@@ -200,6 +204,13 @@ import {
   deriveLegacyCompatibleWallet,
   restoreLegacyCompatibleWallet,
 } from './src/wallet/walletIdentity';
+import {
+  assertGapSafeIssuedIndex,
+  deriveHdAddress,
+  highestUsedHdIndex,
+  hdAccountTemplate,
+  type HdAccountKey,
+} from './src/wallet/hdAddress';
 
 const BALANCE_REFRESH_COOLDOWN_KEY = 'nito.wallet.balance-refresh-until.v1';
 const BALANCE_REFRESH_COOLDOWN_MS = 120_000;
@@ -411,6 +422,8 @@ function WalletApp({ theme, onSelectTheme }: {
     setWalletTabState(nextTab);
   }, [clearFieldErrors]);
   const [wallet, setWallet] = useState<Wallet | null>(null);
+  const [receiveAddressBusy, setReceiveAddressBusy] = useState(false);
+  const receiveAddressOperationRef = useRef(0);
   const [pendingWallet, setPendingWallet] = useState<Wallet | null>(null);
   const [pendingWalletRequiresSeedBackup, setPendingWalletRequiresSeedBackup] = useState(false);
   const [diceSessionKey, setDiceSessionKey] = useState(0);
@@ -858,6 +871,8 @@ function WalletApp({ theme, onSelectTheme }: {
     });
     const { pendingPreload, network: nextNetwork } = entry;
     walletNetworkController.beginWalletSession(nextWallet.walletId);
+    receiveAddressOperationRef.current += 1;
+    setReceiveAddressBusy(false);
     walletRef.current = nextWallet;
 
     if (pendingPreload) {
@@ -900,7 +915,8 @@ function WalletApp({ theme, onSelectTheme }: {
     try {
       const client = electrumClientRef.current || createElectrumClient();
       electrumClientRef.current = client;
-      const prefetched = await prefetchWalletSnapshot(nextWallet, client);
+      const issuedAddresses = await loadHdAddressRequirements(nextWallet.walletId);
+      const prefetched = await prefetchWalletSnapshot(nextWallet, client, issuedAddresses);
       if (!walletNetworkController.isCurrentPrefetch(generation)) {
         return;
       }
@@ -1136,6 +1152,7 @@ function WalletApp({ theme, onSelectTheme }: {
       },
       actionPending: () => pendingActionRef.current !== null,
       readHistoryCache: (address) => readOptionalCache(() => loadWalletHistoryCache(address)),
+      readHdAddressRequirements: loadHdAddressRequirements,
       saveHistory: saveWalletHistoryCache,
       saveSnapshot: saveWalletSnapshotCache,
       publishNetwork: (nextNetwork, historyMode) => {
@@ -1586,7 +1603,16 @@ function WalletApp({ theme, onSelectTheme }: {
       const candidateCachedHistory = candidateCachedHistoryRead.status === 'hit'
         ? candidateCachedHistoryRead.value
         : null;
-      const unlockedWallet = restoreLegacyCompatibleWallet(payload);
+      const receiveIndex = await loadCurrentHdAddressIndex(
+        payload.address,
+        'taproot',
+        'external',
+      );
+      const unlockedWallet = await restoreLegacyCompatibleWallet(
+        payload,
+        'taproot',
+        receiveIndex,
+      );
       const cachedNetwork = vault.address === payload.address
         ? candidateCachedNetwork
         : await readOptionalCache(() => loadWalletSnapshotCache(payload.address)).then(
@@ -1839,7 +1865,7 @@ function WalletApp({ theme, onSelectTheme }: {
             void (async () => {
               try {
                 if (walletId) {
-                  await clearWalletHistoryCache(walletId);
+                  await clearWalletPublicData(walletId);
                 }
                 await deleteBiometricSecret();
                 await deleteVault();
@@ -1850,6 +1876,8 @@ function WalletApp({ theme, onSelectTheme }: {
                 electrumClientRef.current = null;
                 pendingNetworkRef.current = null;
                 walletRef.current = null;
+                receiveAddressOperationRef.current += 1;
+                setReceiveAddressBusy(false);
                 applyVaultTransition({ type: 'delete' });
                 setWallet(null);
                 setPendingWallet(null);
@@ -1915,6 +1943,8 @@ function WalletApp({ theme, onSelectTheme }: {
     historyEnrichmentRetryScheduler.cancel();
     walletNetworkController.cancel();
     pendingNetworkRef.current = null;
+    receiveAddressOperationRef.current += 1;
+    setReceiveAddressBusy(false);
     walletRef.current = null;
     resetFeedback();
     clearAddressSubscriptions();
@@ -2013,6 +2043,150 @@ function WalletApp({ theme, onSelectTheme }: {
   const registerActivity = useCallback(() => {
     autoLockRef.current?.resetTimer();
   }, []);
+
+  const applyReceiveAddress = useCallback(async (
+    activeWallet: Wallet,
+    accountKey: HdAccountKey,
+    index: number,
+    operation: number,
+    session: WalletSessionToken,
+  ) => {
+    const derived = await deriveHdAddress(
+      activeWallet.mnemonic,
+      accountKey,
+      'external',
+      index,
+    );
+    if (
+      receiveAddressOperationRef.current !== operation
+      || !walletNetworkController.isCurrent(session)
+      || walletRef.current?.walletId !== activeWallet.walletId
+    ) return false;
+    const nextWallet: Wallet = {
+      ...activeWallet,
+      ...(accountKey === 'taproot' ? {
+        primaryAddress: derived.address,
+        primaryDerivationPath: derived.path,
+        primaryIndex: index,
+      } : {}),
+      receiveAccountKey: accountKey,
+      receiveIndex: index,
+      receiveAddress: derived.address,
+      receiveDerivationPath: derived.path,
+    };
+    walletRef.current = nextWallet;
+    setWallet(nextWallet);
+    return true;
+  }, [walletNetworkController]);
+
+  const selectReceiveAddressFamily = useCallback(async (accountKey: HdAccountKey) => {
+    if (receiveAddressBusy || pendingActionRef.current) return;
+    const activeWallet = walletRef.current;
+    const session = activeWallet
+      ? walletNetworkController.sessions.capture(activeWallet.walletId)
+      : null;
+    if (!activeWallet || !session) return;
+    const operation = receiveAddressOperationRef.current + 1;
+    receiveAddressOperationRef.current = operation;
+    setReceiveAddressBusy(true);
+    resetFeedback();
+    try {
+      const index = await loadCurrentHdAddressIndex(
+        activeWallet.walletId,
+        accountKey,
+        'external',
+      );
+      await applyReceiveAddress(activeWallet, accountKey, index, operation, session);
+    } catch (caught) {
+      if (receiveAddressOperationRef.current === operation) {
+        setError(translatedErrorMessage(
+          caught,
+          t,
+          t('errors.receiveAddressFailed'),
+          'receive address selection',
+        ));
+      }
+    } finally {
+      if (receiveAddressOperationRef.current === operation) {
+        setReceiveAddressBusy(false);
+      }
+    }
+  }, [applyReceiveAddress, receiveAddressBusy, resetFeedback, t, walletNetworkController]);
+
+  const createNewReceiveAddress = useCallback(async () => {
+    if (receiveAddressBusy || pendingActionRef.current) return;
+    const activeWallet = walletRef.current;
+    const snapshot = networkRef.current.snapshot;
+    const session = activeWallet
+      ? walletNetworkController.sessions.capture(activeWallet.walletId)
+      : null;
+    if (!activeWallet || !snapshot || !session) {
+      setError(t('errors.receiveAddressSyncRequired'));
+      return;
+    }
+    const operation = receiveAddressOperationRef.current + 1;
+    receiveAddressOperationRef.current = operation;
+    setReceiveAddressBusy(true);
+    resetFeedback();
+    const sequence = {
+      accountKey: activeWallet.receiveAccountKey,
+      branch: 'external' as const,
+    };
+    try {
+      const highestUsed = highestUsedHdIndex(snapshot.addresses, sequence);
+      const minimumIndex = Math.max(activeWallet.receiveIndex + 1, highestUsed + 1);
+      assertGapSafeIssuedIndex({
+        addresses: snapshot.addresses,
+        sequence,
+        index: minimumIndex,
+        gapLimit: snapshot.gapLimit,
+      });
+      const maximumIndex = highestUsed + snapshot.gapLimit;
+      const index = await reserveNextHdAddressIndex({
+        walletId: activeWallet.walletId,
+        accountKey: sequence.accountKey,
+        branch: sequence.branch,
+        minimumIndex,
+        maximumIndex,
+      });
+      const applied = await applyReceiveAddress(
+        activeWallet,
+        sequence.accountKey,
+        index,
+        operation,
+        session,
+      );
+      if (!applied) return;
+      setStatus(t('status.receiveAddressCreated', {
+        family: hdAccountTemplate(sequence.accountKey).label,
+        index,
+      }));
+      await syncTransparentNetwork(false, { force: true, rescanGap: true, silent: true });
+    } catch (caught) {
+      if (receiveAddressOperationRef.current !== operation) return;
+      if (caught instanceof Error && caught.message === 'HD_ADDRESS_GAP_LIMIT_REACHED') {
+        setError(t('errors.receiveAddressGapLimit'));
+      } else {
+        setError(translatedErrorMessage(
+          caught,
+          t,
+          t('errors.receiveAddressFailed'),
+          'receive address creation',
+        ));
+      }
+    } finally {
+      if (receiveAddressOperationRef.current === operation) {
+        setReceiveAddressBusy(false);
+      }
+    }
+  }, [
+    applyReceiveAddress,
+    receiveAddressBusy,
+    resetFeedback,
+    syncTransparentNetwork,
+    t,
+    walletNetworkController,
+  ]);
 
   const copyAddressToClipboard = async () => {
     await runExclusiveAction('copy', async () => {
@@ -2954,6 +3128,10 @@ function WalletApp({ theme, onSelectTheme }: {
           t={t}
           pendingAction={pendingAction}
           actionLocked={actionLocked}
+          addressBusy={receiveAddressBusy}
+          networkReady={network.status === 'connected' && Boolean(network.snapshot)}
+          onSelectFamily={(accountKey) => { void selectReceiveAddressFamily(accountKey); }}
+          onCreateAddress={() => { void createNewReceiveAddress(); }}
           onCopyAddress={() => { void copyAddressToClipboard(); }}
         />
       );
