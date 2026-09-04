@@ -69,6 +69,7 @@ const isElectrumHistoryEntry = (value: unknown): value is ElectrumHistoryEntry =
     && (value.counterparty === undefined || isString(value.counterparty))
     && isOptionalNonNegativeSafeInteger(value.blockTime)
     && (value.provisional === undefined || typeof value.provisional === 'boolean')
+    && (value.networkObserved === undefined || typeof value.networkObserved === 'boolean')
   );
 };
 

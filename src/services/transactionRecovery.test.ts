@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import type { TransactionLifecycleRecord } from './transactionLifecycle';
+import * as diagnostics from './diagnostics';
 import {
   recoverPersistedTransactionBroadcasts,
   processPersistentTransactionSequence,
@@ -51,6 +52,45 @@ const ports = (overrides: Partial<Parameters<typeof recoverPersistedTransactionB
 });
 
 describe('persistent transaction broadcast recovery', () => {
+  it('does not let a display observer failure change the publication outcome', async () => {
+    const report = vi.spyOn(diagnostics, 'reportNonFinancialFailure').mockImplementation(() => undefined);
+    try {
+      const recovery = ports({ onRecordChanged: () => { throw new Error('display observer failed'); } });
+      const result = await recoverPersistedTransactionBroadcasts(recovery);
+      expect(result.publishedTxids).toEqual(['ab'.repeat(32)]);
+      expect(result.failures).toEqual([]);
+      expect(recovery.markPublished).toHaveBeenCalledTimes(1);
+      expect(report).toHaveBeenCalledWith('transaction tracking observer', expect.any(Error));
+    } finally {
+      report.mockRestore();
+    }
+  });
+  it('updates the live window from the persisted invocation and clears in-flight state on acceptance', async () => {
+    const changes: { state: string; invocations: number; active: boolean }[] = [];
+    await recoverPersistedTransactionBroadcasts(ports({
+      onRecordChanged: (candidate, active) => changes.push({
+        state: candidate.state, invocations: candidate.broadcastInvocations, active,
+      }),
+    }));
+    expect(changes).toEqual([
+      { state: 'broadcast-uncertain', invocations: 0, active: true },
+      { state: 'broadcast-uncertain', invocations: 1, active: true },
+      { state: 'published', invocations: 1, active: false },
+    ]);
+  });
+
+  it('leaves a timed-out final invocation visibly unresolved, not permanently in flight', async () => {
+    const changes: { count: number; active: boolean }[] = [];
+    const recovery = ports({
+      records: [record({ broadcastInvocations: 4, state: 'broadcast-uncertain' })],
+      broadcastTransaction: vi.fn(async () => { throw new Error('timeout'); }),
+      onRecordChanged: (candidate, active) => changes.push({ count: candidate.broadcastInvocations, active }),
+    });
+    await recoverPersistedTransactionBroadcasts(recovery);
+    expect(changes.at(-1)).toEqual({ count: 5, active: false });
+    expect(recovery.markPublished).not.toHaveBeenCalled();
+  });
+
   it('resumes a signed transaction after restart and persists uncertainty before broadcasting', async () => {
     const events: string[] = [];
     const recoveryPorts = ports({

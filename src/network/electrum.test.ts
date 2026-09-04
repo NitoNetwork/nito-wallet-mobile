@@ -25,6 +25,18 @@ describe('Nito Electrum helpers', () => {
     expect(toHex(script)).toBe('0014c0cebcd6c3d3ca8c75dc5ec62ebe55330ef910e2');
   });
 
+  it('marks only validated network history as observed for transaction tracking', async () => {
+    const client = new NitoElectrumClient();
+    vi.spyOn(client, 'request').mockResolvedValue([
+      { tx_hash: 'ab'.repeat(32), height: 0 },
+    ]);
+    await expect(client.getAddressHistory(address)).resolves.toEqual([
+      { txid: 'ab'.repeat(32), height: 0, address, networkObserved: true },
+    ]);
+    vi.mocked(client.request).mockRejectedValueOnce(new Error('offline'));
+    await expect(client.getAddressHistory(address)).rejects.toThrow('offline');
+  });
+
   it('uses reversed sha256(scriptPubKey) for Electrum scripthash', () => {
     const script = scriptPubKeyForNitoAddress(address);
     expect(electrumScripthashFromScript(script)).toBe('6e4f16236139f15046b38f399a683fb2aa8edf5fd128b3e5db017fb0ac74078a');

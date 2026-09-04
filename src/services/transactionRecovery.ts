@@ -1,4 +1,5 @@
 import type { TransactionLifecycleRecord } from './transactionLifecycle';
+import { reportNonFinancialFailure } from './diagnostics';
 import {
   nextTransactionBroadcastAttemptAt,
   TRANSACTION_BROADCAST_MAX_ATTEMPTS,
@@ -30,6 +31,20 @@ type TransactionBroadcastRecoveryPorts = {
   isTransactionNotFound: (error: unknown) => boolean;
   broadcastTransaction: (rawTxHex: string, expectedTxid: string) => Promise<string>;
   markPublished: (record: TransactionLifecycleRecord) => Promise<void>;
+  onRecordChanged?: (record: TransactionLifecycleRecord, active: boolean) => void;
+};
+
+const notifyTracking = (
+  ports: TransactionBroadcastRecoveryPorts,
+  record: TransactionLifecycleRecord,
+  active: boolean,
+): void => {
+  try {
+    ports.onRecordChanged?.(record, active);
+  } catch (error) {
+    // Display observers must never interrupt persistence or network publication.
+    reportNonFinancialFailure('transaction tracking observer', error);
+  }
 };
 
 const earliestTimestamp = (
@@ -102,6 +117,7 @@ export const recoverPersistedTransactionBroadcasts = async (
       }
 
       let found = false;
+      notifyTracking(ports, claimed, true);
       try {
         await ports.lookupTransaction(claimed.txid);
         found = true;
@@ -117,12 +133,15 @@ export const recoverPersistedTransactionBroadcasts = async (
             if (record.purpose === 'consolidation') consolidationBlocked = true;
             continue;
           }
+          claimed = broadcastable;
+          notifyTracking(ports, claimed, true);
           await ports.broadcastTransaction(broadcastable.rawTxHex, broadcastable.txid);
         } catch (caught) {
           try {
             if (await lookupAfterBroadcastFailure(claimed, ports)) {
               await ports.markPublished(claimed);
-              publishedTxids.push(claimed.txid);
+              publishedTxids.push(record.txid);
+              claimed = { ...claimed, state: 'published' };
               continue;
             }
           } catch (reconciliationError) {
@@ -140,7 +159,8 @@ export const recoverPersistedTransactionBroadcasts = async (
       }
 
       await ports.markPublished(claimed);
-      publishedTxids.push(claimed.txid);
+      publishedTxids.push(record.txid);
+      claimed = { ...claimed, state: 'published' };
     } catch (caught) {
       failures.push({ lifecycleId: record.lifecycleId, error: caught });
       nextAttemptAt = earliestTimestamp(
@@ -150,6 +170,8 @@ export const recoverPersistedTransactionBroadcasts = async (
           ?? nextTransactionBroadcastAttemptAt(record.recoveryAttempts + 1, ports.now),
       );
       if (record.purpose === 'consolidation') consolidationBlocked = true;
+    } finally {
+      if (claimed) notifyTracking(ports, claimed, false);
     }
   }
 

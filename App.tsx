@@ -20,6 +20,7 @@ import React, {
   useMemo,
   useRef,
   useState,
+  useSyncExternalStore,
 } from 'react';
 import {
   Alert,
@@ -38,7 +39,7 @@ import {
 } from 'react-native';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 
-import { escapeTsvCell, isValidTransactionId, shortAddress, transactionExplorerUrl } from './src/ui/format';
+import { escapeTsvCell, isValidTransactionId, transactionExplorerUrl } from './src/ui/format';
 import { shouldShowBlockingLoadingOverlay } from './src/ui/loadingPolicy';
 import {
   appendSendRecipient,
@@ -69,6 +70,9 @@ import {
 } from './src/ui/screens';
 import { HistoryTab, HomeTab, ReceiveTab, SendTab } from './src/ui/tabs';
 import { SecurityTab } from './src/ui/settings';
+import { ActionButton } from './src/ui/components';
+import { TransactionTrackingWindow } from './src/ui/TransactionTrackingWindow';
+import { TransactionTrackingController } from './src/services/transactionTracking';
 import { DiceEntropyScreen } from './src/ui/dice';
 import type {
   AppScreen,
@@ -134,6 +138,8 @@ import {
   loadCurrentHdAddressIndex,
   loadHdAddressRequirements,
   loadTransactionLifecycles,
+  loadTransactionTracking,
+  saveTransactionTrackingWindow,
   loadTransactionOutputCache,
   loadWalletHistoryCache,
   loadWalletSnapshotCache,
@@ -187,7 +193,7 @@ import {
   translatedTransparentSendError,
 } from './src/services/transparentSendError';
 import { prepareVaultUpgradeCommit } from './src/services/vaultMigration';
-import { userFacingErrorMessage } from './src/services/walletStorageError';
+import { userFacingErrorMessage, WalletStorageError } from './src/services/walletStorageError';
 import {
   initialVaultSession,
   transitionVaultSession,
@@ -474,6 +480,15 @@ function WalletApp({ theme, onSelectTheme }: {
     useState(nextSeedBackupAttemptToken);
   const seedBackupAnswerLockedRef = useRef(false);
   const [walletNetworkController] = useState(() => new WalletNetworkController());
+  const [transactionTrackingController] = useState(() => new TransactionTrackingController({
+    isCurrent: (session) => walletNetworkController.isCurrent(session),
+    read: loadTransactionTracking,
+    writeWindow: saveTransactionTrackingWindow,
+    reportError: (caught) => reportNonFinancialFailure('transaction tracking', caught),
+  }));
+  const transactionTracking = useSyncExternalStore(
+    transactionTrackingController.subscribe, transactionTrackingController.getSnapshot,
+  );
   const [historyEnrichmentRetryScheduler] =
     useState(() => new HistoryEnrichmentRetryScheduler());
   const [transactionBroadcastRetryScheduler] =
@@ -956,6 +971,8 @@ function WalletApp({ theme, onSelectTheme }: {
       appStateRef.current,
       lockWalletRef.current,
     )) return;
+    const trackingSession = walletNetworkController.sessions.capture(nextWallet.walletId);
+    if (trackingSession) void transactionTrackingController.restore(trackingSession);
     setStatus(message);
   };
 
@@ -1193,14 +1210,18 @@ function WalletApp({ theme, onSelectTheme }: {
     walletId: string,
     records?: Awaited<ReturnType<typeof loadTransactionLifecycles>>,
   ) => {
+    const session = walletNetworkController.sessions.capture(walletId);
     const candidates = records ?? await loadTransactionLifecycles(walletId);
+    if (!session || !walletNetworkController.isCurrent(session)) {
+      return { publishedTxids: [], failures: [], nextAttemptAt: null };
+    }
     const client = electrumClientRef.current ?? createElectrumClient();
     electrumClientRef.current = client;
     const result = await recoverPersistedTransactionBroadcasts({
       now: Date.now(),
       records: candidates,
       claimAttempt: (record, now) => (
-        walletRef.current?.walletId === walletId
+        walletNetworkController.isCurrent(session)
           ? claimTransactionLifecycleBroadcastAttempt(walletId, record.lifecycleId, now)
           : Promise.resolve(null)
       ),
@@ -1217,16 +1238,25 @@ function WalletApp({ theme, onSelectTheme }: {
       markPublished: (record) => (
         markTransactionLifecyclePublished(walletId, record.lifecycleId)
       ),
+      onRecordChanged: (record, active) => transactionTrackingController.update(session, record, active),
     });
     result.failures.forEach(({ error: caught }) => {
       reportNonFinancialFailure('persistent transaction broadcast recovery', caught);
     });
-    transactionBroadcastRetryScheduler.schedule(result.nextAttemptAt, () => {
-      if (walletRef.current?.walletId !== walletId || screenRef.current !== 'wallet') return;
-      void syncTransparentNetworkRef.current(false, { force: true, silent: true });
-    });
+    if (walletNetworkController.isCurrent(session)) {
+      if (result.failures.some(({ error: caught }) => caught instanceof WalletStorageError)) {
+        setError(t('errors.walletStorageUnavailable'));
+      }
+      await transactionTrackingController.refresh(session);
+      if (walletNetworkController.isCurrent(session)) {
+        transactionBroadcastRetryScheduler.schedule(result.nextAttemptAt, () => {
+          if (!walletNetworkController.isCurrent(session) || screenRef.current !== 'wallet') return;
+          void syncTransparentNetworkRef.current(false, { force: true, silent: true });
+        });
+      }
+    }
     return result;
-  }, [transactionBroadcastRetryScheduler]);
+  }, [t, transactionBroadcastRetryScheduler, transactionTrackingController, walletNetworkController]);
 
   const syncTransparentNetwork = useCallback(async (
     includeHistory = false,
@@ -1438,10 +1468,13 @@ function WalletApp({ theme, onSelectTheme }: {
         setBalanceRefreshing(false);
       },
     });
+    const session = walletNetworkController.sessions.capture();
+    if (session) void transactionTrackingController.restore(session);
   }, [
     clearAddressSubscriptions,
     historyEnrichmentRetryScheduler,
     transactionBroadcastRetryScheduler,
+    transactionTrackingController,
     walletNetworkController,
   ]);
 
@@ -2065,6 +2098,7 @@ function WalletApp({ theme, onSelectTheme }: {
     historyEnrichmentRetryScheduler.cancel();
     transactionBroadcastRetryScheduler.cancel();
     walletNetworkController.cancel();
+    transactionTrackingController.reset();
     pendingNetworkRef.current = null;
     receiveAddressOperationRef.current += 1;
     setReceiveAddressBusy(false);
@@ -2115,6 +2149,7 @@ function WalletApp({ theme, onSelectTheme }: {
     historyEnrichmentRetryScheduler,
     transactionBroadcastRetryScheduler,
     resetFeedback,
+    transactionTrackingController,
     resetSendDraft,
     publishNetworkState,
     setScreen,
@@ -2632,10 +2667,14 @@ function WalletApp({ theme, onSelectTheme }: {
       setPreparedTx(null);
       setPreparedConsolidation(null);
       if (!walletNetworkController.isCurrent(session)) return;
+      await transactionTrackingController.refresh(session);
       const transaction = { ...signed, recipients: rebuilt.recipients };
       const recovery = await recoverTransactionBroadcasts(activeWallet.walletId);
       if (!recovery.publishedTxids.includes(transaction.txid)) {
-        throw recovery.failures[0]?.error ?? new Error('Transaction broadcast was deferred.');
+        // The saved transaction is now owned by recovery and its single window.
+        // Do not present a planned retry as a failed payment inviting a duplicate.
+        if (walletNetworkController.isCurrent(session)) resetSendDraft();
+        return;
       }
       const txid = transaction.txid;
       if (!walletNetworkController.isCurrent(session)) return;
@@ -2655,19 +2694,6 @@ function WalletApp({ theme, onSelectTheme }: {
 
       resetSendDraft();
       setStatus(t('status.transactionSent', { txid }));
-      Alert.alert(
-        t('dialog.sentTitle'),
-        t('dialog.sentBody', { txid: shortAddress(txid) }),
-        [
-          {
-            text: t('actions.viewTx'),
-            onPress: () => {
-              void openTransactionExplorerWithFeedback(txid);
-            },
-          },
-          { text: t('actions.ok'), style: 'cancel' },
-        ],
-      );
       startBroadcastReconciliation([txid], session);
     } catch (caught) {
       if (walletNetworkController.isCurrent(session)) {
@@ -2748,6 +2774,7 @@ function WalletApp({ theme, onSelectTheme }: {
       const reconciliationTxids: string[] = [];
       let sentCount = 0;
       let signingStarted = false;
+      let broadcastDeferred = false;
       try {
         const activeSnapshot = networkRef.current.snapshot;
         if (!activeSnapshot || !activeWallet) {
@@ -2849,6 +2876,7 @@ function WalletApp({ theme, onSelectTheme }: {
               transaction.txid,
               transaction.hex,
             );
+            await transactionTrackingController.refresh(session);
           },
           broadcastPersisted: async (_item, transaction) => {
             if (!walletNetworkController.isCurrent(session)) {
@@ -2857,6 +2885,7 @@ function WalletApp({ theme, onSelectTheme }: {
             reconciliationTxids.push(transaction.txid);
             const recovery = await recoverTransactionBroadcasts(activeWallet.walletId);
             if (!recovery.publishedTxids.includes(transaction.txid)) {
+              broadcastDeferred = true;
               throw recovery.failures[0]?.error ?? new Error('Transaction broadcast was deferred.');
             }
           },
@@ -2877,18 +2906,15 @@ function WalletApp({ theme, onSelectTheme }: {
             }
           },
         });
-        Alert.alert(consolidationT('successTitle'), consolidationT('successBody'), [
-          { text: t('actions.ok'), style: 'cancel' },
-        ]);
       } catch (caught) {
         if (!walletNetworkController.isCurrent(session)) return;
         reportNonFinancialFailure('transparent consolidation broadcast', caught);
         if (signingStarted) setPreparedConsolidation(null);
+        if (broadcastDeferred) return;
         if (sentCount > 0) {
-          Alert.alert(consolidationT('partialTitle'), consolidationT('partialBody'));
           setError(consolidationT('partialBody'));
         } else {
-          setError(consolidationT('unavailable'));
+          setError(translatedErrorMessage(caught, t, t('errors.sendFailed'), 'consolidation signing'));
         }
       } finally {
         if (walletNetworkController.isCurrent(session)) {
@@ -3766,6 +3792,17 @@ function WalletApp({ theme, onSelectTheme }: {
           >
             {screen !== 'loading' ? <Hero t={t} /> : null}
             <Feedback error={error} status={status} />
+            {screen === 'wallet' && transactionTracking.storageError ? (
+              <Feedback error={t('errors.walletStorageUnavailable')} status="" />
+            ) : null}
+            {screen === 'wallet' && transactionTracking.window ? (
+              <ActionButton label={t('tracking.reopen')} variant="secondary" onPress={() => {
+                const session = walletNetworkController.sessions.capture();
+                if (session && transactionTracking.window) {
+                  void transactionTrackingController.setWindow(session, { ...transactionTracking.window, open: true });
+                }
+              }} />
+            ) : null}
             {activeScreen()}
           </ScrollView>
           {shouldShowBlockingLoadingOverlay(pendingAction) ? (
@@ -3777,6 +3814,19 @@ function WalletApp({ theme, onSelectTheme }: {
           ) : null}
         </KeyboardAvoidingView>
       </SafeAreaView>
+      <TransactionTrackingWindow
+        tracking={transactionTracking}
+        feedbackError={error}
+        network={network}
+        visible={screen === 'wallet' && transactionTracking.walletId === wallet?.walletId && Boolean(transactionTracking.window?.open)}
+        t={t}
+        onActivity={registerActivity}
+        onExplorer={(txid) => { void openTransactionExplorerWithFeedback(txid); }}
+        onWindowChange={(lifecycleId, open) => {
+          const session = walletNetworkController.sessions.capture();
+          if (session) void transactionTrackingController.setWindow(session, { lifecycleId, open });
+        }}
+      />
       <Modal animationType="fade" onRequestClose={closeQrScanner} presentationStyle="fullScreen" visible={qrScannerOpen}>
         {/*
           A Modal renders in its own native view, outside the root provider, so

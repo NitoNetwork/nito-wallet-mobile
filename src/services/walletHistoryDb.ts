@@ -20,6 +20,7 @@ import {
   TRANSACTION_BROADCAST_MAX_ATTEMPTS,
 } from './transactionLifecycle';
 import type { CachedTransactionOutput } from './historyExport';
+import type { TransactionTrackingData, TransactionTrackingWindowState, TrackedTransaction } from './transactionTracking';
 import { isDuplicateColumnError, retrySqliteWrite } from './sqliteReliability';
 import { runWalletStorageOperation } from './walletStorageError';
 import { normalizeWalletHistory } from './walletHistory';
@@ -238,6 +239,18 @@ const initializeHistoryDb = async () => {
         ALTER TABLE wallet_transaction_lifecycle
           ADD COLUMN last_broadcast_attempt_at INTEGER;
         PRAGMA user_version = 5;
+      `);
+    });
+  }
+  if ((version?.user_version ?? 0) < 6) {
+    await runWriteTransaction(db, async () => {
+      await db.execAsync(`
+        CREATE TABLE IF NOT EXISTS wallet_transaction_tracking (
+          wallet_id TEXT PRIMARY KEY NOT NULL,
+          lifecycle_id TEXT NOT NULL,
+          window_open INTEGER NOT NULL CHECK (window_open IN (0, 1))
+        );
+        PRAGMA user_version = 6;
       `);
     });
   }
@@ -700,6 +713,10 @@ const transitionTransactionLifecycle = async ({
       lifecycleId,
       walletId,
     );
+    // The signed payload and its restorable window commit together.
+    if (state === 'signed') {
+      await writeTransactionTrackingWindow(db, walletId, { lifecycleId, open: true });
+    }
   });
 });
 
@@ -865,6 +882,80 @@ export const loadTransactionLifecycles = async (
     return rows.map(validateTransactionLifecycleRow);
   },
 );
+
+const writeTransactionTrackingWindow = async (
+  db: SQLite.SQLiteDatabase,
+  walletId: string,
+  window: TransactionTrackingWindowState,
+): Promise<void> => {
+  await db.runAsync(
+    `INSERT INTO wallet_transaction_tracking (wallet_id, lifecycle_id, window_open)
+     VALUES (?, ?, ?)
+     ON CONFLICT(wallet_id) DO UPDATE SET
+       lifecycle_id = excluded.lifecycle_id, window_open = excluded.window_open`,
+    walletId, window.lifecycleId, window.open ? 1 : 0,
+  );
+};
+
+export const saveTransactionTrackingWindow = async (
+  walletId: string,
+  window: TransactionTrackingWindowState,
+): Promise<void> => runWalletStorageOperation('transaction tracking window write', async () => {
+  const db = await openHistoryDb();
+  await runWriteTransaction(db, async () => {
+    const record = await db.getFirstAsync<{ lifecycle_id: string }>(
+      `SELECT lifecycle_id FROM wallet_transaction_lifecycle
+       WHERE wallet_id = ? AND lifecycle_id = ? AND state != 'reserved'`,
+      walletId, window.lifecycleId,
+    );
+    // Never recreate tracking state after wallet deletion.
+    if (!record) throw new Error('Tracked transaction was not found.');
+    await writeTransactionTrackingWindow(db, walletId, window);
+  });
+});
+
+export const loadTransactionTracking = async (
+  walletId: string,
+): Promise<TransactionTrackingData> => runWalletStorageOperation('transaction tracking read', async () => {
+  const db = await openHistoryDb();
+  const rows = await db.getAllAsync<Pick<TransactionLifecycleRow,
+    'lifecycle_id' | 'wallet_id' | 'purpose' | 'state' | 'txid' | 'broadcast_invocations' | 'next_broadcast_attempt_at'>>(
+    `SELECT lifecycle_id, wallet_id, purpose, state, txid, broadcast_invocations, next_broadcast_attempt_at
+     FROM wallet_transaction_lifecycle WHERE wallet_id = ? AND state != 'reserved'
+     ORDER BY created_at DESC, lifecycle_id DESC`,
+    walletId,
+  );
+  const window = await db.getFirstAsync<{ lifecycle_id: string; window_open: number }>(
+    'SELECT lifecycle_id, window_open FROM wallet_transaction_tracking WHERE wallet_id = ?',
+    walletId,
+  );
+  if (window && (
+    typeof window.lifecycle_id !== 'string'
+    || (window.window_open !== 0 && window.window_open !== 1)
+  )) throw new Error('Invalid transaction tracking window.');
+  return {
+    records: rows.map((row): TrackedTransaction => {
+      if (
+        typeof row.lifecycle_id !== 'string' || !row.lifecycle_id
+        || row.wallet_id !== walletId
+        || (row.purpose !== 'send' && row.purpose !== 'consolidation')
+        || !['signed', 'broadcast-uncertain', 'published', 'confirmed'].includes(row.state)
+        || typeof row.txid !== 'string' || !/^[a-f0-9]{64}$/i.test(row.txid)
+        || !Number.isSafeInteger(row.broadcast_invocations) || row.broadcast_invocations < 0
+        || (row.next_broadcast_attempt_at !== null && (
+          !Number.isSafeInteger(row.next_broadcast_attempt_at) || row.next_broadcast_attempt_at < 0
+        ))
+      ) throw new Error('Invalid public transaction tracking data.');
+      return {
+        lifecycleId: row.lifecycle_id, walletId: row.wallet_id, purpose: row.purpose,
+        state: row.state as TrackedTransaction['state'], txid: row.txid,
+        broadcastInvocations: row.broadcast_invocations,
+        nextBroadcastAttemptAt: row.next_broadcast_attempt_at,
+      };
+    }),
+    window: window ? { lifecycleId: window.lifecycle_id, open: window.window_open === 1 } : null,
+  };
+});
 
 export const reconcileTransactionLifecycles = async (
   walletId: string,
@@ -1171,6 +1262,7 @@ export const clearWalletPublicData = async (walletId: string): Promise<void> => 
       await db.runAsync('DELETE FROM wallet_snapshot_cache WHERE wallet_id = ?', walletId);
       await db.runAsync('DELETE FROM wallet_hd_sequences WHERE wallet_id = ?', walletId);
       await db.runAsync('DELETE FROM wallet_transaction_lifecycle WHERE wallet_id = ?', walletId);
+      await db.runAsync('DELETE FROM wallet_transaction_tracking WHERE wallet_id = ?', walletId);
     });
   })
 );

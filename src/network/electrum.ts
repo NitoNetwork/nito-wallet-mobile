@@ -49,6 +49,8 @@ export type ElectrumHistoryEntry = {
    * the entry stays queued for enrichment until the confirmed data lands.
    */
   provisional?: boolean;
+  /** True only for history actually returned by Electrum, never for local broadcasts. */
+  networkObserved?: boolean;
 };
 
 export type ElectrumVerboseTransaction = {
@@ -844,7 +846,9 @@ export class NitoElectrumClient {
       await this.request<unknown>('blockchain.scripthash.get_history', [scripthash]),
     );
 
-    return history.map((entry) => ({ txid: entry.tx_hash, height: entry.height, address }));
+    return history.map((entry) => ({
+      txid: entry.tx_hash, height: entry.height, address, networkObserved: true,
+    }));
   }
 
   async subscribeAddressStatus(

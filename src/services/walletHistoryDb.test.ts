@@ -142,6 +142,9 @@ describe('wallet transaction output cache', () => {
       'DELETE FROM wallet_transaction_lifecycle WHERE wallet_id = ?',
       'wallet-address',
     );
+    expect(db.runAsync).not.toHaveBeenCalledWith(
+      'DELETE FROM wallet_transaction_tracking WHERE wallet_id = ?', 'wallet-address',
+    );
   });
 
   it('purges HD address state only when the wallet itself is deleted', async () => {
@@ -158,6 +161,9 @@ describe('wallet transaction output cache', () => {
       'DELETE FROM wallet_transaction_lifecycle WHERE wallet_id = ?',
       'wallet-address',
     );
+    expect(db.runAsync).toHaveBeenCalledWith(
+      'DELETE FROM wallet_transaction_tracking WHERE wallet_id = ?', 'wallet-address',
+    );
   });
 
   it('reserves concurrent HD addresses atomically in order', async () => {
@@ -165,7 +171,7 @@ describe('wallet transaction output cache', () => {
     let highestIssuedIndex = 0;
     const events: string[] = [];
     db.getFirstAsync.mockImplementation(async (sql: string) => {
-      if (sql === 'PRAGMA user_version') return { user_version: 5 };
+      if (sql === 'PRAGMA user_version') return { user_version: 6 };
       if (String(sql).includes('FROM wallet_hd_sequences')) {
         return highestIssuedIndex > 0 ? {
           account_key: 'taproot',
@@ -365,7 +371,7 @@ describe('wallet transaction output cache', () => {
     };
 
     db.getFirstAsync.mockImplementation(async (sql: string) => (
-      sql === 'PRAGMA user_version' ? { user_version: 5 } : null
+      sql === 'PRAGMA user_version' ? { user_version: 6 } : null
     ));
     db.getAllAsync.mockImplementation(async (sql: string) => (
       String(sql).includes('SELECT txid FROM wallet_transactions')
@@ -560,7 +566,7 @@ describe('wallet transaction output cache', () => {
     };
 
     db.getFirstAsync.mockImplementation(async (sql: string) => (
-      sql === 'PRAGMA user_version' ? { user_version: 5 } : null
+      sql === 'PRAGMA user_version' ? { user_version: 6 } : null
     ));
     db.execAsync.mockImplementation(async (sql: string) => {
       if (sql === 'BEGIN IMMEDIATE TRANSACTION') {
@@ -612,7 +618,7 @@ describe('wallet transaction output cache', () => {
   it('chunks history and output inserts below the SQLite binding limit', async () => {
     vi.resetModules();
     db.getFirstAsync.mockImplementation(async (sql: string) => (
-      sql === 'PRAGMA user_version' ? { user_version: 5 } : null
+      sql === 'PRAGMA user_version' ? { user_version: 6 } : null
     ));
     db.runAsync.mockResolvedValue({ changes: 1, lastInsertRowId: 0 });
     sqlite.openDatabaseAsync.mockResolvedValue(db);
@@ -674,7 +680,7 @@ describe('wallet transaction output cache', () => {
       execAsync: vi.fn(async (_sql: string) => undefined),
       getAllAsync: vi.fn(async (_sql: string, ..._params: unknown[]) => []),
       getFirstAsync: vi.fn(async (sql: string) => (
-        sql === 'PRAGMA user_version' ? { user_version: 5 } : null
+        sql === 'PRAGMA user_version' ? { user_version: 6 } : null
       )),
       runAsync: vi.fn(async (_sql: string, ..._params: unknown[]) => ({
         changes: 1,
@@ -800,13 +806,86 @@ describe('wallet transaction output cache', () => {
     expect(existingConnection.runAsync).not.toHaveBeenCalled();
   });
 
+  it('migrates version 5 by adding only the public tracking window', async () => {
+    vi.resetModules();
+    db.getFirstAsync.mockImplementation(async (sql: string) => (
+      sql === 'PRAGMA user_version' ? { user_version: 5 } : null
+    ));
+    const { loadTransactionTracking } = await import('./walletHistoryDb');
+    await expect(loadTransactionTracking('wallet-address')).resolves.toEqual({ records: [], window: null });
+    const sql = db.execAsync.mock.calls.map(([statement]) => statement).join('\n');
+    expect(sql).toContain('CREATE TABLE IF NOT EXISTS wallet_transaction_tracking');
+    expect(sql).toContain('PRAGMA user_version = 6');
+    expect(sql).not.toContain('UPDATE wallet_transactions');
+    expect(sql).not.toContain('ALTER TABLE wallet_transaction_lifecycle');
+    expect(db.runAsync).not.toHaveBeenCalled();
+  });
+
+  it('persists the signed payload and window atomically, restores both and refuses writes after deletion', async () => {
+    vi.resetModules();
+    let row = {
+      lifecycle_id: 'tracked', wallet_id: 'wallet-address', account_key: 'taproot', branch: 'internal',
+      purpose: 'send', address_index: 1, derivation_path: "m/86'/0'/0'/1/1", address: 'change',
+      state: 'reserved', txid: null as string | null, raw_tx_hex: null as string | null,
+      recovery_attempts: 0, broadcast_invocations: 0, next_broadcast_attempt_at: null, last_broadcast_attempt_at: null,
+    };
+    let window: { lifecycle_id: string; window_open: number } | null = null;
+    let exists = true;
+    let rollback: { row: typeof row; window: { lifecycle_id: string; window_open: number } | null } = { row: { ...row }, window };
+    let rejectWindow = true;
+    db.getFirstAsync.mockImplementation(async (sql: string) => {
+      if (sql === 'PRAGMA user_version') return { user_version: 6 };
+      if (sql.includes('FROM wallet_transaction_tracking')) return window;
+      if (sql.includes('FROM wallet_transaction_lifecycle')) return exists ? { ...row } : null;
+      return null;
+    });
+    db.getAllAsync.mockImplementation(async (sql: string) => (
+      sql.includes('FROM wallet_transaction_lifecycle') && exists && row.state !== 'reserved' ? [{ ...row }] : []
+    ));
+    db.execAsync.mockImplementation(async (sql: string) => {
+      if (sql === 'BEGIN IMMEDIATE TRANSACTION') rollback = structuredClone({ row, window });
+      if (sql === 'ROLLBACK') ({ row, window } = structuredClone(rollback));
+    });
+    db.runAsync.mockImplementation(async (sql: string, ...params: unknown[]) => {
+      if (sql.includes('UPDATE wallet_transaction_lifecycle')) {
+        row.state = String(params[0]); row.txid = String(params[1]); row.raw_tx_hex = String(params[2]);
+      }
+      if (sql.includes('INSERT INTO wallet_transaction_tracking')) {
+        if (rejectWindow) throw new Error('disk failure');
+        window = { lifecycle_id: String(params[1]), window_open: Number(params[2]) };
+      }
+      return { changes: 1, lastInsertRowId: 0 };
+    });
+    const first = await import('./walletHistoryDb');
+    await expect(first.markTransactionLifecycleSigned('wallet-address', 'tracked', 'ab'.repeat(32), '00ff')).rejects.toMatchObject({ name: 'WalletStorageError' });
+    expect(row.state).toBe('reserved');
+    expect(window).toBeNull();
+    rejectWindow = false;
+    await first.markTransactionLifecycleSigned('wallet-address', 'tracked', 'ab'.repeat(32), '00ff');
+    expect(row.state).toBe('signed');
+    vi.resetModules();
+    const restarted = await import('./walletHistoryDb');
+    const restored = await restarted.loadTransactionTracking('wallet-address');
+    expect(restored.window).toEqual({ lifecycleId: 'tracked', open: true });
+    expect(restored.records[0]).not.toHaveProperty('rawTxHex');
+    const publicReads = db.getAllAsync.mock.calls.filter(([sql]) => sql.includes('ORDER BY created_at DESC'));
+    expect(publicReads.length).toBeGreaterThan(0);
+    for (const [sql] of publicReads) expect(sql).not.toContain('raw_tx_hex');
+    await restarted.saveTransactionTrackingWindow('wallet-address', { lifecycleId: 'tracked', open: false });
+    expect((await restarted.loadTransactionTracking('wallet-address')).window?.open).toBe(false);
+    exists = false;
+    db.runAsync.mockClear();
+    await expect(restarted.saveTransactionTrackingWindow('wallet-address', { lifecycleId: 'tracked', open: true })).rejects.toMatchObject({ name: 'WalletStorageError' });
+    expect(db.runAsync).not.toHaveBeenCalled();
+  });
+
   it('reserves distinct internal Taproot addresses atomically under concurrency', async () => {
     vi.resetModules();
     let highestIssuedIndex = -1;
     let id = 0;
     const events: string[] = [];
     db.getFirstAsync.mockImplementation(async (sql: string) => {
-      if (sql === 'PRAGMA user_version') return { user_version: 5 };
+      if (sql === 'PRAGMA user_version') return { user_version: 6 };
       if (sql.includes('randomblob')) return { lifecycle_id: `reservation-${++id}` };
       if (sql.includes('FROM wallet_hd_sequences')) {
         return highestIssuedIndex >= 0 ? {
@@ -862,7 +941,7 @@ describe('wallet transaction output cache', () => {
   it('reloads signed transaction state after a database restart', async () => {
     vi.resetModules();
     db.getFirstAsync.mockImplementation(async (sql: string) => (
-      sql === 'PRAGMA user_version' ? { user_version: 5 } : null
+      sql === 'PRAGMA user_version' ? { user_version: 6 } : null
     ));
     db.getAllAsync.mockImplementation(async (sql: string) => (
       sql.includes('FROM wallet_transaction_lifecycle') ? [{
@@ -923,7 +1002,7 @@ describe('wallet transaction output cache', () => {
       last_broadcast_attempt_at: null as number | null,
     };
     db.getFirstAsync.mockImplementation(async (sql: string) => {
-      if (sql === 'PRAGMA user_version') return { user_version: 5 };
+      if (sql === 'PRAGMA user_version') return { user_version: 6 };
       if (sql.includes('FROM wallet_transaction_lifecycle')) return { ...row };
       return null;
     });
@@ -995,7 +1074,7 @@ describe('wallet transaction output cache', () => {
     };
     const states: string[] = [];
     db.getFirstAsync.mockImplementation(async (sql: string) => {
-      if (sql === 'PRAGMA user_version') return { user_version: 5 };
+      if (sql === 'PRAGMA user_version') return { user_version: 6 };
       if (sql.includes('FROM wallet_transaction_lifecycle')) return { ...row };
       return null;
     });

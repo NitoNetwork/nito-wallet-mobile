@@ -3,6 +3,13 @@ import { Platform, StyleSheet } from 'react-native';
 import { mapStyleColors, type ThemeName } from './theme';
 
 const RAW_STYLES = StyleSheet.create({
+  trackingOverlay: { flex: 1, justifyContent: 'center', padding: 20, backgroundColor: 'rgba(2, 6, 17, 0.94)' },
+  trackingCard: { maxHeight: '90%' },
+  trackingContent: { gap: 14 },
+  trackingNavigation: { flexDirection: 'row', gap: 10 },
+  trackingNavigationItem: { flex: 1 },
+  trackingProgress: { flex: 1, height: 4, borderRadius: 2, backgroundColor: '#0b203a' },
+  trackingProgressDone: { backgroundColor: '#8cc6ff' },
   safeArea: {
     flex: 1,
     backgroundColor: '#020611',

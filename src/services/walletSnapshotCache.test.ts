@@ -102,4 +102,13 @@ describe('wallet snapshot cache validation', () => {
       }],
     })).toBe(false);
   });
+
+  it('preserves genuine observation markers through restart without inventing them for old caches', () => {
+    const marked = { ...publicSnapshot, history: publicSnapshot.history.map((entry) => ({ ...entry, networkObserved: true })) };
+    expect(parseWalletSnapshotCache(JSON.stringify(marked)).history[0]?.networkObserved).toBe(true);
+    expect(parseWalletSnapshotCache(JSON.stringify(publicSnapshot)).history[0]?.networkObserved).toBeUndefined();
+    expect(() => parseWalletSnapshotCache(JSON.stringify({
+      ...marked, history: [{ ...marked.history[0], networkObserved: 'yes' }],
+    }))).toThrow('Invalid wallet snapshot cache.');
+  });
 });

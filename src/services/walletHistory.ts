@@ -71,7 +71,10 @@ export const normalizeWalletHistory = (history: ElectrumHistoryEntry[]) => {
       ? entry
       : existing;
     const loser = winner === entry ? existing : entry;
-    byTxid.set(entry.txid, mergeEnrichment(winner, loser));
+    const merged = mergeEnrichment(winner, loser);
+    byTxid.set(entry.txid, loser?.height === winner.height && loser.networkObserved === true
+      ? { ...merged, networkObserved: true }
+      : merged);
   }
 
   return [...byTxid.values()].sort((a, b) => {
