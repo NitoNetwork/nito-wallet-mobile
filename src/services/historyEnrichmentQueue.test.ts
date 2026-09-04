@@ -13,6 +13,7 @@ import {
   releaseFailedHistoryEnrichmentAttempts,
 } from './historyEnrichmentQueue';
 import { needsHistoryEnrichment } from './walletHistory';
+import { buildHistoryExportBatch } from './historyExport';
 
 const history = Array.from({ length: 48 }, (_, index): ElectrumHistoryEntry => ({
   txid: `tx-${index}`,
@@ -60,6 +61,60 @@ describe('HistoryEnrichmentQueue', () => {
       ...history.slice(36, 48),
     ].map((entry) => entry.txid));
     expect(new Set(remaining.map((entry) => entry.txid)).size).toBe(24);
+  });
+
+  it('recovers a missing cached block time without rereading complete rows', async () => {
+    const recoveredBlockTime = 1_700_000_000;
+    const incomplete: ElectrumHistoryEntry = {
+      ...history[0]!,
+      direction: 'received',
+      amountSats: 99_000_000,
+      feeSats: 0,
+      counterparty: 'wallet-address',
+      provisional: false,
+      blockTime: undefined,
+    };
+    const complete = { ...incomplete, txid: 'complete', blockTime: recoveredBlockTime };
+    let cachedHistory = [incomplete, complete];
+    const reader = {
+      getVerboseTransaction: vi.fn(async () => ({
+        blocktime: recoveredBlockTime,
+        vin: [{ coinbase: '00' }],
+        vout: [{ n: 0, value: 0.99, scriptPubKey: { address: 'wallet-address' } }],
+      })),
+    };
+    const queue = new HistoryEnrichmentQueue(cachedHistory);
+    expect(queue.remainingCount).toBe(1);
+
+    await processHistoryEnrichmentQueue({
+      queue,
+      enrichBatch: (batch) => buildHistoryExportBatch({
+        history: batch,
+        walletAddresses: ['wallet-address'],
+        reader,
+      }),
+      publishBatch: async ({ records }) => {
+        expect(records).toEqual([{
+          txid: incomplete.txid,
+          status: 'confirmed',
+          blockHeight: incomplete.height,
+          blockTime: recoveredBlockTime,
+          direction: incomplete.direction,
+          amountSats: incomplete.amountSats,
+          feeSats: incomplete.feeSats,
+          counterparty: incomplete.counterparty,
+        }]);
+        cachedHistory = cachedHistory.map((entry) => {
+          const record = records.find(({ txid }) => txid === entry.txid);
+          return record ? { ...entry, blockTime: record.blockTime ?? undefined } : entry;
+        });
+      },
+    });
+
+    expect(reader.getVerboseTransaction).toHaveBeenCalledExactlyOnceWith(incomplete.txid);
+    expect(cachedHistory).toEqual([{ ...incomplete, blockTime: recoveredBlockTime }, complete]);
+    // Use a fresh queue, not the attempted-key guard, to prove the cache is complete.
+    expect(new HistoryEnrichmentQueue(cachedHistory).remainingCount).toBe(0);
   });
 
   it('excludes already attempted or enriched entries without duplicating work', () => {
