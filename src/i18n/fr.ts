@@ -271,7 +271,6 @@ export const fr: TranslationSet = {
   'errors.biometricCancelled': '{method} a été annulé. Entre ton mot de passe ou réessaie.',
   'errors.biometricNoHardware': 'La biométrie n’est pas disponible sur cet appareil.',
   'errors.biometricNotEnrolled': 'Configurez la biométrie dans iOS ou Android pour l’utiliser.',
-  'errors.biometricReimport': 'La biométrie n’est pas disponible. Réimportez votre phrase pour recréer le coffre.',
   'errors.passwordMin10': 'Utilisez au moins 10 caractères pour le mot de passe.',
   'errors.passwordMismatch': 'Les mots de passe ne correspondent pas.',
   'errors.seedBackupIncomplete': 'Vérifie la phrase de récupération avant de protéger le portefeuille.',

@@ -11,6 +11,13 @@ import {
 import { tr } from './i18n/tr';
 
 describe('i18n coverage', () => {
+  it('does not instruct users to reimport their seed after a biometric unlock failure', () => {
+    for (const { code } of LANGUAGES) {
+      expect(TRANSLATIONS[code]).not.toHaveProperty('errors.biometricReimport');
+      expect(makeTranslator(code)('errors.unlockFailed')).not.toBe('errors.unlockFailed');
+    }
+  });
+
   it('does not fall back to English for critical visible wallet copy', () => {
     expect(auditTranslationCoverage()).toEqual([]);
   });

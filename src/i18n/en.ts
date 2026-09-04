@@ -273,7 +273,6 @@ export const en = {
   'errors.biometricCancelled': '{method} was cancelled. Enter your password or try again.',
   'errors.biometricNoHardware': 'Biometrics are not available on this device.',
   'errors.biometricNotEnrolled': 'Set up biometrics in iOS/Android to use it.',
-  'errors.biometricReimport': 'Biometrics unavailable. Reimport your seed to recreate the vault.',
   'errors.passwordMin10': 'Use at least 10 characters for the password.',
   'errors.passwordMismatch': 'Passwords do not match.',
   'errors.seedBackupIncomplete': 'Verify the recovery phrase before protecting the wallet.',

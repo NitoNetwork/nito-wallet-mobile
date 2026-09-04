@@ -271,7 +271,6 @@ export const zh: TranslationSet = {
   'errors.biometricCancelled': '已取消 {method}。请输入密码或重试。',
   'errors.biometricNoHardware': '此设备不支持生物识别。',
   'errors.biometricNotEnrolled': '请先在 iOS 或 Android 中设置生物识别。',
-  'errors.biometricReimport': '生物识别不可用。请重新导入助记词以重建钱包保险库。',
   'errors.passwordMin10': '密码至少需要 10 个字符。',
   'errors.passwordMismatch': '两次输入的密码不一致。',
   'errors.seedBackupIncomplete': '请先验证恢复助记词，再保护钱包。',

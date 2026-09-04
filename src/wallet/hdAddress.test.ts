@@ -10,6 +10,24 @@ import {
 const mnemonic = 'abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about';
 
 describe('HD address policy', () => {
+  it.each([
+    { scriptType: undefined },
+    { scriptType: 'p2wpkh' as const },
+    { path: "m/86'/0'/0'/0/99" },
+    { address: '' },
+  ])('rejects a missing or inconsistent native address field: %j', async (override) => {
+    const crypto = createNitoWalletCryptoTestDouble();
+    const invalid = {
+      ...crypto,
+      deriveAddresses: async (...args: Parameters<typeof crypto.deriveAddresses>) => (
+        (await crypto.deriveAddresses(...args)).map((address) => ({ ...address, ...override }))
+      ),
+    };
+    // Deliberately malformed native JSON is outside the static TypeScript contract.
+    await expect(deriveHdAddress(mnemonic, 'taproot', 'external', 0, invalid as typeof crypto))
+      .rejects.toThrow('HD address derivation returned an inconsistent result.');
+  });
+
   it('derives all four account-zero receive families with Taproot available', async () => {
     const crypto = createNitoWalletCryptoTestDouble();
     const derived = await Promise.all(HD_ACCOUNT_TEMPLATES.map((template) => (

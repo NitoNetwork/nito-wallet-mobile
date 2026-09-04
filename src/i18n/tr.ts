@@ -271,7 +271,6 @@ export const tr: TranslationSet = {
   'errors.biometricCancelled': '{method} iptal edildi. Parolanızı girin veya yeniden deneyin.',
   'errors.biometricNoHardware': 'Bu cihazda biyometri kullanılamıyor.',
   'errors.biometricNotEnrolled': 'Kullanmak için iOS/Android üzerinde biyometriyi ayarlayın.',
-  'errors.biometricReimport': 'Biyometri kullanılamıyor. Kasayı yeniden oluşturmak için BIP39 ifadenizi tekrar içe aktarın.',
   'errors.passwordMin10': 'Parola için en az 10 karakter kullanın.',
   'errors.passwordMismatch': 'Parolalar eşleşmiyor.',
   'errors.seedBackupIncomplete': 'Cüzdanı korumadan önce kurtarma ifadesini doğrulayın.',

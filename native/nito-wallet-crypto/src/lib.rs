@@ -106,7 +106,7 @@ struct GenerateMnemonicResponse {
     mnemonic: String,
 }
 
-#[derive(Debug, Clone, Copy, Deserialize)]
+#[derive(Debug, Clone, Copy, Deserialize, Serialize)]
 #[serde(rename_all = "kebab-case")]
 enum ScriptType {
     P2pkh,
@@ -148,6 +148,7 @@ struct DeriveAddressRequest {
 #[serde(rename_all = "camelCase")]
 struct DerivedAddressResponse {
     path: String,
+    script_type: ScriptType,
     address: String,
     public_key_hex: String,
     script_hex: String,
@@ -355,6 +356,7 @@ fn derive_address(
 
     Ok(DerivedAddressResponse {
         path: request.path,
+        script_type: request.script_type,
         address,
         public_key_hex: hex::encode(public_key.to_bytes()),
         script_hex: hex::encode(script.as_bytes()),
@@ -774,6 +776,91 @@ mod tests {
 
     const MNEMONIC: &str = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
 
+    fn assert_valid_signatures(psbt: &Psbt) {
+        let secp = Secp256k1::verification_only();
+        let prevouts: Vec<TxOut> = psbt
+            .iter_funding_utxos()
+            .map(|out| out.unwrap().clone())
+            .collect();
+        let mut cache = SighashCache::new(&psbt.unsigned_tx);
+        for (index, input) in psbt.inputs.iter().enumerate() {
+            let prevout = &prevouts[index];
+            if prevout.script_pubkey.is_p2tr() {
+                let signature = input.tap_key_sig.unwrap();
+                let output_key = bitcoin::secp256k1::XOnlyPublicKey::from_slice(
+                    &prevout.script_pubkey.as_bytes()[2..],
+                )
+                .unwrap();
+                let hash = cache
+                    .taproot_key_spend_signature_hash(
+                        index,
+                        &Prevouts::All(&prevouts),
+                        signature.sighash_type,
+                    )
+                    .unwrap();
+                secp.verify_schnorr(
+                    &signature.signature,
+                    &Message::from_digest(hash.to_byte_array()),
+                    &output_key,
+                )
+                .unwrap();
+            } else {
+                let (key, signature) = input.partial_sigs.iter().next().unwrap();
+                let digest = if prevout.script_pubkey.is_p2pkh() {
+                    cache
+                        .legacy_signature_hash(
+                            index,
+                            &prevout.script_pubkey,
+                            signature.sighash_type.to_u32(),
+                        )
+                        .unwrap()
+                        .to_byte_array()
+                } else {
+                    let script = input
+                        .redeem_script
+                        .as_ref()
+                        .unwrap_or(&prevout.script_pubkey);
+                    cache
+                        .p2wpkh_signature_hash(index, script, prevout.value, signature.sighash_type)
+                        .unwrap()
+                        .to_byte_array()
+                };
+                secp.verify_ecdsa(
+                    &Message::from_digest(digest),
+                    &signature.signature,
+                    &key.inner,
+                )
+                .unwrap();
+            }
+        }
+    }
+
+    #[test]
+    fn address_json_preserves_each_requested_script_type_and_path() {
+        for (purpose, script_type) in [
+            (44, "p2pkh"),
+            (49, "p2sh-p2wpkh"),
+            (84, "p2wpkh"),
+            (86, "p2tr"),
+        ] {
+            for branch in [0, 1] {
+                let path = format!("m/{purpose}'/0'/0'/{branch}/3");
+                let response: Value = serde_json::from_str(&invoke_envelope(
+                    "deriveAddresses",
+                    &json!({
+                        "mnemonic": MNEMONIC,
+                        "requests": [{ "path": path, "scriptType": script_type }]
+                    })
+                    .to_string(),
+                ))
+                .unwrap();
+                assert_eq!(response["ok"], true);
+                assert_eq!(response["result"][0]["path"], path);
+                assert_eq!(response["result"][0]["scriptType"], script_type);
+            }
+        }
+    }
+
     fn unsigned_spend(outpoint: OutPoint, script_pubkey: ScriptBuf) -> Transaction {
         Transaction {
             version: Version::TWO,
@@ -1026,6 +1113,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(signed.inputs[0].partial_sigs.len(), 1);
+        assert_valid_signatures(&signed);
     }
 
     #[test]
@@ -1078,6 +1166,7 @@ mod tests {
         )
         .unwrap();
         assert!(signed.inputs[0].tap_key_sig.is_some());
+        assert_valid_signatures(&signed);
     }
 
     #[test]
@@ -1137,6 +1226,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(signed.inputs[0].partial_sigs.len(), 1);
+        assert_valid_signatures(&signed);
     }
 
     #[test]
@@ -1192,6 +1282,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(signed.inputs[0].partial_sigs.len(), 1);
+        assert_valid_signatures(&signed);
     }
 
     #[test]

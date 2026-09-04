@@ -271,7 +271,6 @@ export const de: TranslationSet = {
   'errors.biometricCancelled': '{method} wurde abgebrochen. Gib dein Passwort ein oder versuche es erneut.',
   'errors.biometricNoHardware': 'Biometrie ist auf diesem Gerät nicht verfügbar.',
   'errors.biometricNotEnrolled': 'Richte Biometrie in iOS/Android ein, um sie zu nutzen.',
-  'errors.biometricReimport': 'Biometrie nicht verfügbar. Importiere deinen Seed erneut, um den Tresor neu anzulegen.',
   'errors.passwordMin10': 'Verwende mindestens 10 Zeichen für das Passwort.',
   'errors.passwordMismatch': 'Die Passwörter stimmen nicht überein.',
   'errors.seedBackupIncomplete': 'Bestätige die Wiederherstellungsphrase, bevor du die Wallet schützt.',

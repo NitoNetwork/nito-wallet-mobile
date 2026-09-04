@@ -271,7 +271,6 @@ export const ja: TranslationSet = {
   'errors.biometricCancelled': '{method} がキャンセルされました。パスワードを入力するか、もう一度お試しください。',
   'errors.biometricNoHardware': 'この端末では生体認証を利用できません。',
   'errors.biometricNotEnrolled': '利用するには iOS/Android で生体認証を設定してください。',
-  'errors.biometricReimport': '生体認証を利用できません。シードを再インポートして保管庫を作り直してください。',
   'errors.passwordMin10': 'パスワードは 10 文字以上にしてください。',
   'errors.passwordMismatch': 'パスワードが一致しません。',
   'errors.seedBackupIncomplete': 'ウォレットを保護する前に復元フレーズを確認してください。',

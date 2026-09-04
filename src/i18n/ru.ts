@@ -271,7 +271,6 @@ export const ru: TranslationSet = {
   'errors.biometricCancelled': '{method} отменён. Введите пароль или повторите попытку.',
   'errors.biometricNoHardware': 'Биометрия недоступна на этом устройстве.',
   'errors.biometricNotEnrolled': 'Настройте биометрию в iOS или Android, чтобы использовать ее.',
-  'errors.biometricReimport': 'Биометрия недоступна. Повторно импортируйте фразу, чтобы создать защищенное хранилище заново.',
   'errors.passwordMin10': 'Пароль должен содержать не менее 10 символов.',
   'errors.passwordMismatch': 'Пароли не совпадают.',
   'errors.seedBackupIncomplete': 'Проверьте фразу восстановления перед защитой кошелька.',

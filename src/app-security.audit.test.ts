@@ -91,7 +91,7 @@ describe('mobile wallet UX and security invariants', () => {
       /setScreen\('wallet'\);\s*if \(lockWalletIfAppStateBackground\(\s*appStateRef\.current,\s*lockWalletRef\.current,\s*\)\) return;/,
     );
     expect(appSource).toMatch(
-      /systemPromptActiveRef\.current = true;\s*biometricPromptGuardActive = true;\s*const secret = await loadBiometricSecret\(\);[\s\S]*?enterWallet\([\s\S]*?\} finally \{\s*if \(biometricPromptGuardActive\) \{\s*systemPromptActiveRef\.current = false;/,
+      /systemPromptActiveRef\.current = true;\s*biometricPromptGuardActive = true;\s*const secret = await readBiometricSecretForUnlock\(loadBiometricSecret\);[\s\S]*?enterWallet\([\s\S]*?\} finally \{\s*if \(biometricPromptGuardActive\) \{\s*systemPromptActiveRef\.current = false;/,
     );
   });
 
@@ -124,6 +124,14 @@ describe('mobile wallet UX and security invariants', () => {
     expect(appStateSecuritySource).toContain('&& !biometricDismissedRef.current');
     expect(appStateSecuritySource).toContain('&& biometricInterruptedRef.current');
     expect(appSource).toMatch(/if \(auto\) \{\s*return;/);
+  });
+
+  it('only reports biometric cancellation for a cancelled authentication read, not a later unlock failure', () => {
+    const unlock = appSource.slice(appSource.indexOf('const unlockSavedWallet = async'), appSource.indexOf('unlockSavedWalletRef.current = unlockSavedWallet'));
+    expect(unlock).toContain('await readBiometricSecretForUnlock(loadBiometricSecret)');
+    expect(unlock).toMatch(/if \(caught instanceof BiometricUnlockCancelledError\) \{\s*if \(auto\) \{\s*return;/);
+    expect(unlock).not.toMatch(/if \(useBiometrics\) \{\s*setError\(t\('errors.biometricCancelled'/);
+    expect(unlock).not.toContain("t('errors.biometricReimport')");
   });
 
   it('clears the typed vault password when the wallet locks', () => {

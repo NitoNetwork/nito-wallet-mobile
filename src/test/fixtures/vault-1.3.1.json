@@ -1,0 +1,24 @@
+{
+  "fixture": "Public BIP39 test vector only. Format from 1.3.1 commit 889ac0c. Never use for funds.",
+  "password": "integration-test-only",
+  "payload": {
+    "version": 1,
+    "mnemonic": "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about",
+    "address": "nito1qcr8te4kr609gcawutmrza0j4xv80jy8z540c02",
+    "derivationPath": "m/84'/0'/0'/0/0",
+    "createdAt": "2026-09-01T00:00:00.000Z"
+  },
+  "vault": {
+    "version": 1,
+    "kdf": "pbkdf2-sha256",
+    "rounds": 600000,
+    "salt": "AAECAwQFBgcICQoLDA0ODw==",
+    "nonce": "EBESExQVFhcYGRobHB0eHyAhIiMkJSYn",
+    "ciphertext": "2I4vy2YdIxdjaAZZecywOTwJN9ZrYnYlaVN8cd2kMztl+eZnHu78C2tFFwyiSmz+qWb8F+9THorSI+Ja6rJtP0JsLFqDmzI7oWxds8C6wya6CFbYgQWMthbx9PMLcM5fRu/meKiEjXP+xmg/xd2z3Ar60ecUK/g0gGNNnEGvMMM2BTr3FBo8gieCagGDxA5RYq4ih1cw/Vd6kxCsW6WDz/Uzs8Dnv/kS1dbtatqIE3/cnYBp2VbVbRCGPtxBKav1KUViOfcGHM+pKgziKqKaUtA+aNDx4nN7Y/X/QnT38GMFCaSczd7GXXZ6QQtlCoSiCDckx8zhAS7i+MGo2l8SaAV0BOFg69Ezn8Sr",
+    "address": "nito1qcr8te4kr609gcawutmrza0j4xv80jy8z540c02",
+    "derivationPath": "m/84'/0'/0'/0/0",
+    "createdAt": "2026-09-01T00:00:00.000Z",
+    "biometricsEnabled": true,
+    "unlockMode": "password"
+  }
+}

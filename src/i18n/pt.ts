@@ -271,7 +271,6 @@ export const pt: TranslationSet = {
   'errors.biometricCancelled': 'O {method} foi cancelado. Introduza a palavra-passe ou tente novamente.',
   'errors.biometricNoHardware': 'A biometria não está disponível neste dispositivo.',
   'errors.biometricNotEnrolled': 'Configure a biometria no iOS ou Android para usá-la.',
-  'errors.biometricReimport': 'Biometria indisponível. Importe novamente a frase para recriar o cofre.',
   'errors.passwordMin10': 'Use pelo menos 10 caracteres na senha.',
   'errors.passwordMismatch': 'As senhas não coincidem.',
   'errors.seedBackupIncomplete': 'Verifique a frase de recuperação antes de proteger a carteira.',

@@ -200,6 +200,7 @@ import {
   translatedTransparentSendError,
 } from './src/services/transparentSendError';
 import { prepareVaultUpgradeCommit } from './src/services/vaultMigration';
+import { BiometricUnlockCancelledError, readBiometricSecretForUnlock } from './src/services/biometricUnlock';
 import { userFacingErrorMessage, WalletStorageError } from './src/services/walletStorageError';
 import {
   initialVaultSession,
@@ -1773,10 +1774,10 @@ function WalletApp({ theme, onSelectTheme }: {
 
         systemPromptActiveRef.current = true;
         biometricPromptGuardActive = true;
-        const secret = await loadBiometricSecret();
+        const secret = await readBiometricSecretForUnlock(loadBiometricSecret);
 
         if (!secret) {
-          throw new Error(t('errors.biometricReimport'));
+          throw new Error(t('errors.biometricUnavailable'));
         }
         vaultSecret = secret;
       }
@@ -1864,10 +1865,10 @@ function WalletApp({ theme, onSelectTheme }: {
       if (useBiometrics) {
         biometricDismissedRef.current = true;
       }
-      if (auto) {
-        return;
-      }
-      if (useBiometrics) {
+      if (caught instanceof BiometricUnlockCancelledError) {
+        if (auto) {
+          return;
+        }
         setError(t('errors.biometricCancelled', { method: biometricMethod }));
       } else if (
         caught instanceof Error
