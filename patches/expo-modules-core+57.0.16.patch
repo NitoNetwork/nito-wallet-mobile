@@ -26,7 +26,7 @@ index 7910c77..01926b6 100644
    }
  }
 diff --git a/node_modules/expo-modules-core/android/build.gradle b/node_modules/expo-modules-core/android/build.gradle
-index b00b24b..3e65d28 100644
+index 5b4aab8..c756d5f 100644
 --- a/node_modules/expo-modules-core/android/build.gradle
 +++ b/node_modules/expo-modules-core/android/build.gradle
 @@ -79,18 +79,18 @@ if (workletsProject != null) {

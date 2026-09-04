@@ -1,8 +1,8 @@
 diff --git a/node_modules/expo/android/build.gradle b/node_modules/expo/android/build.gradle
-index ad9c54d..9dea9a9 100644
+index 9384622..c30107e 100644
 --- a/node_modules/expo/android/build.gradle
 +++ b/node_modules/expo/android/build.gradle
-@@ -14,11 +14,11 @@ version = '57.0.19'
+@@ -14,11 +14,11 @@ version = '57.0.20'
  
  expoModule {
    // We can't prebuild the module because it depends on the generated files.
@@ -15,7 +15,7 @@ index ad9c54d..9dea9a9 100644
 +  namespace = "expo.core"
    defaultConfig {
      versionCode 1
-     versionName "57.0.19"
+     versionName "57.0.20"
 diff --git a/node_modules/expo/android/src/main/java/expo/modules/ExpoModulesPackage.kt b/node_modules/expo/android/src/main/java/expo/modules/ExpoModulesPackage.kt
 index 533674e..6f29bd6 100644
 --- a/node_modules/expo/android/src/main/java/expo/modules/ExpoModulesPackage.kt
