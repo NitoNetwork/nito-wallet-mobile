@@ -74,6 +74,8 @@ import { ActionButton } from './src/ui/components';
 import { TransactionTrackingWindow } from './src/ui/TransactionTrackingWindow';
 import { TransactionTrackingController } from './src/services/transactionTracking';
 import { submitRbfReplacement } from './src/services/transactionReplacement';
+import { observePublishedTransactions } from './src/services/transactionObservation';
+import { releaseReceiveAddressBeforeRefresh } from './src/services/receiveAddress';
 import { hasSignedReplacement } from './src/services/transactionLifecycle';
 import {
   RbfError, assertRbfOriginalPending, assertSignedRbfFee, loadRbfOriginal, prepareRbfQuote, rbfNetworkFeeRate,
@@ -145,7 +147,6 @@ import {
   loadHdAddressRequirements,
   loadTransactionLifecycles,
   loadTransactionTracking,
-  saveTransactionTrackingWindow,
   loadTransactionOutputCache,
   loadWalletHistoryCache,
   loadWalletSnapshotCache,
@@ -160,7 +161,7 @@ import {
   markTransactionLifecycleConflicted,
   markTransactionLifecycleSigned,
   reconcileTransactionLifecycles,
-  reserveInternalTaprootTransactions,
+  reserveInternalTransactions,
   reserveTransactionWithoutAddress,
 } from './src/services/walletHistoryDb';
 import {
@@ -178,6 +179,7 @@ import {
   assertTransparentSendPlanMatches,
   assertUnsignedTransparentInputsAvailable,
   calculateMaxTransparentSendAmount,
+  changeAccountForRecipients,
   estimateTransparentMultiSend,
   isTransparentSendReviewChanged,
   parseNitoAmountToSats,
@@ -227,7 +229,6 @@ import {
   mergeWalletNetworkPublication,
   prefetchWalletSnapshot,
   prepareWalletEntry,
-  reconcileBroadcastTransactions,
   synchronizeWalletNetwork,
   toQuickWalletSnapshot,
   type WalletNetworkHistoryPublicationMode,
@@ -369,16 +370,18 @@ type SendEstimateState = {
   fitsAvailable: boolean;
 };
 
-const internalTaprootReservationRange = ({
+const internalReservationRange = ({
   snapshot,
+  accountKey = 'taproot',
   highestIssuedIndex,
   count,
 }: {
   snapshot: TransparentWalletSnapshot;
+  accountKey?: HdAccountKey;
   highestIssuedIndex: number;
   count: number;
 }) => {
-  const sequence = { accountKey: 'taproot' as const, branch: 'internal' as const };
+  const sequence = { accountKey, branch: 'internal' as const };
   const highestUsed = highestUsedHdIndex(snapshot.addresses, sequence);
   const minimumIndex = Math.max(highestIssuedIndex + 1, highestUsed + 1, 0);
   const maximumIndex = highestUsed + snapshot.gapLimit;
@@ -478,7 +481,12 @@ function WalletApp({ theme, onSelectTheme }: {
     setWalletTabState(nextTab);
   }, [clearFieldErrors]);
   const [wallet, setWallet] = useState<Wallet | null>(null);
-  const [receiveAddressBusy, setReceiveAddressBusy] = useState(false);
+  const [receiveAddressBusy, setReceiveAddressBusyState] = useState(false);
+  const receiveAddressBusyRef = useRef(false);
+  const setReceiveAddressBusy = useCallback((busy: boolean) => {
+    receiveAddressBusyRef.current = busy;
+    setReceiveAddressBusyState(busy);
+  }, []);
   const receiveAddressOperationRef = useRef(0);
   const [pendingWallet, setPendingWallet] = useState<Wallet | null>(null);
   const [pendingWalletRequiresSeedBackup, setPendingWalletRequiresSeedBackup] = useState(false);
@@ -491,7 +499,6 @@ function WalletApp({ theme, onSelectTheme }: {
   const [transactionTrackingController] = useState(() => new TransactionTrackingController({
     isCurrent: (session) => walletNetworkController.isCurrent(session),
     read: loadTransactionTracking,
-    writeWindow: saveTransactionTrackingWindow,
     reportError: (caught) => reportNonFinancialFailure('transaction tracking', caught),
   }));
   const transactionTracking = useSyncExternalStore(
@@ -554,6 +561,8 @@ function WalletApp({ theme, onSelectTheme }: {
   const [sendEstimatePending, setSendEstimatePending] = useState(false);
   const [preparedTx, setPreparedTx] = useState<UnsignedTransparentSend | null>(null);
   const [rbfReview, setRbfReview] = useState<RbfQuote | null>(null);
+  const [replacementError, setReplacementError] = useState('');
+  const observationInFlightRef = useRef(new Set<string>());
   const rbfRevision = useRef(0);
   const clearRbfReview = useCallback(() => {
     rbfRevision.current += 1;
@@ -667,6 +676,7 @@ function WalletApp({ theme, onSelectTheme }: {
     }
 
     let outputs: TransparentSendOutput[];
+    let changeAccount: HdAccountKey;
     try {
       sendRecipients.forEach((recipient) => {
         scriptPubKeyForNitoAddress(recipient.address);
@@ -675,6 +685,7 @@ function WalletApp({ theme, onSelectTheme }: {
         address: recipient.address,
         amountSats: parseNitoAmountToSats(recipient.amount),
       }));
+      changeAccount = changeAccountForRecipients(outputs.map(({ address }) => address));
     } catch {
       clearTimeout(stateTimer);
       const invalidTimer = setTimeout(() => {
@@ -691,7 +702,7 @@ function WalletApp({ theme, onSelectTheme }: {
 
     const snapshot = network.snapshot;
     const timer = setTimeout(() => {
-      void deriveHdAddress(wallet.mnemonic, 'taproot', 'internal', 0).then((previewChange) => (
+      void deriveHdAddress(wallet.mnemonic, changeAccount, 'internal', 0).then((previewChange) => (
         estimateTransparentMultiSend({
           mnemonic: wallet.mnemonic,
           snapshot,
@@ -734,9 +745,10 @@ function WalletApp({ theme, onSelectTheme }: {
 
   const resetFeedback = useCallback(() => {
     setError('');
+    setReplacementError('');
     setStatus('');
     clearFieldErrors();
-  }, [clearFieldErrors]);
+  }, [clearFieldErrors, setReplacementError]);
 
   const openTransactionExplorerWithFeedback = useCallback(async (txid: string) => {
     try {
@@ -1354,9 +1366,17 @@ function WalletApp({ theme, onSelectTheme }: {
         );
         const lifecycles = await loadTransactionLifecycles(activeWallet.walletId);
         if (!walletNetworkController.isCurrent(reconciliationSession)) return;
-        await recoverTransactionBroadcasts(activeWallet.walletId, lifecycles);
+        transactionTrackingController.observationResult(
+          reconciliationSession,
+          currentNetwork.snapshot.history
+            .filter((entry) => entry.height > 0 || entry.networkObserved === true)
+            .map((entry) => entry.txid),
+          false,
+        );
+        if (!options.postBroadcastObservation) await recoverTransactionBroadcasts(activeWallet.walletId, lifecycles);
       } catch (caught) {
         if (!walletNetworkController.isCurrent(reconciliationSession)) return;
+        if (options.postBroadcastObservation) throw caught;
         setError(translatedErrorMessage(
           caught,
           t,
@@ -1370,6 +1390,7 @@ function WalletApp({ theme, onSelectTheme }: {
     publishNetworkState,
     recoverTransactionBroadcasts,
     t,
+    transactionTrackingController,
     walletNetworkController,
   ]);
 
@@ -1413,17 +1434,34 @@ function WalletApp({ theme, onSelectTheme }: {
     txids: readonly string[],
     session: WalletSessionToken,
   ) => {
-    const client = electrumClientRef.current ?? createElectrumClient();
-    electrumClientRef.current = client;
-    const found = await reconcileBroadcastTransactions({
-      txids,
-      client,
-      isCurrent: () => walletNetworkController.isCurrent(session),
-    });
-    if (found) {
-      await syncTransparentNetwork(false, { force: true, silent: true });
+    const key = `${session.generation}:${[...txids].sort().join(',')}`;
+    if (observationInFlightRef.current.has(key)) return;
+    observationInFlightRef.current.add(key);
+    try {
+      let networkReadFailed = false;
+      const result = await observePublishedTransactions({
+        isCurrent: () => walletNetworkController.isCurrent(session),
+        refresh: async () => {
+          await syncTransparentNetwork(true, { force: true, rescanGap: true, silent: true, postBroadcastObservation: true });
+          const current = networkRef.current;
+          return current.status === 'connected' && txids.every((txid) => current.snapshot?.history.some(
+            (entry) => entry.txid === txid && (entry.height > 0 || entry.networkObserved === true),
+          ));
+        },
+        isRetryable: (caught) => !(caught instanceof WalletStorageError),
+        onFailure: (caught) => {
+          reportNonFinancialFailure('post-broadcast observation exhausted', caught);
+          networkReadFailed = !(caught instanceof WalletStorageError);
+          if (caught instanceof WalletStorageError) setError(t('errors.walletStorageUnavailable'));
+        },
+      });
+      if (result !== 'interrupted') {
+        transactionTrackingController.observationResult(session, txids, result === 'failed' && networkReadFailed);
+      }
+    } finally {
+      observationInFlightRef.current.delete(key);
     }
-  }, [syncTransparentNetwork, walletNetworkController]);
+  }, [syncTransparentNetwork, t, transactionTrackingController, walletNetworkController]);
 
   const advanceBlockHeight = useCallback((height: number) => {
     const activeWallet = walletRef.current;
@@ -1458,8 +1496,10 @@ function WalletApp({ theme, onSelectTheme }: {
     txids: readonly string[],
     session: WalletSessionToken,
   ) => {
-    void reconcileBroadcasts(txids, session).catch(reportNetworkFailure);
-  }, [reconcileBroadcasts, reportNetworkFailure]);
+    void reconcileBroadcasts(txids, session).catch((caught) => {
+      if (walletNetworkController.isCurrent(session)) reportNetworkFailure(caught);
+    });
+  }, [reconcileBroadcasts, reportNetworkFailure, walletNetworkController]);
 
   const {
     clearSubscriptions: clearAddressSubscriptions,
@@ -2137,6 +2177,7 @@ function WalletApp({ theme, onSelectTheme }: {
     transactionBroadcastRetryScheduler.cancel();
     walletNetworkController.cancel();
     transactionTrackingController.reset();
+    observationInFlightRef.current.clear();
     pendingNetworkRef.current = null;
     receiveAddressOperationRef.current += 1;
     setReceiveAddressBusy(false);
@@ -2190,6 +2231,7 @@ function WalletApp({ theme, onSelectTheme }: {
     transactionTrackingController,
     resetSendDraft,
     publishNetworkState,
+    setReceiveAddressBusy,
     setScreen,
     setWalletTab,
     walletNetworkController,
@@ -2277,7 +2319,7 @@ function WalletApp({ theme, onSelectTheme }: {
   }, [walletNetworkController]);
 
   const selectReceiveAddressFamily = useCallback(async (accountKey: HdAccountKey) => {
-    if (receiveAddressBusy || pendingActionRef.current) return;
+    if (receiveAddressBusyRef.current || pendingActionRef.current) return;
     const activeWallet = walletRef.current;
     const session = activeWallet
       ? walletNetworkController.sessions.capture(activeWallet.walletId)
@@ -2308,10 +2350,10 @@ function WalletApp({ theme, onSelectTheme }: {
         setReceiveAddressBusy(false);
       }
     }
-  }, [applyReceiveAddress, receiveAddressBusy, resetFeedback, t, walletNetworkController]);
+  }, [applyReceiveAddress, setReceiveAddressBusy, resetFeedback, t, walletNetworkController]);
 
   const createNewReceiveAddress = useCallback(async () => {
-    if (receiveAddressBusy || pendingActionRef.current) return;
+    if (receiveAddressBusyRef.current || pendingActionRef.current) return;
     const activeWallet = walletRef.current;
     const snapshot = networkRef.current.snapshot;
     const session = activeWallet
@@ -2358,7 +2400,13 @@ function WalletApp({ theme, onSelectTheme }: {
         family: hdAccountTemplate(sequence.accountKey).label,
         index,
       }));
-      await syncTransparentNetwork(false, { force: true, rescanGap: true, silent: true });
+      releaseReceiveAddressBeforeRefresh({
+        isCurrent: () => receiveAddressOperationRef.current === operation && walletNetworkController.isCurrent(session),
+        release: () => setReceiveAddressBusy(false),
+        queueRefresh: () => walletNetworkController.requestOrQueueSync(
+          { force: true, rescanGap: true, silent: true }, requestSync,
+        ),
+      });
     } catch (caught) {
       if (receiveAddressOperationRef.current !== operation) return;
       if (caught instanceof Error && caught.message === 'HD_ADDRESS_GAP_LIMIT_REACHED') {
@@ -2378,9 +2426,9 @@ function WalletApp({ theme, onSelectTheme }: {
     }
   }, [
     applyReceiveAddress,
-    receiveAddressBusy,
+    setReceiveAddressBusy,
     resetFeedback,
-    syncTransparentNetwork,
+    requestSync,
     t,
     walletNetworkController,
   ]);
@@ -2462,12 +2510,13 @@ function WalletApp({ theme, onSelectTheme }: {
   };
 
   const showReplacementError = (caught: unknown) => {
-    setError(caught instanceof RbfError ? t(`rbf.error.${caught.code}`)
+    setReplacementError(caught instanceof RbfError ? t(`rbf.error.${caught.code}`)
       : translatedErrorMessage(caught, t, t('errors.sendFailed'), 'transaction replacement'));
   };
 
   const prepareReplacement = async (lifecycleId: string, mode: ReplacementMode) => {
     await runExclusiveAction('prepare', async () => {
+      setReplacementError('');
       resetFeedback();
       clearRbfReview();
       setPreparedTx(null);
@@ -2494,6 +2543,7 @@ function WalletApp({ theme, onSelectTheme }: {
       const isCurrent = () => walletNetworkController.isCurrent(session) && revision === rbfRevision.current;
       let persisted = false;
       resetFeedback();
+      setReplacementError('');
       try {
         const result = await submitRbfReplacement({
           review, isCurrent,
@@ -2505,8 +2555,8 @@ function WalletApp({ theme, onSelectTheme }: {
             const snapshot = networkRef.current.snapshot;
             if (!snapshot || !isCurrent()) throw new RbfError('unavailable');
             const highestIssuedIndex = requirements.find((item) => item.accountKey === 'taproot' && item.branch === 'internal')?.highestIssuedIndex ?? -1;
-            const range = internalTaprootReservationRange({ snapshot, highestIssuedIndex, count: 1 });
-            const [reserved] = await reserveInternalTaprootTransactions({ walletId: session.walletId, purpose: 'send', count: 1, ...range });
+            const range = internalReservationRange({ snapshot, highestIssuedIndex, count: 1 });
+            const [reserved] = await reserveInternalTransactions({ walletId: session.walletId, purpose: 'send', count: 1, ...range });
             if (!reserved || reserved.addressIndex === null) throw new RbfError('inconsistent');
             const derived = await deriveHdAddress(activeWallet.mnemonic, 'taproot', 'internal', reserved.addressIndex);
             await attachInternalTransactionAddresses(session.walletId, [{ lifecycleId: reserved.lifecycleId, address: derived.address }]);
@@ -2530,18 +2580,18 @@ function WalletApp({ theme, onSelectTheme }: {
         if (!isCurrent()) return;
         if (result.kind === 'changed') {
           setRbfReview(result.quote);
-          setError(t('rbf.reviewChanged'));
+          setReplacementError(t('rbf.reviewChanged'));
           return;
         }
         if (result.kind !== 'signed') return;
         clearRbfReview();
-        await transactionTrackingController.refresh(session);
+        await transactionTrackingController.showSigned(session, result.reservation.lifecycleId);
         if (!walletNetworkController.isCurrent(session)) return;
         await recoverTransactionBroadcasts(session.walletId);
         if (!walletNetworkController.isCurrent(session)) return;
         // Only a fresh network scan changes balances or removes the old mempool
         // row. Never optimistically add the replacement on top of its original.
-        await syncTransparentNetwork(true, { force: true, rescanGap: true, silent: true });
+        startBroadcastReconciliation([result.signed.txid], session);
       } catch (caught) {
         if (walletNetworkController.isCurrent(session) && (persisted || isCurrent())) showReplacementError(caught);
       }
@@ -2573,7 +2623,7 @@ function WalletApp({ theme, onSelectTheme }: {
       }));
       const previewChange = await deriveHdAddress(
         wallet.mnemonic,
-        'taproot',
+        changeAccountForRecipients(outputs.map(({ address }) => address)),
         'internal',
         0,
       );
@@ -2631,7 +2681,7 @@ function WalletApp({ theme, onSelectTheme }: {
       try {
         const previewChange = await deriveHdAddress(
           wallet.mnemonic,
-          'taproot',
+          changeAccountForRecipients(sendRecipients.map(({ address }) => address)),
           'internal',
           0,
         );
@@ -2731,9 +2781,10 @@ function WalletApp({ theme, onSelectTheme }: {
         return;
       }
       const preview = preparedTx;
+      const changeAccount = changeAccountForRecipients(preview.recipients.map(({ address }) => address));
       let changeAddress = (await deriveHdAddress(
         activeWallet.mnemonic,
-        'taproot',
+        changeAccount,
         'internal',
         0,
       )).address;
@@ -2741,25 +2792,27 @@ function WalletApp({ theme, onSelectTheme }: {
       if (preview.changeUsed) {
         const requirements = await loadHdAddressRequirements(activeWallet.walletId);
         const highestIssuedIndex = requirements.find((requirement) => (
-          requirement.accountKey === 'taproot' && requirement.branch === 'internal'
+          requirement.accountKey === changeAccount && requirement.branch === 'internal'
         ))?.highestIssuedIndex ?? -1;
-        const range = internalTaprootReservationRange({
+        const range = internalReservationRange({
           snapshot: activeSnapshot,
+          accountKey: changeAccount,
           highestIssuedIndex,
           count: 1,
         });
-        const [reserved] = await reserveInternalTaprootTransactions({
+        const [reserved] = await reserveInternalTransactions({
           walletId: activeWallet.walletId,
+          accountKey: changeAccount,
           purpose: 'send',
           count: 1,
           ...range,
         });
         if (!reserved || reserved.addressIndex === null) {
-          throw new Error('Internal Taproot reservation is incomplete.');
+          throw new Error('Internal address reservation is incomplete.');
         }
         const derived = await deriveHdAddress(
           activeWallet.mnemonic,
-          'taproot',
+          changeAccount,
           'internal',
           reserved.addressIndex,
         );
@@ -2796,7 +2849,7 @@ function WalletApp({ theme, onSelectTheme }: {
         rebuilt.changeUsed
         && !rebuilt.walletOutputs.some((output) => output.address === changeAddress)
       ) {
-        throw new Error('Reserved internal Taproot address is missing from the transaction.');
+        throw new Error('Reserved internal address is missing from the transaction.');
       }
       const signingSnapshot = networkRef.current.snapshot;
       if (!signingSnapshot) throw new Error('Wallet snapshot unavailable before signing.');
@@ -2814,7 +2867,7 @@ function WalletApp({ theme, onSelectTheme }: {
       setPreparedTx(null);
       setPreparedConsolidation(null);
       if (!walletNetworkController.isCurrent(session)) return;
-      await transactionTrackingController.refresh(session);
+      await transactionTrackingController.showSigned(session, lifecycle.lifecycleId);
       const transaction = { ...signed, recipients: rebuilt.recipients };
       const recovery = await recoverTransactionBroadcasts(activeWallet.walletId);
       if (!recovery.publishedTxids.includes(transaction.txid)) {
@@ -2934,12 +2987,12 @@ function WalletApp({ theme, onSelectTheme }: {
           requirement.accountKey === 'taproot' && requirement.branch === 'internal'
         ))?.highestIssuedIndex ?? -1;
         const count = preparedConsolidation.transactions.length;
-        const range = internalTaprootReservationRange({
+        const range = internalReservationRange({
           snapshot: activeSnapshot,
           highestIssuedIndex,
           count,
         });
-        const reservations = await reserveInternalTaprootTransactions({
+        const reservations = await reserveInternalTransactions({
           walletId: activeWallet.walletId,
           purpose: 'consolidation',
           count,
@@ -3024,7 +3077,12 @@ function WalletApp({ theme, onSelectTheme }: {
               transaction.txid,
               transaction.hex,
             );
-            await transactionTrackingController.refresh(session);
+            // Open once for this user action. Later signatures must respect Close.
+            if (reservation === reservations[0]) {
+              await transactionTrackingController.showSigned(session, reservation.lifecycleId);
+            } else {
+              await transactionTrackingController.refresh(session);
+            }
           },
           broadcastPersisted: async (_item, transaction) => {
             if (!walletNetworkController.isCurrent(session)) {
@@ -3643,7 +3701,7 @@ function WalletApp({ theme, onSelectTheme }: {
           pendingAction={pendingAction}
           actionLocked={actionLocked}
           addressBusy={receiveAddressBusy}
-          networkReady={network.status === 'connected' && Boolean(network.snapshot)}
+          networkReady={Boolean(network.snapshot) && network.status !== 'error'}
           onSelectFamily={(accountKey) => { void selectReceiveAddressFamily(accountKey); }}
           onCreateAddress={() => { void createNewReceiveAddress(); }}
           onCopyAddress={() => { void copyAddressToClipboard(); }}
@@ -3970,14 +4028,31 @@ function WalletApp({ theme, onSelectTheme }: {
         onConfirmReplacement={() => { void confirmReplacement(); }}
         onCancelReplacement={clearRbfReview}
         tracking={transactionTracking}
-        feedbackError={error}
+        feedbackError={replacementError}
         network={network}
         visible={screen === 'wallet' && transactionTracking.walletId === wallet?.walletId && Boolean(transactionTracking.window?.open)}
         t={t}
         onActivity={registerActivity}
-        onExplorer={(txid) => { void openTransactionExplorerWithFeedback(txid); }}
+        onExplorer={(txid) => {
+          void openTransactionExplorer(txid).catch((caught) => {
+            setReplacementError(translatedErrorMessage(
+              caught, t, t('errors.explorerUnavailable'), 'tracked transaction explorer opening',
+            ));
+          });
+        }}
+        onCopyTxid={async (txid) => {
+          try {
+            await Clipboard.setStringAsync(txid);
+            return true;
+          } catch (caught) {
+            reportNonFinancialFailure('transaction identifier copy', caught);
+            setReplacementError(t('tracking.copyFailed'));
+            return false;
+          }
+        }}
         onWindowChange={(lifecycleId, open) => {
           clearRbfReview();
+          setReplacementError('');
           const session = walletNetworkController.sessions.capture();
           if (session) void transactionTrackingController.setWindow(session, { lifecycleId, open });
         }}

@@ -3,6 +3,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { sqliteTestConnection } from '../test/sqliteTestConnection';
+import { HD_ACCOUNT_TEMPLATES, deriveHdPath } from '../wallet/hdAddress';
 
 const sqlite = vi.hoisted(() => ({ openDatabaseAsync: vi.fn() }));
 vi.mock('expo-sqlite', () => sqlite);
@@ -27,7 +28,7 @@ afterEach(async () => {
 });
 
 const reserve = async () => {
-  const [record] = await store.reserveInternalTaprootTransactions({ walletId, purpose: 'send', count: 1, minimumIndex: 0, maximumIndex: 19 });
+  const [record] = await store.reserveInternalTransactions({ walletId, purpose: 'send', count: 1, minimumIndex: 0, maximumIndex: 19 });
   await store.attachInternalTransactionAddresses(walletId, [{ lifecycleId: record!.lifecycleId, address: `nito1ptest${record!.addressIndex}` }]);
   return record!;
 };
@@ -57,7 +58,7 @@ describe('real SQLite transaction lifecycle and replacement persistence', () => 
     expect((await store.loadWalletHistoryCache(walletId)).history[0]).toMatchObject({ txid, amountSats: 123, feeSats: 4 });
   });
 
-  it('reserves unique indices concurrently and preserves signed data and the window across restart', async () => {
+  it('reserves unique indices concurrently and preserves signatures without restoring a popup', async () => {
     const records = await Promise.all([reserve(), reserve(), reserve()]);
     expect(records.map((record) => record.addressIndex)).toEqual([0, 1, 2]);
     await store.markTransactionLifecycleSigned(walletId, records[1]!.lifecycleId, txid, '00ff');
@@ -66,7 +67,7 @@ describe('real SQLite transaction lifecycle and replacement persistence', () => 
     vi.resetModules();
     store = await import('./walletHistoryDb');
     expect((await store.loadTransactionLifecycles(walletId))[1]).toMatchObject({ state: 'signed', rawTxHex: '00ff', txid });
-    expect((await store.loadTransactionTracking(walletId)).window).toEqual({ lifecycleId: records[1]!.lifecycleId, open: true });
+    expect((await store.loadTransactionTracking(walletId)).window).toBeNull();
     expect((await reserve()).addressIndex).toBe(3);
   });
 
@@ -83,19 +84,58 @@ describe('real SQLite transaction lifecycle and replacement persistence', () => 
     expect(records[1]).toMatchObject({ state: 'signed', replacement });
     expect(records[2]).toMatchObject({ state: 'reserved', rawTxHex: null });
     expect(await store.recordTransactionLifecycleBroadcastInvocation(walletId, first.lifecycleId, 1000)).toBeNull();
-    expect((await store.loadTransactionTracking(walletId)).window?.lifecycleId).toBe(left.lifecycleId);
+    expect((await store.loadTransactionTracking(walletId)).records.map((record) => record.lifecycleId)).toContain(left.lifecycleId);
   });
 
-  it('rolls back the relation and signature if opening the tracking window fails', async () => {
+  it('rolls back the replacement relation if persisting its signature fails', async () => {
     const first = await original();
     const next = await reserve();
-    await connection.execAsync(`CREATE TRIGGER fail_tracking BEFORE UPDATE ON wallet_transaction_tracking
+    await connection.execAsync(`CREATE TRIGGER fail_signature BEFORE UPDATE ON wallet_transaction_lifecycle
+      WHEN NEW.state = 'signed'
       BEGIN SELECT RAISE(ABORT, 'test interruption'); END;`);
     await expect(store.markTransactionLifecycleSigned(walletId, next.lifecycleId, 'cd'.repeat(32), '11ff',
       { originalLifecycleId: first.lifecycleId, originalTxid: txid, mode: 'cancel' })).rejects.toThrow();
     expect(await connection.getAllAsync('SELECT * FROM wallet_transaction_replacements')).toEqual([]);
     expect((await store.loadTransactionLifecycles(walletId))[1]).toMatchObject({ state: 'reserved', rawTxHex: null });
     expect((await reserve()).addressIndex).toBe(2);
+  });
+
+  it('reserves and restores independent durable sequences for all four change families without touching legacy data', async () => {
+    const legacy = await reserve();
+    await store.markTransactionLifecycleSigned(walletId, legacy.lifecycleId, txid, '00ff');
+    const before = (await store.loadTransactionLifecycles(walletId))[0];
+    const results = await Promise.all(HD_ACCOUNT_TEMPLATES.flatMap(({ key }) => [0, 1].map(async () => {
+      const [record] = await store.reserveInternalTransactions({ walletId, accountKey: key, purpose: 'send', count: 1, minimumIndex: 0, maximumIndex: 19 });
+      return { key, record: record! };
+    })));
+    for (const { key } of HD_ACCOUNT_TEMPLATES) {
+      expect(results.filter((item) => item.key === key).map((item) => item.record.addressIndex))
+        .toEqual(key === 'taproot' ? [1, 2] : [0, 1]);
+    }
+    await connection.close();
+    connection = sqliteTestConnection(join(directory, 'public.db'));
+    vi.resetModules();
+    store = await import('./walletHistoryDb');
+    const restored = await store.loadTransactionLifecycles(walletId);
+    expect(restored.find((record) => record.lifecycleId === legacy.lifecycleId)).toEqual(before);
+    for (const { key, record } of results) {
+      expect(restored.find((item) => item.lifecycleId === record.lifecycleId)?.derivationPath)
+        .toBe(deriveHdPath(key, 'internal', record.addressIndex!));
+    }
+    // Existing persisted UI rows cannot reopen the new session-local window.
+    await connection.runAsync('INSERT INTO wallet_transaction_tracking VALUES (?, ?, 1)', walletId, legacy.lifecycleId);
+    expect((await store.loadTransactionTracking(walletId)).window).toBeNull();
+  });
+
+  it.each(HD_ACCOUNT_TEMPLATES)('enforces the durable gap limit and validates the internal path for $key', async ({ key }) => {
+    const args = { walletId, accountKey: key, purpose: 'send' as const, count: 2, minimumIndex: 0, maximumIndex: 1 };
+    const records = await store.reserveInternalTransactions(args);
+    await expect(store.reserveInternalTransactions({ ...args, count: 1 })).rejects.toThrow();
+    expect(await store.loadTransactionLifecycles(walletId)).toHaveLength(2);
+    expect((await store.loadHdAddressRequirements(walletId)).find((item) => item.accountKey === key)?.highestIssuedIndex).toBe(1);
+    await connection.runAsync('UPDATE wallet_transaction_lifecycle SET derivation_path = ? WHERE lifecycle_id = ?',
+      deriveHdPath(key, 'external', 0), records[0]!.lifecycleId);
+    await expect(store.loadTransactionLifecycles(walletId)).rejects.toThrow();
   });
 
   it.each(['original', 'replacement'])('reconciles %s winning without ever writing a balance', async (winner) => {

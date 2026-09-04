@@ -14,7 +14,9 @@ import type {
   NitoWalletCryptoApi,
 } from '../native/nitoWalletCryptoContract';
 import { isTransparentUtxoSpendable } from './coinbaseMaturity';
+import { chooseCoinSelection, type CoinSelectionCost } from './coinSelection';
 import type { ScannedAddress, TransparentWalletSnapshot } from './transparentScan';
+import type { HdAccountKey } from './hdAddress';
 
 export const NITO_SIGNER_NETWORK = {
   bech32: 'nito',
@@ -30,6 +32,22 @@ export const NITO_SIGNER_NETWORK = {
 export const DEFAULT_FEE_PER_VBYTE = 2n;
 export const DUST_LIMIT_SATS = 546n;
 export const RBF_SEQUENCE = 0xffff_fffd;
+
+/** Bitcoin Core v30 TransactionChangeType, with all four internal families available.
+ * No external recipient (consolidation/cancellation) defaults to Taproot.
+ * A P2SH recipient is opaque. Only our own change is known to wrap P2WPKH. */
+export const changeAccountForRecipients = (addresses: readonly string[]): HdAccountKey => {
+  const types = new Set(addresses.map((address) => {
+    const decoded = btc.Address(NITO_SIGNER_NETWORK).decode(address.trim());
+    if (!decoded) throw new Error('Invalid recipient address.');
+    return decoded.type;
+  }));
+  if (types.has('tr')) return 'taproot';
+  if (types.has('wpkh') || types.has('wsh')) return 'bech32';
+  if (types.has('sh')) return 'nested';
+  if (types.has('pkh')) return 'legacy';
+  return 'taproot';
+};
 
 export type TransparentSendErrorCode =
   | 'invalid-amount-format'
@@ -310,18 +328,56 @@ const selectSpend = ({
 }) => {
   const inputs = spendable.map((utxo) => cloneInput(utxo.input)) as Parameters<typeof btc.selectUTXO>[0];
 
-  return btc.selectUTXO(
-    inputs,
-    outputs.map((output) => ({ address: output.address.trim(), amount: output.amount })),
-    'default',
-    {
-      changeAddress,
-      feePerByte: feePerVbyte,
-      bip69: true,
-      createTx: true,
-      network: NITO_SIGNER_NETWORK,
-    },
-  );
+  const recipients = outputs.map((output) => ({ address: output.address.trim(), amount: output.amount }));
+  const options = {
+    changeAddress,
+    feePerByte: feePerVbyte,
+    bip69: true,
+    createTx: true,
+    network: NITO_SIGNER_NETWORK,
+  };
+  type Selection = NonNullable<ReturnType<typeof btc.selectUTXO>>;
+  const candidates: (CoinSelectionCost & { selection: Selection })[] = [];
+  const consider = (candidate: Selection | undefined) => {
+    if (!candidate?.tx) return;
+    candidates.push({
+      selection: candidate,
+      feeSats: candidate.tx.fee,
+      inputCount: candidate.inputs.length,
+      inputValueSats: candidate.outputs.reduce((total, output) => total + output.amount, 0n) + candidate.tx.fee,
+    });
+  };
+  // Preserve the existing candidate, then compare one greedy alternative and
+  // sufficient single inputs. Never search subsets exponentially or prefer dust
+  // merely because it is small. All fees/dust/weights still come from the library.
+  consider(btc.selectUTXO(inputs, recipients, 'default', options));
+  consider(btc.selectUTXO(inputs, recipients, 'accumBiggest', options));
+  const groups = new Map<string, number[]>();
+  spendable.forEach((item, index) => {
+    const group = groups.get(item.signer.scriptType) ?? [];
+    group.push(index);
+    groups.set(item.signer.scriptType, group);
+  });
+  for (const group of groups.values()) {
+    group.sort((a, b) => spendable[a]!.valueSats - spendable[b]!.valueSats);
+    // Within a script family input weights are identical. Funding and creating
+    // viable change are monotone in value, so two binary searches suffice.
+    for (const requireChange of [false, true]) {
+      let low = 0;
+      let high = group.length - 1;
+      while (low <= high) {
+        const middle = Math.floor((low + high) / 2);
+        const candidate = btc.selectUTXO([inputs[group[middle]!]!], recipients, 'default', options);
+        if (candidate?.tx && (!requireChange || candidate.change)) {
+          consider(candidate);
+          high = middle - 1;
+        } else {
+          low = middle + 1;
+        }
+      }
+    }
+  }
+  return chooseCoinSelection(candidates)?.selection;
 };
 
 type CalculateMaxTransparentSendAmountArgs = {

@@ -27,6 +27,7 @@ import coinbaseSource from './wallet/coinbaseMaturity.ts?raw';
 import historyDbSource from './services/walletHistoryDb.ts?raw';
 import historyEnrichmentQueueSource from './services/historyEnrichmentQueue.ts?raw';
 import networkControllerSource from './services/walletNetworkController.ts?raw';
+import observationSource from './services/transactionObservation.ts?raw';
 import exclusiveActionGateSource from './services/exclusiveActionGate.ts?raw';
 import vaultSessionMachineSource from './services/vaultSessionMachine.ts?raw';
 import expoConfig from '../app.config.js?raw';
@@ -211,7 +212,7 @@ describe('mobile wallet UX and security invariants', () => {
     expect(appSource).toContain('startBroadcastReconciliation([txid], session)');
     expect(appSource).toContain('startBroadcastReconciliation(reconciliationTxids, session)');
     expect(appSource).toMatch(
-      /reconcileBroadcasts\(txids, session\)\.catch\(reportNetworkFailure\)/,
+      /reconcileBroadcasts\(txids, session\)\.catch\(\(caught\) => \{\s*if \(walletNetworkController\.isCurrent\(session\)\) reportNetworkFailure\(caught\);/,
     );
     expect(appSource).toContain('processHistoryEnrichmentPasses({');
     expect(appSource).toContain(
@@ -251,9 +252,11 @@ describe('mobile wallet UX and security invariants', () => {
   });
 
   it('bounds broadcast reconciliation and exposes transparent scan progress', () => {
-    expect(networkControllerSource).toMatch(
-      /mapWithConcurrency\(txids, BROADCAST_RECONCILIATION_CONCURRENCY,/,
-    );
+    expect(observationSource).toContain('attempt < 3');
+    expect(observationSource).toContain('await wait(3_000)');
+    expect(appSource).toContain('await observePublishedTransactions(');
+    expect(appSource).toContain('if (!options.postBroadcastObservation) await recoverTransactionBroadcasts(');
+    expect(observationSource).not.toMatch(/signPsbt|broadcastTransaction/);
     expect(networkControllerSource).toMatch(/scanWalletNetwork\(\{[\s\S]*?onProgress,/);
     expect(networkControllerSource).toContain('ports.setHistoryProgress({ done, total });');
     expect(networkControllerSource).toContain('includeHistory: true');
@@ -403,9 +406,9 @@ describe('mobile wallet UX and security invariants', () => {
       appSource.indexOf('const broadcastPreparedTx = async'),
       appSource.indexOf('const prepareTransparentConsolidation = async'),
     );
-    expect(sendFinal.indexOf('reserveInternalTaprootTransactions')).toBeGreaterThanOrEqual(0);
+    expect(sendFinal.indexOf('reserveInternalTransactions')).toBeGreaterThanOrEqual(0);
     expect(sendFinal.indexOf('signUnsignedTransparentTx')).toBeGreaterThan(
-      sendFinal.indexOf('reserveInternalTaprootTransactions'),
+      sendFinal.indexOf('reserveInternalTransactions'),
     );
     expect(sendFinal.indexOf('recoverTransactionBroadcasts')).toBeGreaterThan(
       sendFinal.indexOf('signUnsignedTransparentTx'),

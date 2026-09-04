@@ -1,6 +1,5 @@
 import {
   ElectrumSessionUnhealthyError,
-  isElectrumTransactionNotFoundError,
   type NitoElectrumClient,
 } from '../network/electrum';
 import type { NetworkState, Wallet } from '../ui/types';
@@ -18,7 +17,6 @@ import {
   type HistoryExportRecord,
 } from './historyExport';
 import type { OptionalCacheRead } from './cachePolicy';
-import { mapWithConcurrency } from './concurrency';
 import { createElectrumClient } from './electrumClientFactory';
 import {
   DirtyRequestQueue,
@@ -42,9 +40,8 @@ import type {
 import { userFacingErrorMessage } from './walletStorageError';
 
 const COINBASE_MATURITY = 101;
-const BROADCAST_RECONCILIATION_CONCURRENCY = 6;
 
-export type WalletSyncOptions = DirtySyncOptions;
+export type WalletSyncOptions = DirtySyncOptions & { postBroadcastObservation?: boolean };
 export type WalletNetworkHistoryPublicationMode = WalletHistoryPublicationMode | 'replace';
 
 export const createEmptyNetworkState = (): NetworkState => ({
@@ -550,6 +547,9 @@ export const synchronizeWalletNetwork = async (
       height: client?.blockHeight || fallbackNetwork.height || 0,
       fullHistoryEnabled: fallbackNetwork.fullHistoryEnabled,
     });
+    // Keep network health truthful. Only the bounded observer reports the
+    // transaction-specific failure, after its last read, not on every attempt.
+    if (options.postBroadcastObservation) throw caught;
     ports.setError(message);
   } finally {
     if (ports.controller.isCurrent(session)) {
@@ -561,34 +561,6 @@ export const synchronizeWalletNetwork = async (
   }
 };
 
-export const reconcileBroadcastTransactions = async ({
-  txids,
-  client,
-  isCurrent,
-}: {
-  txids: readonly string[];
-  client: NitoElectrumClient;
-  isCurrent: () => boolean;
-}): Promise<boolean> => {
-  if (txids.length === 0 || !isCurrent()) return false;
-  for (const delayMs of [250, 750, 1_500, 3_000]) {
-    await new Promise<void>((resolve) => setTimeout(resolve, delayMs));
-    if (!isCurrent()) return false;
-    try {
-      await mapWithConcurrency(txids, BROADCAST_RECONCILIATION_CONCURRENCY, async (txid) => {
-        await client.getTransactionHex(txid);
-      });
-      if (!isCurrent()) return false;
-      return true;
-    } catch (caught) {
-      if (!isElectrumTransactionNotFoundError(caught)) {
-        throw caught;
-      }
-      if (!isCurrent()) return false;
-    }
-  }
-  return false;
-};
 
 export class WalletNetworkController {
   readonly sessions = new WalletSessionGuard();

@@ -37,7 +37,7 @@ const setup = () => {
   return { sessions, session, ports, controller: new TransactionTrackingController(ports) };
 };
 
-describe('single persistent transaction window', () => {
+describe('single session-local transaction window with durable recovery', () => {
   it('distinguishes original winning from a later replacement winning in the same window', () => {
     const first = record({ lifecycleId: 'first', txid: 'first', state: 'published' });
     const second = record({ lifecycleId: 'second', txid: 'second', replacement: { originalLifecycleId: 'first', originalTxid: 'first', mode: 'accelerate' } });
@@ -86,218 +86,148 @@ describe('single persistent transaction window', () => {
     expect(transactionTrackingStage('confirmed')).toBe(4);
   });
 
-  it('restores the same selection after lock, unlock and a new controller instance', async () => {
+  it('restores signed records but ignores persisted visibility after lock or restart', async () => {
     const { controller, ports, session, sessions } = setup();
     await controller.restore(session);
-    expect(controller.getSnapshot().window).toEqual({ lifecycleId: 'first', open: true });
+    expect(controller.getSnapshot().window).toEqual({ lifecycleId: 'first', open: false });
+    await controller.showSigned(session, 'first');
+    expect(controller.getSnapshot().window?.open).toBe(true);
     sessions.invalidate();
     controller.reset();
     expect(controller.getSnapshot().records).toEqual([]);
     const reopened = sessions.begin('wallet');
     await controller.restore(reopened);
-    expect(controller.getSnapshot().window?.open).toBe(true);
+    expect(controller.getSnapshot().window?.open).toBe(false);
     const restarted = new TransactionTrackingController(ports);
     await restarted.restore(reopened);
-    expect(restarted.getSnapshot().window?.open).toBe(true);
-    await restarted.setWindow(reopened, { lifecycleId: 'first', open: false });
-    const restartedHidden = new TransactionTrackingController(ports);
-    await restartedHidden.restore(reopened);
-    expect(restartedHidden.getSnapshot().window?.open).toBe(false);
-    expect(restartedHidden.getSnapshot().records).toHaveLength(1);
+    expect(restarted.getSnapshot().window?.open).toBe(false);
+    expect(restarted.getSnapshot().records).toHaveLength(1);
+    expect(ports.writeWindow).not.toHaveBeenCalled();
   });
 
-  it('updates a single window in place for successive consolidation transactions', async () => {
+  it('updates successive consolidation records without reopening a hidden window', async () => {
     const { controller, session, ports } = setup();
     await controller.restore(session);
-    const second = record({ lifecycleId: 'second', txid: 'cd'.repeat(32), purpose: 'consolidation' });
+    await controller.showSigned(session, 'first');
+    await controller.setWindow(session, { lifecycleId: 'first', open: false });
     controller.update(session, record({ state: 'published' }), false);
-    controller.update(session, second, true);
-    controller.update(session, { ...second, state: 'broadcast-uncertain' }, false);
+    controller.update(session, record({ lifecycleId: 'second', txid: 'cd'.repeat(32) }), true);
+    ports.read.mockResolvedValue({ records: [record(), record({ lifecycleId: 'second' })], window: null });
+    await controller.refresh(session);
     expect(controller.getSnapshot().records).toHaveLength(2);
-    expect(controller.getSnapshot().inFlight.size).toBe(0);
-    await controller.setWindow(session, { lifecycleId: 'second', open: true });
-    expect(controller.getSnapshot().window).toEqual({ lifecycleId: 'second', open: true });
-    expect(ports.writeWindow).toHaveBeenCalledTimes(1);
+    expect(controller.getSnapshot().window?.open).toBe(false);
+    expect(ports.writeWindow).not.toHaveBeenCalled();
   });
 
-  it('rejects a delayed read and delayed recovery events from a previous session of the same wallet', async () => {
+  it('rejects a delayed read and recovery event from a previous session', async () => {
     const { controller, session, sessions, ports } = setup();
     const read = deferred<TransactionTrackingData>();
-    const started = deferred<void>();
-    ports.read.mockImplementationOnce(() => { started.resolve(); return read.promise; });
+    ports.read.mockReturnValueOnce(read.promise);
     const restoring = controller.restore(session);
-    await started.promise;
     sessions.invalidate();
     controller.reset();
     const reopened = sessions.begin('wallet');
     await controller.restore(reopened);
     controller.update(session, record({ state: 'confirmed' }), true);
-    read.resolve({ records: [], window: null });
+    read.resolve({ records: [], window: { lifecycleId: 'first', open: true } });
     await restoring;
     expect(controller.getSnapshot().records[0]?.state).toBe('signed');
-    expect(controller.getSnapshot().window?.open).toBe(true);
-  });
-
-  it('does not let a stale read overwrite a live recovery event or reopen a hidden window', async () => {
-    const { controller, session, ports } = setup();
-    await controller.restore(session);
-    const read = deferred<TransactionTrackingData>();
-    const started = deferred<void>();
-    ports.read.mockImplementationOnce(() => { started.resolve(); return read.promise; });
-    const refreshing = controller.refresh(session);
-    await started.promise;
-    controller.update(session, record({ state: 'published' }), false);
-    await controller.setWindow(session, { lifecycleId: 'first', open: false });
-    read.resolve({ records: [record()], window: { lifecycleId: 'first', open: true } });
-    await refreshing;
-    expect(controller.getSnapshot().records[0]?.state).toBe('published');
     expect(controller.getSnapshot().window?.open).toBe(false);
-  });
-
-  it('reports storage failure explicitly and never writes financial data or exposes signing payloads', async () => {
-    const { controller, session, ports } = setup();
-    await controller.restore(session);
-    controller.update(session, record(), true);
-    expect(controller.getSnapshot().records[0]).not.toHaveProperty('rawTxHex');
-    expect(controller.getSnapshot().records[0]).not.toHaveProperty('derivationPath');
-    ports.writeWindow.mockRejectedValueOnce(new Error('storage unavailable'));
-    await controller.setWindow(session, { lifecycleId: 'first', open: false });
-    expect(controller.getSnapshot().storageError).toBe(true);
-    expect(ports.reportError).toHaveBeenCalledTimes(1);
-    expect(ports.writeWindow).toHaveBeenCalledWith('wallet', { lifecycleId: 'first', open: false });
-    ports.read.mockRejectedValueOnce(new Error('read unavailable'));
-    await controller.refresh(session);
-    expect(controller.getSnapshot().records).toHaveLength(1);
-    expect(controller.getSnapshot().storageError).toBe(true);
   });
 
   it.each([
     { lifecycleId: 'first', open: false },
     { lifecycleId: 'second', open: true },
-  ])('preserves the user choice $lifecycleId / $open during a delayed SQLite write and concurrent refresh', async (window) => {
+  ])('preserves $lifecycleId / $open during concurrent reads of delayed legacy SQLite writes', async (window) => {
     const { controller, session, ports } = setup();
-    const data: TransactionTrackingData = {
-      records: [record(), record({ lifecycleId: 'second' })],
-      window: { lifecycleId: 'first', open: true },
-    };
-    ports.read.mockImplementation(async () => structuredClone(data));
+    ports.read.mockResolvedValue({ records: [record(), record({ lifecycleId: 'second' })], window: null });
     await controller.restore(session);
-    const started = deferred<void>();
-    const release = deferred<void>();
-    ports.writeWindow.mockImplementation(async (_walletId, next) => {
-      started.resolve();
-      await release.promise;
-      data.window = next;
-    });
-    const observed: typeof window[] = [];
-    controller.subscribe(() => {
-      const current = controller.getSnapshot().window;
-      if (current) observed.push(current);
-    });
-    const saving = controller.setWindow(session, window);
-    await started.promise;
+    const read = deferred<TransactionTrackingData>();
+    ports.read.mockReturnValueOnce(read.promise);
     const refreshing = controller.refresh(session);
-    // Signal completion of a concurrent read if the implementation starts one.
-    // No clock or arbitrary sleep is needed to expose the stale persisted value.
-    await Promise.resolve();
-    release.resolve();
-    await Promise.all([saving, refreshing]);
-    expect(observed.every((current) => current.lifecycleId === window.lifecycleId && current.open === window.open)).toBe(true);
+    await controller.setWindow(session, window);
+    read.resolve({ records: [record()], window: { lifecycleId: 'first', open: true } });
+    await refreshing;
     expect(controller.getSnapshot().window).toEqual(window);
-    expect(data.window).toEqual(window);
+    expect(ports.writeWindow).not.toHaveBeenCalled();
   });
 
-  it('serializes successive user actions and restores only the latest selection after concurrent refreshes', async () => {
+  it('retains the last of several immediate user choices across concurrent refreshes', async () => {
     const { controller, session, ports } = setup();
-    const data: TransactionTrackingData = { records: [record(), record({ lifecycleId: 'second' })], window: null };
-    ports.read.mockImplementation(async () => structuredClone(data));
+    ports.read.mockResolvedValue({ records: [record(), record({ lifecycleId: 'second' })], window: null });
     await controller.restore(session);
-    const releases = [deferred<void>(), deferred<void>(), deferred<void>()] as const;
-    const starts = [deferred<void>(), deferred<void>(), deferred<void>()] as const;
-    const choices = [
-      { lifecycleId: 'first', open: false },
-      { lifecycleId: 'second', open: true },
-      { lifecycleId: 'second', open: false },
-    ] as const;
-    let writes = 0;
-    const completed: number[] = [];
-    ports.writeWindow.mockImplementation(async (_walletId, window) => {
-      const index = writes++;
-      starts[index]!.resolve();
-      await releases[index]!.promise;
-      data.window = window;
-      completed.push(index);
-    });
-    const first = controller.setWindow(session, choices[0]);
-    await starts[0].promise;
-    const refreshFirst = controller.refresh(session);
-    const second = controller.setWindow(session, choices[1]);
-    const refreshSecond = controller.refresh(session);
-    const third = controller.setWindow(session, choices[2]);
-    const refreshThird = controller.refresh(session);
-    // Release the last operation first. It must still wait for earlier writes.
-    releases[2].resolve();
-    await Promise.resolve();
-    releases[0].resolve();
-    await starts[1].promise;
-    releases[1].resolve();
-    await Promise.all([first, second, third, refreshFirst, refreshSecond, refreshThird]);
-    expect(completed).toEqual([0, 1, 2]);
-    expect(controller.getSnapshot().window).toEqual(choices[2]);
-    const restarted = new TransactionTrackingController(ports);
-    await restarted.restore(session);
-    expect(restarted.getSnapshot().window).toEqual(choices[2]);
+    const reads = [deferred<TransactionTrackingData>(), deferred<TransactionTrackingData>()];
+    ports.read.mockReturnValueOnce(reads[0]!.promise).mockReturnValueOnce(reads[1]!.promise);
+    const first = controller.refresh(session);
+    await controller.setWindow(session, { lifecycleId: 'first', open: true });
+    const second = controller.refresh(session);
+    await controller.setWindow(session, { lifecycleId: 'second', open: true });
+    await controller.setWindow(session, { lifecycleId: 'second', open: false });
+    reads[1]!.resolve({ records: [record()], window: { lifecycleId: 'first', open: true } });
+    reads[0]!.resolve({ records: [record()], window: null });
+    await Promise.all([first, second]);
+    expect(controller.getSnapshot().window).toEqual({ lifecycleId: 'second', open: false });
   });
 
-  it('keeps a failed user choice visible with its error until a later save succeeds', async () => {
+  it('does not reopen when signing refresh finishes after the user closes the window', async () => {
     const { controller, session, ports } = setup();
     await controller.restore(session);
-    const failure = deferred<void>();
-    ports.writeWindow.mockReturnValueOnce(failure.promise);
-    const saving = controller.setWindow(session, { lifecycleId: 'first', open: false });
-    const refreshing = controller.refresh(session);
-    failure.reject(new Error('write failed'));
-    await Promise.all([saving, refreshing]);
-    await controller.refresh(session);
-    expect(controller.getSnapshot().window?.open).toBe(false);
-    expect(controller.getSnapshot().storageError).toBe(true);
+    const read = deferred<TransactionTrackingData>();
+    const started = deferred<void>();
+    ports.read.mockImplementationOnce(() => { started.resolve(); return read.promise; });
+    const showing = controller.showSigned(session, 'first');
+    await started.promise;
     await controller.setWindow(session, { lifecycleId: 'first', open: false });
-    await controller.refresh(session);
+    read.resolve({ records: [record()], window: { lifecycleId: 'first', open: true } });
+    await showing;
     expect(controller.getSnapshot().window?.open).toBe(false);
-    expect(controller.getSnapshot().storageError).toBe(false);
+  });
+
+  it('reports failed reads without losing data or exposing signed payloads', async () => {
+    const { controller, session, ports } = setup();
+    await controller.restore(session);
+    expect(controller.getSnapshot().records[0]).not.toHaveProperty('rawTxHex');
+    expect(controller.getSnapshot().records[0]).not.toHaveProperty('derivationPath');
+    ports.read.mockRejectedValueOnce(new Error('storage unavailable'));
+    await controller.refresh(session);
+    expect(controller.getSnapshot().storageError).toBe(true);
+    expect(controller.getSnapshot().records).toHaveLength(1);
     expect(ports.reportError).toHaveBeenCalledTimes(1);
   });
 
-  it('waits for already requested saves across lock and unlock without publishing into the old session', async () => {
-    const { controller, session, sessions, ports } = setup();
+  it('scopes failed observations by txid and clears them on success or lock', async () => {
+    const { controller, session, sessions } = setup();
     await controller.restore(session);
-    const started = deferred<void>();
-    const release = deferred<void>();
-    const save = ports.writeWindow.getMockImplementation()!;
-    ports.writeWindow.mockImplementationOnce(async (walletId, window) => {
-      started.resolve();
-      await release.promise;
-      await save(walletId, window);
-    });
-    const saving = controller.setWindow(session, { lifecycleId: 'first', open: false });
-    await started.promise;
+    controller.observationResult(session, ['first'], true);
+    expect([...controller.getSnapshot().observationFailures]).toEqual(['first']);
+    controller.observationResult(session, ['second'], false);
+    expect([...controller.getSnapshot().observationFailures]).toEqual(['first']);
+    controller.observationResult(session, ['first'], false);
+    expect(controller.getSnapshot().observationFailures.size).toBe(0);
     sessions.invalidate();
     controller.reset();
-    const reopened = sessions.begin('wallet');
-    const restoring = controller.restore(reopened);
-    await Promise.resolve();
-    release.resolve();
-    await Promise.all([saving, restoring]);
-    expect(controller.getSnapshot().window?.open).toBe(false);
-    expect(controller.getSnapshot().storageError).toBe(false);
+    controller.observationResult(session, ['first'], true);
+    expect(controller.getSnapshot().observationFailures.size).toBe(0);
   });
 
-  it('restores ongoing lot 3 records without requiring a vault migration', async () => {
-    const { controller, session, ports } = setup();
-    ports.read.mockResolvedValue({ records: [record(), record({ lifecycleId: 'reserved', state: 'reserved' })], window: null });
-    await controller.restore(session);
-    expect(controller.getSnapshot().records).toHaveLength(1);
-    expect(controller.getSnapshot().window).toEqual({ lifecycleId: 'first', open: true });
+  it.each(Object.entries({
+    "fr": ["En attente de détection dans la mempool.","Transaction présente dans la mempool, en attente de confirmation.","Transaction confirmée au bloc 1005010."],
+    "en": ["Waiting for the transaction to appear in the mempool.","Transaction in the mempool, awaiting confirmation.","Transaction confirmed in block 1005010."],
+    "de": ["Die Transaktion wurde noch nicht im Mempool erkannt.","Transaktion im Mempool, wartet auf Bestätigung.","Transaktion in Block 1005010 bestätigt."],
+    "es": ["Esperando a detectar la transacción en la mempool.","Transacción en la mempool, pendiente de confirmación.","Transacción confirmada en el bloque 1005010."],
+    "pt": ["Aguardando a detecção da transação na mempool.","Transação na mempool, aguardando confirmação.","Transação confirmada no bloco 1005010."],
+    "ru": ["Ожидание появления транзакции в мемпуле.","Транзакция в мемпуле, ожидает подтверждения.","Транзакция подтверждена в блоке 1005010."],
+    "zh": ["等待在内存池中检测到交易。","交易已在内存池中，等待确认。","交易已在区块 1005010 中确认。"],
+    "ja": ["メモリプールでの取引の検出を待っています。","取引はメモリプール内にあり、承認待ちです。","取引はブロック 1005010 で承認されました。"],
+    "tr": ["İşlemin mempool içinde görülmesi bekleniyor.","İşlem mempool içinde, onay bekleniyor.","İşlem 1005010 numaralı blokta onaylandı."],
+  }))('resolves the compact accepted, mempool and confirmed texts in %s', (code, expected) => {
+    const t = makeTranslator(code as (typeof LANGUAGES)[number]['code']);
+    expect((['accepted', 'mempool', 'confirmed'] as const).map((state) => t(`tracking.${state}Hint`, { height: 1005010 })))
+      .toEqual(expected);
+    for (const key of ['rbf.cancelHint', 'rbf.review', 'rbf.confirm', 'tracking.observationFailed', 'tracking.copyTxid'] as const) {
+      expect(t(key)).not.toBe(key);
+      expect(t(key)).not.toMatch(/[—;]/);
+    }
   });
 
   it('has translated distinct states and hints in every supported language', () => {
@@ -319,5 +249,14 @@ describe('single persistent transaction window', () => {
     expect(tracking).not.toMatch(/publishNetwork|setNetwork|saveWalletSnapshot|balanceSats|spendableSats/);
     expect(app).toContain('transactionTrackingController.restore(trackingSession)');
     expect(app).toContain('transactionTrackingController.reset()');
+    expect(app).toContain('if (reservation === reservations[0])');
+    expect(app).toContain('feedbackError={replacementError}');
+    const window = readFileSync(new URL('../ui/TransactionTrackingWindow.tsx', import.meta.url), 'utf8');
+    expect(window).not.toContain("'rbf.accelerate'");
+    expect(window).not.toContain("'tracking.attempts'");
+    expect(window).not.toContain("'tracking.consolidationHint'");
+    expect(window).not.toContain("'rbf.return'");
+    expect(window).toContain('shortAddress(displayedTxid)');
+    expect(window).toContain('onCopyTxid(displayedTxid)');
   });
 });

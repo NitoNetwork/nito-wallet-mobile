@@ -8,16 +8,26 @@ No release tag should precede successful device validation.
 
 - Taproot is the default receive address. Legacy, P2SH and Bech32 remain available.
 - Additional HD addresses can be issued within the recovery gap limit.
-- Internal Taproot addresses are reserved atomically before signing, with one
-  address per transaction, including individual consolidation transactions.
+- Change addresses follow Bitcoin Core v30 recipient-type priority: Taproot,
+  native SegWit, P2SH, then Legacy. Each internal address is reserved atomically
+  before signing. Consolidations and cancellation attempts retain Taproot.
+- Input selection allows at most 25 percent above the cheapest compared
+  candidate, capped at 1,000 extra nitoshis and rounded down. Within that fixed
+  ceiling, fewer inputs win, then the smaller sufficient total, then lower fees.
 - The financial preview is unsigned. Changed inputs, outputs or fees require
   another confirmation before signing.
 - Signed transactions and retry state survive locking and application restart.
 - One transaction window follows sending, planned retries, server acceptance,
   mempool observation, confirmation and unresolved outcomes.
-- RBF can increase the fee without reducing recipients' payments. Cancellation
-  attempts instead send the funds to a new internal address. The original can
-  still confirm first. The window identifies whichever transaction confirms.
+- Closing, locking or restarting does not automatically reopen the window.
+  Signed transaction recovery remains durable and independent of visibility.
+- Cancellation attempts send the funds to a new internal address. The original
+  can still confirm first. The compact window identifies the confirmed winner.
+  The manual acceleration button has been removed.
+- Post-broadcast observation makes up to three read attempts, spaced three
+  seconds apart. These reads never sign or broadcast another transaction.
+- New receive addresses become usable after local reservation and derivation.
+  Their network refresh is queued independently, including during another scan.
 
 ## Compatibility and storage
 
@@ -45,7 +55,8 @@ Core's `src/policy/rbf.cpp`.
 - A conservative size bound is checked against the signed transaction. The
   rate is capped at 10,000 nitoshis per virtual byte, as in the web wallet.
 - An unavailable or invalid fee estimate is an explicit refusal, not a silently
-  invented network estimate. Acceleration requires identifiable internal change.
+  invented network estimate. Existing signed acceleration records can still
+  recover, but the interface offers cancellation only.
 - Already signed replacements can resume if the server forgot the original.
   Confirmed originals prevent further replacement broadcasts.
 - Five actual broadcasts are allowed, with retry delays of 15 seconds, one
@@ -63,12 +74,13 @@ Clippy and tests, and both Metro production exports.
 
 The SQLite tests use Python's standard SQLite implementation with the actual
 application SQL and write queue. They do not replace testing Expo's native
-SQLite bridge on Android and iOS. JavaScript signing fixtures and native Rust
-unit tests do not establish network acceptance of the final device builds.
+SQLite bridge on Android and iOS. Integration tests exercise the real Rust C ABI
+for all four change families, their later spending and cancellation. Local tests
+do not establish network acceptance of the final device builds.
 
-At preparation on 4 September 2026, the npm audit API timed out. That audit
-remains unverified until a complete response is obtained. A timeout is never
-zero vulnerabilities. The existing workflow audit gate is unchanged.
+The earlier npm audit timeout was resolved. The latest raw production audit on
+4 September 2026 returned zero known vulnerabilities. A future timeout remains
+unverified, never zero vulnerabilities. The workflow audit gate is unchanged.
 
 No local regtest node is used, at the owner's request. No workflow is launched
 as part of this preparation.
@@ -80,18 +92,31 @@ as part of this preparation.
 - [ ] Create and import wallets. Verify Taproot default, all four address types,
       QR codes, distinct empty HD addresses and recovery near the gap boundary.
 - [ ] Receive and spend using all four families. Send to multiple recipients.
-      Check amounts, fees, change and internal transaction formatting.
+      Check amounts, fees, automatic change type and internal transaction
+      formatting, including mixed recipient families.
+- [ ] With spendable coins of 2000, 0.1 and 200 NITO, send 0.09 NITO. At equal
+      input cost the 0.1 coin must be selected. A large payment must not collect
+      small coins unnecessarily. Check exact fees and the Max button.
+- [ ] Compare a smaller input with slightly higher fees against a larger cheaper
+      input. The smaller input is allowed up to the fixed 25 percent / 1,000
+      nitoshi ceiling, but never one nitoshi above it. Verify the reviewed fee.
 - [ ] Confirm that each consolidation transaction uses a different internal
-      address, and retains its output split when accelerated.
+      Taproot address. Closing its window must remain effective for later
+      transactions in the same batch.
 - [ ] Interrupt after reservation, signing, persistence and network acceptance.
       Lock and restart. Confirm that saved signed transactions resume once,
       without a second payment or reuse of an internal index.
 - [ ] Hide and reopen the tracking window while writes or refreshes are in
-      flight. Restart and verify the saved visibility and selection.
+      flight. Lock and restart. The window must stay closed while signed
+      transactions resume. Verify that old saved visibility is ignored.
 - [ ] Observe all seven tracking states, including a failed final retry. Restore
       the network after a lost broadcast response and check idempotent recovery.
-- [ ] Accelerate an unconfirmed send. Recipients and amounts must stay unchanged.
-      Confirm the replacement, with no duplicate original in financial history.
+- [ ] Simulate delayed indexing and failed post-broadcast reads. Verify three
+      attempts spaced three seconds apart, no duplicate broadcasts, and no
+      transaction-failed message when only observation is unavailable.
+- [ ] Issue multiple receive addresses while a scan is active. Copy and create
+      become available as soon as the local address is displayed. Their scan
+      must not be lost and the recovery gap limit must remain enforced.
 - [ ] Attempt cancellation to a fresh internal Taproot address. Test both races:
       replacement confirms first, and original confirms first. Verify the
       displayed result, transaction ID, final balance and network fee.

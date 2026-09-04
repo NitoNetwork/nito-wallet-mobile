@@ -21,10 +21,12 @@ transactions and new blocks, and to broadcast signed transactions.
 - Send to multiple recipients in one transparent transaction with local signing
   and a review step.
 - Consolidate many small outputs into a few equal-value outputs.
-- Use a newly reserved internal Taproot address for each transaction's change.
+- Choose the change address type from recipients, using a new internal address.
+- Prefer fewer and smaller sufficient inputs within a fee tolerance of 25 percent,
+  capped at 1,000 nitoshis above the cheapest compared selection.
 - Resume saved signed transactions after locking or restarting the app.
-- Follow sending, mempool observation and confirmation in one restorable window.
-- Accelerate an eligible unconfirmed transaction or attempt cancellation with RBF.
+- Follow sending, mempool observation and confirmation in one session-only window.
+- Attempt cancellation of an eligible unconfirmed transaction with RBF.
 - Import the full transaction history automatically, with each entry's amount
   and direction (received, sent or internal).
 - Manually clear and resynchronize the full transaction history.

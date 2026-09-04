@@ -12,6 +12,7 @@ import {
 } from './walletNetworkController';
 import { needsHistoryEnrichment } from './walletHistory';
 import { WalletStorageError } from './walletStorageError';
+import { observePublishedTransactions } from './transactionObservation';
 
 const transparentScanMocks = vi.hoisted(() => ({
   refreshKnownUsedAddresses: vi.fn(),
@@ -79,6 +80,50 @@ const client = {
 } as unknown as NitoElectrumClient;
 
 describe('WalletNetworkController', () => {
+  it.each(['recovers', 'offline', 'storage'] as const)('keeps snapshot ownership and retries post-broadcast reads without premature global feedback: %s', async (scenario) => {
+    const controller = new WalletNetworkController();
+    controller.beginWalletSession(wallet.walletId);
+    let current: NetworkState = { ...network, status: 'connected' };
+    const connect = vi.fn(async () => undefined);
+    const offline = new Error('offline');
+    if (scenario === 'offline') connect.mockRejectedValue(offline);
+    if (scenario === 'recovers') connect.mockRejectedValueOnce(offline).mockRejectedValueOnce(offline);
+    const saveSnapshot = vi.fn(async () => { if (scenario === 'storage') throw new WalletStorageError(); });
+    const setError = vi.fn();
+    const onFailure = vi.fn();
+    const wait = vi.fn(async (_ms: number) => { expect(onFailure).not.toHaveBeenCalled(); });
+    const result = await observePublishedTransactions({
+      isCurrent: () => true,
+      refresh: async () => {
+        await synchronizeWalletNetwork({
+          controller,
+          getWallet: () => wallet,
+          getNetwork: () => current,
+          getClient: () => ({ ...client, connect }) as unknown as NitoElectrumClient,
+          setClient: vi.fn(), actionPending: () => false,
+          readHistoryCache: async () => ({ status: 'hit', value: { history: [], fullHistoryHeight: 100 } }),
+          readHdAddressRequirements: async () => [],
+          saveHistory: vi.fn(), saveSnapshot,
+          publishNetwork: (next) => { current = next; },
+          setError, setHistorySyncing: vi.fn(), setHistoryProgress: vi.fn(), setBalanceRefreshing: vi.fn(),
+          finishSync: () => controller.finishSync(vi.fn()), messages,
+        }, true, { silent: true, postBroadcastObservation: true });
+        return true;
+      },
+      onFailure,
+      isRetryable: (error) => !(error instanceof WalletStorageError),
+      wait,
+    });
+    expect(result).toBe(scenario === 'recovers' ? 'observed' : 'failed');
+    expect(connect).toHaveBeenCalledTimes(scenario === 'storage' ? 1 : 3);
+    expect(wait.mock.calls).toEqual(scenario === 'storage' ? [] : [[3_000], [3_000]]);
+    expect(onFailure).toHaveBeenCalledTimes(scenario === 'recovers' ? 0 : 1);
+    expect(current.status).toBe(scenario === 'recovers' ? 'connected' : 'error');
+    expect(current.snapshot).toEqual(snapshot);
+    expect(setError).not.toHaveBeenCalled();
+    expect(controller.syncInFlight).toBe(false);
+  });
+
   it('cancels stale sessions, prefetches and deferred synchronization together', () => {
     const controller = new WalletNetworkController();
     const session = controller.beginWalletSession('wallet-a');

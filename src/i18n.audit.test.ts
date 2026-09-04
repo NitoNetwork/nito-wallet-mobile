@@ -11,6 +11,21 @@ import {
 import { tr } from './i18n/tr';
 
 describe('i18n coverage', () => {
+  it.each(LANGUAGES)('defines every compact transaction popup message directly in the $code dictionary', ({ code }) => {
+    const keys = [
+      'tracking.acceptedHint', 'tracking.mempoolHint', 'tracking.confirmedHint',
+      'tracking.hide', 'tracking.observationFailed', 'tracking.copyTxid', 'tracking.copied', 'tracking.copyFailed',
+      'rbf.review', 'rbf.cancelHint', 'rbf.confirm',
+    ] as const;
+    for (const key of keys) {
+      const dictionary = TRANSLATIONS[code];
+      expect(Object.hasOwn(dictionary, key), `${code}:${key}`).toBe(true);
+      expect(dictionary[key].trim().length, `${code}:${key}`).toBeGreaterThan(0);
+      expect(makeTranslator(code)(key, { height: 1005010 })).toBe(dictionary[key].replaceAll('{height}', '1005010'));
+      if (code !== 'en') expect(dictionary[key], `${code}:${key}`).not.toBe(TRANSLATIONS.en[key]);
+    }
+  });
+
   it('does not instruct users to reimport their seed after a biometric unlock failure', () => {
     for (const { code } of LANGUAGES) {
       expect(TRANSLATIONS[code]).not.toHaveProperty('errors.biometricReimport');

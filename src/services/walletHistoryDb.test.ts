@@ -821,7 +821,7 @@ describe('wallet transaction output cache', () => {
     expect(db.runAsync).not.toHaveBeenCalled();
   });
 
-  it('persists the signed payload and window atomically, restores both and refuses writes after deletion', async () => {
+  it('persists signatures without UI state, restores public records and refuses writes after deletion', async () => {
     vi.resetModules();
     let row = {
       lifecycle_id: 'tracked', wallet_id: 'wallet-address', account_key: 'taproot', branch: 'internal',
@@ -829,10 +829,10 @@ describe('wallet transaction output cache', () => {
       state: 'reserved', txid: null as string | null, raw_tx_hex: null as string | null,
       recovery_attempts: 0, broadcast_invocations: 0, next_broadcast_attempt_at: null, last_broadcast_attempt_at: null,
     };
-    let window: { lifecycle_id: string; window_open: number } | null = null;
+    const window = { lifecycle_id: 'tracked', window_open: 1 };
     let exists = true;
-    let rollback: { row: typeof row; window: { lifecycle_id: string; window_open: number } | null } = { row: { ...row }, window };
-    let rejectWindow = true;
+    let rollback = structuredClone(row);
+    let rejectSignature = true;
     db.getFirstAsync.mockImplementation(async (sql: string) => {
       if (sql === 'PRAGMA user_version') return { user_version: 7 };
       if (sql.includes('FROM wallet_transaction_tracking')) return window;
@@ -843,39 +843,35 @@ describe('wallet transaction output cache', () => {
       sql.includes('FROM wallet_transaction_lifecycle') && exists && row.state !== 'reserved' ? [{ ...row }] : []
     ));
     db.execAsync.mockImplementation(async (sql: string) => {
-      if (sql === 'BEGIN IMMEDIATE TRANSACTION') rollback = structuredClone({ row, window });
-      if (sql === 'ROLLBACK') ({ row, window } = structuredClone(rollback));
+      if (sql === 'BEGIN IMMEDIATE TRANSACTION') rollback = structuredClone(row);
+      if (sql === 'ROLLBACK') row = structuredClone(rollback);
     });
     db.runAsync.mockImplementation(async (sql: string, ...params: unknown[]) => {
       if (sql.includes('UPDATE wallet_transaction_lifecycle')) {
+        if (rejectSignature) throw new Error('disk failure');
         row.state = String(params[0]); row.txid = String(params[1]); row.raw_tx_hex = String(params[2]);
       }
-      if (sql.includes('INSERT INTO wallet_transaction_tracking')) {
-        if (rejectWindow) throw new Error('disk failure');
-        window = { lifecycle_id: String(params[1]), window_open: Number(params[2]) };
-      }
+      if (sql.includes('wallet_transaction_tracking')) throw new Error('Unexpected popup persistence');
       return { changes: 1, lastInsertRowId: 0 };
     });
     const first = await import('./walletHistoryDb');
     await expect(first.markTransactionLifecycleSigned('wallet-address', 'tracked', 'ab'.repeat(32), '00ff')).rejects.toMatchObject({ name: 'WalletStorageError' });
     expect(row.state).toBe('reserved');
-    expect(window).toBeNull();
-    rejectWindow = false;
+    expect(window.window_open).toBe(1);
+    rejectSignature = false;
     await first.markTransactionLifecycleSigned('wallet-address', 'tracked', 'ab'.repeat(32), '00ff');
     expect(row.state).toBe('signed');
     vi.resetModules();
     const restarted = await import('./walletHistoryDb');
     const restored = await restarted.loadTransactionTracking('wallet-address');
-    expect(restored.window).toEqual({ lifecycleId: 'tracked', open: true });
+    expect(restored.window).toBeNull();
     expect(restored.records[0]).not.toHaveProperty('rawTxHex');
     const publicReads = db.getAllAsync.mock.calls.filter(([sql]) => sql.includes('ORDER BY created_at DESC'));
     expect(publicReads.length).toBeGreaterThan(0);
     for (const [sql] of publicReads) expect(sql).not.toContain('raw_tx_hex');
-    await restarted.saveTransactionTrackingWindow('wallet-address', { lifecycleId: 'tracked', open: false });
-    expect((await restarted.loadTransactionTracking('wallet-address')).window?.open).toBe(false);
     exists = false;
     db.runAsync.mockClear();
-    await expect(restarted.saveTransactionTrackingWindow('wallet-address', { lifecycleId: 'tracked', open: true })).rejects.toMatchObject({ name: 'WalletStorageError' });
+    await expect(restarted.markTransactionLifecycleSigned('wallet-address', 'tracked', 'ab'.repeat(32), '00ff')).rejects.toMatchObject({ name: 'WalletStorageError' });
     expect(db.runAsync).not.toHaveBeenCalled();
   });
 
@@ -902,7 +898,7 @@ describe('wallet transaction output cache', () => {
     });
     db.runAsync.mockImplementation(async (sql: string, ...params: unknown[]) => {
       if (sql.includes('INSERT INTO wallet_hd_sequences')) {
-        highestIssuedIndex = Number(params[1]);
+        highestIssuedIndex = Number(params[2]);
         events.push(`sequence:${highestIssuedIndex}`);
       }
       if (sql.includes('INSERT INTO wallet_transaction_lifecycle')) {
@@ -911,17 +907,17 @@ describe('wallet transaction output cache', () => {
       return { changes: 1, lastInsertRowId: 0 };
     });
     sqlite.openDatabaseAsync.mockResolvedValue(db);
-    const { reserveInternalTaprootTransactions } = await import('./walletHistoryDb');
+    const { reserveInternalTransactions } = await import('./walletHistoryDb');
 
     const [first, second] = await Promise.all([
-      reserveInternalTaprootTransactions({
+      reserveInternalTransactions({
         walletId: 'wallet-address',
         purpose: 'send',
         count: 1,
         minimumIndex: 0,
         maximumIndex: 19,
       }),
-      reserveInternalTaprootTransactions({
+      reserveInternalTransactions({
         walletId: 'wallet-address',
         purpose: 'send',
         count: 1,

@@ -21,7 +21,7 @@ import {
   confirmedTransactionFamilyMember,
 } from './transactionLifecycle';
 import type { CachedTransactionOutput } from './historyExport';
-import type { TransactionTrackingData, TransactionTrackingWindowState, TrackedTransaction } from './transactionTracking';
+import type { TransactionTrackingData, TrackedTransaction } from './transactionTracking';
 import { isDuplicateColumnError, retrySqliteWrite } from './sqliteReliability';
 import { runWalletStorageOperation } from './walletStorageError';
 import { normalizeWalletHistory } from './walletHistory';
@@ -498,12 +498,12 @@ const validateTransactionLifecycleRow = (
       || row.last_broadcast_attempt_at < 0
     ))
     || (row.address_index !== null && (
-      row.account_key !== 'taproot'
+      row.account_key === null || !isHdAccountKey(row.account_key)
       || row.branch !== 'internal'
       ||
       !Number.isSafeInteger(row.address_index)
       || row.address_index < 0
-      || row.derivation_path !== deriveHdPath('taproot', 'internal', row.address_index)
+      || row.derivation_path !== deriveHdPath(row.account_key as HdAccountKey, 'internal', row.address_index)
     ))
     || (row.address_index === null && (
       row.account_key !== null
@@ -530,14 +530,16 @@ const validateTransactionLifecycleRow = (
   };
 };
 
-export const reserveInternalTaprootTransactions = async ({
+export const reserveInternalTransactions = async ({
   walletId,
+  accountKey = 'taproot',
   purpose,
   count,
   minimumIndex,
   maximumIndex,
 }: {
   walletId: string;
+  accountKey?: HdAccountKey;
   purpose: TransactionLifecyclePurpose;
   count: number;
   minimumIndex: number;
@@ -555,13 +557,14 @@ export const reserveInternalTaprootTransactions = async ({
     ) {
       throw new Error('Invalid internal address reservation range.');
     }
+    if (!isHdAccountKey(accountKey)) throw new Error('Invalid internal address family.');
     const db = await openHistoryDb();
     return runWriteTransaction(db, async () => {
       const current = await db.getFirstAsync<HdSequenceRow>(
         `SELECT account_key, branch, highest_issued_index
          FROM wallet_hd_sequences
-         WHERE wallet_id = ? AND account_key = 'taproot' AND branch = 'internal'`,
-        walletId,
+         WHERE wallet_id = ? AND account_key = ? AND branch = 'internal'`,
+        walletId, accountKey,
       );
       const currentIndex = current ? validateHdSequenceRow(current).highestIssuedIndex : -1;
       const firstIndex = Math.max(currentIndex + 1, minimumIndex);
@@ -573,17 +576,18 @@ export const reserveInternalTaprootTransactions = async ({
       await db.runAsync(
         `INSERT INTO wallet_hd_sequences
            (wallet_id, account_key, branch, highest_issued_index, updated_at)
-         VALUES (?, 'taproot', 'internal', ?, ?)
+         VALUES (?, ?, 'internal', ?, ?)
          ON CONFLICT(wallet_id, account_key, branch) DO UPDATE SET
            highest_issued_index = excluded.highest_issued_index,
            updated_at = excluded.updated_at`,
         walletId,
+        accountKey,
         lastIndex,
         now,
       );
       const reservations: TransactionLifecycleRecord[] = [];
       for (let addressIndex = firstIndex; addressIndex <= lastIndex; addressIndex += 1) {
-        const derivationPath = deriveHdPath('taproot', 'internal', addressIndex);
+        const derivationPath = deriveHdPath(accountKey, 'internal', addressIndex);
         const idRow = await db.getFirstAsync<{ lifecycle_id: string }>(
           'SELECT lower(hex(randomblob(16))) AS lifecycle_id',
         );
@@ -592,9 +596,10 @@ export const reserveInternalTaprootTransactions = async ({
           `INSERT INTO wallet_transaction_lifecycle
              (lifecycle_id, wallet_id, account_key, branch, address_index, derivation_path, address,
               purpose, state, txid, raw_tx_hex, created_at, updated_at)
-           VALUES (?, ?, 'taproot', 'internal', ?, ?, NULL, ?, 'reserved', NULL, NULL, ?, ?)`,
+           VALUES (?, ?, ?, 'internal', ?, ?, NULL, ?, 'reserved', NULL, NULL, ?, ?)`,
           idRow.lifecycle_id,
           walletId,
+          accountKey,
           addressIndex,
           derivationPath,
           purpose,
@@ -747,10 +752,6 @@ const transitionTransactionLifecycle = async ({
       lifecycleId,
       walletId,
     );
-    // The signed payload and its restorable window commit together.
-    if (state === 'signed') {
-      await writeTransactionTrackingWindow(db, walletId, { lifecycleId, open: true });
-    }
   });
 });
 
@@ -940,36 +941,6 @@ const readTransactionReplacements = async (db: SQLite.SQLiteDatabase, walletId: 
   }));
 };
 
-const writeTransactionTrackingWindow = async (
-  db: SQLite.SQLiteDatabase,
-  walletId: string,
-  window: TransactionTrackingWindowState,
-): Promise<void> => {
-  await db.runAsync(
-    `INSERT INTO wallet_transaction_tracking (wallet_id, lifecycle_id, window_open)
-     VALUES (?, ?, ?)
-     ON CONFLICT(wallet_id) DO UPDATE SET
-       lifecycle_id = excluded.lifecycle_id, window_open = excluded.window_open`,
-    walletId, window.lifecycleId, window.open ? 1 : 0,
-  );
-};
-
-export const saveTransactionTrackingWindow = async (
-  walletId: string,
-  window: TransactionTrackingWindowState,
-): Promise<void> => runWalletStorageOperation('transaction tracking window write', async () => {
-  const db = await openHistoryDb();
-  await runWriteTransaction(db, async () => {
-    const record = await db.getFirstAsync<{ lifecycle_id: string }>(
-      `SELECT lifecycle_id FROM wallet_transaction_lifecycle
-       WHERE wallet_id = ? AND lifecycle_id = ? AND state != 'reserved'`,
-      walletId, window.lifecycleId,
-    );
-    // Never recreate tracking state after wallet deletion.
-    if (!record) throw new Error('Tracked transaction was not found.');
-    await writeTransactionTrackingWindow(db, walletId, window);
-  });
-});
 
 export const loadTransactionTracking = async (
   walletId: string,
@@ -982,14 +953,6 @@ export const loadTransactionTracking = async (
      ORDER BY created_at DESC, lifecycle_id DESC`,
     walletId,
   );
-  const window = await db.getFirstAsync<{ lifecycle_id: string; window_open: number }>(
-    'SELECT lifecycle_id, window_open FROM wallet_transaction_tracking WHERE wallet_id = ?',
-    walletId,
-  );
-  if (window && (
-    typeof window.lifecycle_id !== 'string'
-    || (window.window_open !== 0 && window.window_open !== 1)
-  )) throw new Error('Invalid transaction tracking window.');
   const replacements = await readTransactionReplacements(db, walletId);
   return {
     records: rows.map((row): TrackedTransaction => {
@@ -1012,7 +975,8 @@ export const loadTransactionTracking = async (
         replacement: replacements.get(row.lifecycle_id),
       };
     }),
-    window: window ? { lifecycleId: window.lifecycle_id, open: window.window_open === 1 } : null,
+    // Legacy window rows are deliberately ignored. No schema/vault rewrite needed.
+    window: null,
   };
 });
 

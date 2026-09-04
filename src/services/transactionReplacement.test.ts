@@ -67,7 +67,7 @@ describe('replacement confirmation and interruption boundaries', () => {
 
   it.each(LANGUAGES)('resolves the financial review and risk warnings in $code', ({ code }) => {
     const t = makeTranslator(code);
-    for (const key of ['rbf.cancelHint', 'rbf.raceHint', 'rbf.reviewChanged', 'rbf.otherConfirmed', 'rbf.error.confirmed'] as const) {
+    for (const key of ['rbf.cancelHint', 'rbf.reviewChanged', 'rbf.otherConfirmed', 'rbf.error.confirmed'] as const) {
       expect(t(key)).not.toBe(key);
       expect(t(key)).not.toMatch(/[—;]/);
       if (code !== 'en') expect(t(key)).not.toBe(makeTranslator('en')(key));

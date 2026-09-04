@@ -1,11 +1,14 @@
 import { describe, expect, it, vi } from 'vitest';
+import * as btc from '@scure/btc-signer';
 
 import { MAX_MONEY_SATS, MAX_NITO_AMOUNT_INPUT_LENGTH } from '../constants/nito';
 import type { TransparentWalletSnapshot } from './transparentScan';
 import { deriveP2wpkhAddress } from './transparentScan';
 import { createNitoWalletCryptoTestDouble } from '../test/nitoWalletCryptoTestDouble';
+import { deriveHdAddress, HD_ACCOUNT_TEMPLATES } from './hdAddress';
 import {
   DUST_LIMIT_SATS,
+  NITO_SIGNER_NETWORK,
   TransparentSendError,
   assertTransparentSendFitsAvailable,
   assertTransparentSendPlanMatches,
@@ -13,6 +16,7 @@ import {
   buildTransparentMultiSend,
   buildTransparentSend,
   calculateMaxTransparentSendAmount,
+  changeAccountForRecipients,
   estimateTransparentMultiSend,
   parseNitoAmountToSats,
   prepareUnsignedTransparentMultiSend,
@@ -21,6 +25,11 @@ import {
 
 const mnemonic = 'abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about';
 const crypto = createNitoWalletCryptoTestDouble();
+
+vi.mock('@scure/btc-signer', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@scure/btc-signer')>();
+  return { ...actual, selectUTXO: vi.fn(actual.selectUTXO) };
+});
 
 const makeSnapshot = async (): Promise<TransparentWalletSnapshot> => {
   const primary = await deriveP2wpkhAddress(mnemonic, 'external', 0, crypto);
@@ -59,6 +68,99 @@ const makeSnapshot = async (): Promise<TransparentWalletSnapshot> => {
 };
 
 describe('transparent send builder', () => {
+  it('chooses Core-compatible change for each family and mixed recipients independently of their order', async () => {
+    const addresses = await Promise.all(HD_ACCOUNT_TEMPLATES.map(({ key }) => deriveHdAddress(mnemonic, key, 'external', 0, crypto)));
+    for (const [index, address] of addresses.entries()) {
+      expect(changeAccountForRecipients([address.address])).toBe(address.accountKey);
+      const mixed = addresses.slice(0, index + 1).map((item) => item.address);
+      expect(changeAccountForRecipients(mixed)).toBe(address.accountKey);
+      expect(changeAccountForRecipients(mixed.reverse())).toBe(address.accountKey);
+    }
+    expect(changeAccountForRecipients([])).toBe('taproot');
+    const witnessScript = btc.Address(NITO_SIGNER_NETWORK).encode({ type: 'wsh', hash: new Uint8Array(32).fill(1) });
+    expect(changeAccountForRecipients([witnessScript])).toBe('bech32');
+    expect(() => changeAccountForRecipients(['invalid'])).toThrow();
+  });
+
+  it.each([9_000_000n, 19_000_000_000n, 210_000_000_000n])('selects a sufficient single input for %s without immobilizing an unnecessarily large coin', async (amountSats) => {
+    const snapshot = await makeSnapshot();
+    snapshot.utxos = [200_000_000_000, 10_000_000, 20_000_000_000].map((valueSats, index) => ({
+      ...snapshot.utxos[0]!, valueSats, txid: `${index + 1}`.repeat(64),
+    }));
+    snapshot.spendableSats = snapshot.utxos.reduce((sum, utxo) => sum + utxo.valueSats, 0);
+    const prepared = await prepareUnsignedTransparentMultiSend({ mnemonic, snapshot,
+      outputs: [{ address: snapshot.addresses[0]!.address, amountSats }], crypto });
+    if (amountSats === 9_000_000n) expect(prepared.walletInputs.map((input) => input.valueSats)).toEqual([10_000_000]);
+    if (amountSats === 19_000_000_000n) expect(prepared.walletInputs.map((input) => input.valueSats)).toEqual([20_000_000_000]);
+    if (amountSats === 210_000_000_000n) expect(prepared.walletInputs.map((input) => input.valueSats).sort((a, b) => a - b)).toEqual([20_000_000_000, 200_000_000_000]);
+    expect(prepared.walletInputs.reduce((sum, input) => sum + BigInt(input.valueSats), 0n))
+      .toBe(prepared.transactionOutputs.reduce((sum, output) => sum + BigInt(output.valueSats), 0n) + BigInt(prepared.feeSats));
+  });
+
+  it('does not choose an input covering only the payment and excludes immature coins', async () => {
+    const snapshot = await makeSnapshot();
+    snapshot.utxos = [9_000_000, 10_000_000, 20_000_000].map((valueSats, index) => ({
+      ...snapshot.utxos[0]!, valueSats, txid: `${index + 1}`.repeat(64), isCoinbase: index === 1, confirmations: 1,
+    }));
+    const prepared = await prepareUnsignedTransparentMultiSend({ mnemonic, snapshot,
+      outputs: [{ address: snapshot.addresses[0]!.address, amountSats: 9_000_000n }], crypto });
+    expect(prepared.walletInputs.map((input) => input.valueSats)).toEqual([20_000_000]);
+  });
+
+  it.each([2n, 100n])('accepts a smaller Bech32 input only within the fee tolerance at %s sat/vB', async (feePerVbyte) => {
+    const snapshot = await makeSnapshot();
+    const taproot = await deriveHdAddress(mnemonic, 'taproot', 'external', 0, crypto);
+    snapshot.addresses.push({ ...snapshot.addresses[0]!, ...taproot });
+    snapshot.utxos = [
+      { ...snapshot.utxos[0]!, valueSats: 10_000_000 },
+      { ...snapshot.utxos[0]!, txid: '33'.repeat(32), address: taproot.address, valueSats: 20_000_000 },
+    ];
+    const prepared = await prepareUnsignedTransparentMultiSend({ mnemonic, snapshot, crypto, feePerVbyte,
+      outputs: [{ address: snapshot.addresses[0]!.address, amountSats: 9_000_000n }] });
+    expect(prepared.walletInputs.map((input) => input.address))
+      .toEqual([feePerVbyte === 2n ? snapshot.addresses[0]!.address : taproot.address]);
+  });
+
+  it.each([1n, 20n])('keeps real fees including dust within tolerance near the funding boundary at %s sat/vB', async (feePerVbyte) => {
+    const snapshot = await makeSnapshot();
+    const outputs = [{ address: snapshot.addresses[0]!.address, amountSats: 9_000_000n }];
+    snapshot.utxos = [100_000, 2_000, 800, 300, 10_000, 500, 1_000].map((extra, index) => ({
+      ...snapshot.utxos[0]!, valueSats: 9_000_000 + extra, txid: `${index + 1}`.repeat(64),
+    }));
+    const candidates = [];
+    for (const utxo of snapshot.utxos) {
+      try {
+        candidates.push(await prepareUnsignedTransparentMultiSend({ mnemonic, snapshot: { ...snapshot, utxos: [utxo] }, outputs, feePerVbyte, crypto }));
+      } catch (error) {
+        expect(error).toMatchObject({ code: 'insufficient-funds' });
+      }
+    }
+    const minimumFee = Math.min(...candidates.map((candidate) => candidate.feeSats));
+    const maximumFee = minimumFee + Math.min(Math.floor(minimumFee / 4), 1_000);
+    const eligible = candidates.filter((candidate) => candidate.feeSats <= maximumFee)
+      .sort((a, b) => a.walletInputs[0]!.valueSats - b.walletInputs[0]!.valueSats || a.feeSats - b.feeSats);
+    const selected = await prepareUnsignedTransparentMultiSend({ mnemonic, snapshot, outputs, feePerVbyte, crypto });
+    expect(selected.feeSats).toBe(eligible[0]!.feeSats);
+    expect(selected.feeSats).toBeLessThanOrEqual(maximumFee);
+    expect(selected.walletInputs).toEqual(eligible[0]!.walletInputs);
+  });
+
+  it('bounds the candidate search for 1500 UTXOs instead of trying every subset', async () => {
+    const snapshot = await makeSnapshot();
+    snapshot.utxos = Array.from({ length: 1500 }, (_, index) => ({ ...snapshot.utxos[0]!,
+      valueSats: 10_000_000 + index * 100_000, txid: (index + 1).toString(16).padStart(64, '0') }));
+    const select = vi.mocked(btc.selectUTXO);
+    select.mockClear();
+    try {
+      const prepared = await prepareUnsignedTransparentMultiSend({ mnemonic, snapshot, crypto,
+        outputs: [{ address: snapshot.addresses[0]!.address, amountSats: 9_000_000n }] });
+      expect(prepared.walletInputs.map((input) => input.valueSats)).toEqual([10_000_000]);
+      expect(select.mock.calls.length).toBeLessThanOrEqual(26);
+    } finally {
+      select.mockClear();
+    }
+  });
+
   it('parses NITO amounts into satoshis without floating point math', () => {
     expect(parseNitoAmountToSats('1')).toBe(100_000_000n);
     expect(parseNitoAmountToSats('0,12345678')).toBe(12_345_678n);

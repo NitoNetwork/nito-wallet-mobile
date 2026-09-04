@@ -70,25 +70,22 @@ type TrackingSnapshot = TransactionTrackingData & {
   walletId: string | null;
   inFlight: ReadonlySet<string>;
   storageError: boolean;
+  observationFailures: ReadonlySet<string>;
 };
 
 const emptyTrackingSnapshot = (): TrackingSnapshot => ({
-  walletId: null, records: [], window: null, inFlight: new Set(), storageError: false,
+  walletId: null, records: [], window: null, inFlight: new Set(), storageError: false, observationFailures: new Set(),
 });
 
 /** One observable display owner. Every asynchronous result is session- and revision-guarded. */
 export class TransactionTrackingController {
   private snapshot = emptyTrackingSnapshot();
   private revision = 0;
-  private windowRevision = 0;
-  private windowWrites: Promise<void> = Promise.resolve();
-  private windowWriteFailed = false;
   private listeners = new Set<() => void>();
 
   constructor(private readonly ports: {
     isCurrent: (session: WalletSessionToken) => boolean;
     read: (walletId: string) => Promise<TransactionTrackingData>;
-    writeWindow: (walletId: string, window: TransactionTrackingWindowState) => Promise<void>;
     reportError: (error: unknown) => void;
   }) {}
 
@@ -105,10 +102,7 @@ export class TransactionTrackingController {
 
   reset(): void {
     this.revision += 1;
-    this.windowRevision += 1;
-    this.windowWriteFailed = false;
-    // Accepted public display choices still persist across a lock. A new session
-    // waits for them before restoring, but their callbacks cannot publish into it.
+    // Visibility is session-local. Signed records remain recoverable in SQLite.
     this.publish(emptyTrackingSnapshot());
   }
 
@@ -123,27 +117,21 @@ export class TransactionTrackingController {
     if (!this.ports.isCurrent(session)) return;
     const revision = ++this.revision;
     try {
-      // SQLite reads may run during writes. Wait for the user's preceding choices
-      // to commit before reading their selection or visibility back from storage.
-      await this.windowWrites;
       if (!this.ports.isCurrent(session) || revision !== this.revision) return;
       const data = await this.ports.read(session.walletId);
       if (!this.ports.isCurrent(session) || revision !== this.revision) return;
       const records = data.records.filter((record) => (
         record.walletId === session.walletId && record.state !== 'reserved' && record.txid
       ));
-      // Upgrade from lot 3: restore ongoing transactions even without a saved window yet.
+      // Ignore legacy persisted visibility. Restoring records must never open a popup.
       const fallback = records.find(({ state }) => state !== 'confirmed') ?? records[0];
-      const selected = records.find(({ lifecycleId }) => lifecycleId === data.window?.lifecycleId);
-      const window = selected ? data.window : fallback ? {
-        lifecycleId: fallback.lifecycleId,
-        open: data.window?.open ?? fallback.state !== 'confirmed',
+      const selected = records.find(({ lifecycleId }) => lifecycleId === this.snapshot.window?.lifecycleId);
+      const window = selected ? this.snapshot.window : fallback ? {
+        lifecycleId: fallback.lifecycleId, open: false,
       } : null;
       this.publish({
         ...this.snapshot, walletId: session.walletId, records,
-        // A failed save is not permission to undo the visible user action.
-        window: this.windowWriteFailed ? this.snapshot.window : window,
-        storageError: this.windowWriteFailed,
+        window, storageError: false,
       });
     } catch (error) {
       if (!this.ports.isCurrent(session) || revision !== this.revision) return;
@@ -168,23 +156,23 @@ export class TransactionTrackingController {
   async setWindow(session: WalletSessionToken, window: TransactionTrackingWindowState): Promise<void> {
     if (!this.ports.isCurrent(session)) return;
     this.revision += 1;
-    const windowRevision = ++this.windowRevision;
-    // Update the one window immediately, but report a failed persistence explicitly.
     this.publish({ ...this.snapshot, window });
-    this.windowWrites = this.windowWrites.then(async () => {
-      try {
-        await this.ports.writeWindow(session.walletId, window);
-        if (!this.ports.isCurrent(session) || windowRevision !== this.windowRevision) return;
-        this.windowWriteFailed = false;
-        this.publish({ ...this.snapshot, storageError: false });
-      } catch (error) {
-        if (!this.ports.isCurrent(session)) return;
-        this.ports.reportError(error);
-        if (windowRevision !== this.windowRevision) return;
-        this.windowWriteFailed = true;
-        this.publish({ ...this.snapshot, storageError: true });
-      }
-    });
-    await this.windowWrites;
+  }
+
+  observationResult(session: WalletSessionToken, txids: readonly string[], failed: boolean): void {
+    if (!this.ports.isCurrent(session)) return;
+    const observationFailures = new Set(this.snapshot.observationFailures);
+    for (const txid of txids) {
+      if (failed) observationFailures.add(txid);
+      else observationFailures.delete(txid);
+    }
+    this.publish({ ...this.snapshot, observationFailures });
+  }
+
+  /** Only an explicit signing action in the current session opens the window. */
+  async showSigned(session: WalletSessionToken, lifecycleId: string): Promise<void> {
+    if (!this.ports.isCurrent(session)) return;
+    await this.setWindow(session, { lifecycleId, open: true });
+    await this.refresh(session);
   }
 }

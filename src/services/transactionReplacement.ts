@@ -9,7 +9,7 @@ export const submitRbfReplacement = async <TReservation, TSigned>(ports: {
   reserve: () => Promise<TReservation>;
   sign: (quote: RbfQuote) => Promise<TSigned>;
   persist: (reservation: TReservation, quote: RbfQuote, signed: TSigned) => Promise<void>;
-}): Promise<{ kind: 'changed'; quote: RbfQuote } | { kind: 'signed'; signed: TSigned } | { kind: 'interrupted' }> => {
+}): Promise<{ kind: 'changed'; quote: RbfQuote } | { kind: 'signed'; signed: TSigned; reservation: TReservation } | { kind: 'interrupted' }> => {
   if (!ports.isCurrent()) return { kind: 'interrupted' };
   const latest = await ports.rebuild();
   if (!ports.isCurrent()) return { kind: 'interrupted' };
@@ -21,5 +21,5 @@ export const submitRbfReplacement = async <TReservation, TSigned>(ports: {
   if (!sameRbfReview(ports.review, final)) return { kind: 'changed', quote: final };
   const signed = await ports.sign(final);
   await ports.persist(reservation, final, signed);
-  return { kind: 'signed', signed };
+  return { kind: 'signed', signed, reservation };
 };

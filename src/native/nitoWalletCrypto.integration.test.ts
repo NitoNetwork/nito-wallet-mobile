@@ -11,7 +11,7 @@ import fixture from '../test/fixtures/vault-1.3.1.json';
 import { createNitoWalletCryptoTestDouble } from '../test/nitoWalletCryptoTestDouble';
 import { deriveHdAddress, deriveHdPath, HD_ACCOUNT_TEMPLATES, type HdAccountKey } from '../wallet/hdAddress';
 import { restoreLegacyCompatibleWallet } from '../wallet/walletIdentity';
-import { NITO_SIGNER_NETWORK, RBF_SEQUENCE, prepareUnsignedTransparentMultiSend, prepareUnsignedTransparentConsolidation, signUnsignedTransparentTx } from '../wallet/transparentSend';
+import { NITO_SIGNER_NETWORK, RBF_SEQUENCE, changeAccountForRecipients, prepareUnsignedTransparentMultiSend, prepareUnsignedTransparentConsolidation, signUnsignedTransparentTx } from '../wallet/transparentSend';
 import { loadRbfOriginal, prepareRbfQuote, assertSignedRbfFee } from '../wallet/transparentRbf';
 import type { TransactionLifecycleRecord } from '../services/transactionLifecycle';
 import type { ScannedAddress, TransparentWalletSnapshot } from '../wallet/transparentScan';
@@ -150,6 +150,44 @@ describe('mobile JavaScript contract against the real Rust C ABI', () => {
         expect(amounts).toContain(5_000_000n);
       }
     }
+  }, 60_000);
+
+  it.each(HD_ACCOUNT_TEMPLATES)('signs automatic $key change, cancels the original and spends confirmed change using real Rust', async ({ key }) => {
+    const f = await fundedWallet('taproot');
+    const destination = await deriveHdAddress(mnemonic, key, 'external', 5, crypto);
+    const family = changeAccountForRecipients([destination.address]);
+    expect(family).toBe(key);
+    const change = await deriveHdAddress(mnemonic, family, 'internal', 7, crypto);
+    const unsigned = await prepareUnsignedTransparentMultiSend({ mnemonic, snapshot: f.snapshot, crypto,
+      changeAddress: change.address, outputs: [{ address: destination.address, amountSats: 10_000_000n }] });
+    const signed = await signUnsignedTransparentTx({ mnemonic, transaction: unsigned, crypto });
+    const output = signed.walletOutputs.find((item) => item.address === change.address)!;
+    expect(output).toBeDefined();
+    const lifecycle: TransactionLifecycleRecord = { lifecycleId: `auto-${key}`, walletId: fixture.payload.address,
+      purpose: 'send', state: 'published', txid: signed.txid, rawTxHex: signed.hex,
+      address: change.address, derivationPath: change.path, addressIndex: change.index,
+      recoveryAttempts: 1, broadcastInvocations: 1, nextBroadcastAttemptAt: null, lastBroadcastAttemptAt: 0 };
+    const original = await loadRbfOriginal({ lifecycle, snapshot: f.snapshot, height: 210, reader: {
+      getTransactionHex: async (id) => id === signed.txid ? signed.hex : f.rawParent,
+      getAddressHistory: async (address) => [{ txid: signed.txid, height: 0, address }, { txid: f.parent.id, height: 10, address }],
+    } });
+    const quote = await prepareRbfQuote({ mnemonic, original, mode: 'cancel', returnAddress: f.change.address,
+      returnIndex: f.change.index, networkRate: 20n, crypto });
+    const cancelled = await signUnsignedTransparentTx({ mnemonic, transaction: quote.transaction, crypto });
+    expect(() => assertSignedRbfFee(quote, cancelled.hex, cancelled.txid)).not.toThrow();
+    expect(cancelled.walletInputs).toEqual(signed.walletInputs);
+    expect(cancelled.walletOutputs).toHaveLength(1);
+    expect(cancelled.walletOutputs[0]?.address).toBe(f.change.address);
+    const scanned: ScannedAddress = { ...f.snapshot.addresses[0]!, ...change, accountLabel: key,
+      accountPath: change.path.split('/').slice(0, 4).join('/') };
+    const nextSnapshot: TransparentWalletSnapshot = { ...f.snapshot, addresses: [scanned],
+      utxos: [{ txid: signed.txid, vout: output.vout, valueSats: output.valueSats,
+        address: change.address, height: 211, confirmations: 1, isCoinbase: false, rawTx: signed.hex }] };
+    const spending = await prepareUnsignedTransparentMultiSend({ mnemonic, snapshot: nextSnapshot, crypto,
+      changeAddress: f.change.address, outputs: [{ address: destination.address, amountSats: 1_000_000n }] });
+    const spent = await signUnsignedTransparentTx({ mnemonic, transaction: spending, crypto });
+    expect(spent.walletInputs[0]?.address).toBe(change.address);
+    expect(btc.Transaction.fromRaw(Buffer.from(spent.hex, 'hex')).id).toBe(spent.txid);
   }, 60_000);
 
   it.each(HD_ACCOUNT_TEMPLATES)('signs and finalizes a $key consolidation to an internal Taproot address through Rust', async ({ key }) => {
