@@ -11,6 +11,14 @@ import {
 import { tr } from './i18n/tr';
 
 describe('i18n coverage', () => {
+  it('removes the two receive-screen explanatory paragraphs from every language', () => {
+    for (const { code } of LANGUAGES) {
+      for (const key of ['receive.hdInfo', 'receive.gapHelp']) {
+        expect(Object.hasOwn(TRANSLATIONS[code], key), `${code}:${key}`).toBe(false);
+      }
+    }
+  });
+
   it.each(LANGUAGES)('resolves the phrase-copy consent and feedback in $code', ({ code }) => {
     for (const key of ['backup.copyPhrase', 'backup.clipboardWarning', 'backup.confirmCopy', 'backup.copied', 'backup.copyFailed'] as const) {
       const value = TRANSLATIONS[code][key];

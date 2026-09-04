@@ -77,7 +77,6 @@ export function ReceiveTab({
   return (
     <View style={styles.card}>
       <Text style={styles.sectionTitle}>{t('receive.title')}</Text>
-      <Text style={styles.helper}>{t('receive.hdInfo')}</Text>
       <View style={styles.receiveFamilyGrid}>
         {HD_ACCOUNT_TEMPLATES.map((family) => {
           const selected = family.key === wallet.receiveAccountKey;
@@ -130,7 +129,6 @@ export function ReceiveTab({
           />
         </View>
       </View>
-      <Text style={styles.helper}>{t('receive.gapHelp')}</Text>
     </View>
   );
 }
