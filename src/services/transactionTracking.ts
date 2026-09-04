@@ -123,12 +123,10 @@ export class TransactionTrackingController {
       const records = data.records.filter((record) => (
         record.walletId === session.walletId && record.state !== 'reserved' && record.txid
       ));
-      // Ignore legacy persisted visibility. Restoring records must never open a popup.
-      const fallback = records.find(({ state }) => state !== 'confirmed') ?? records[0];
+      // Records support recovery and RBF, not a browsable history. Only a signing
+      // action in this session can select a transaction for display.
       const selected = records.find(({ lifecycleId }) => lifecycleId === this.snapshot.window?.lifecycleId);
-      const window = selected ? this.snapshot.window : fallback ? {
-        lifecycleId: fallback.lifecycleId, open: false,
-      } : null;
+      const window = selected ? this.snapshot.window : null;
       this.publish({
         ...this.snapshot, walletId: session.walletId, records,
         window, storageError: false,
@@ -153,10 +151,10 @@ export class TransactionTrackingController {
     this.publish({ ...this.snapshot, walletId: session.walletId, records, inFlight });
   }
 
-  async setWindow(session: WalletSessionToken, window: TransactionTrackingWindowState): Promise<void> {
-    if (!this.ports.isCurrent(session)) return;
+  closeWindow(session: WalletSessionToken, lifecycleId: string): void {
+    if (!this.ports.isCurrent(session) || this.snapshot.window?.lifecycleId !== lifecycleId) return;
     this.revision += 1;
-    this.publish({ ...this.snapshot, window });
+    this.publish({ ...this.snapshot, window: null });
   }
 
   observationResult(session: WalletSessionToken, txids: readonly string[], failed: boolean): void {
@@ -172,7 +170,19 @@ export class TransactionTrackingController {
   /** Only an explicit signing action in the current session opens the window. */
   async showSigned(session: WalletSessionToken, lifecycleId: string): Promise<void> {
     if (!this.ports.isCurrent(session)) return;
-    await this.setWindow(session, { lifecycleId, open: true });
+    this.revision += 1;
+    this.publish({ ...this.snapshot, walletId: session.walletId, window: { lifecycleId, open: true } });
+    await this.refresh(session);
+  }
+
+  /** Follow the next signed transaction in the same consolidation, unless closed
+   * or superseded. Recovery events alone cannot select or reopen a window. */
+  async advanceSigned(session: WalletSessionToken, previousLifecycleId: string, lifecycleId: string): Promise<void> {
+    if (!this.ports.isCurrent(session)) return;
+    if (this.snapshot.window?.lifecycleId === previousLifecycleId) {
+      this.revision += 1;
+      this.publish({ ...this.snapshot, window: { lifecycleId, open: true } });
+    }
     await this.refresh(session);
   }
 }

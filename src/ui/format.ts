@@ -1,5 +1,6 @@
-import type { LanguageCode } from '../i18n';
+import type { LanguageCode, Translator } from '../i18n';
 import { formatNitoAmount } from '../i18n.amounts';
+import { formatNitoDateTime } from '../i18n.datetime';
 import { needsHistoryEnrichment } from '../services/walletHistory';
 
 /**
@@ -71,6 +72,19 @@ type HistoryAmountOutput = {
 };
 
 type HistoryDirection = 'received' | 'sent' | 'self';
+
+export const formatHistoryDetails = (
+  entry: { direction?: HistoryDirection; blockTime?: number; height: number },
+  language: LanguageCode,
+  t: Translator,
+): string => {
+  const details = [
+    entry.blockTime ? formatNitoDateTime(entry.blockTime, language) : '',
+    entry.direction ? t(`history.${entry.direction}`) : '',
+  ].filter(Boolean).join(' · ');
+  const status = entry.height > 0 ? t('history.block', { height: entry.height }) : t('history.mempool');
+  return [details, status].filter(Boolean).join('\n');
+};
 
 export const signedHistoryAmountLines = (
   direction: HistoryDirection,

@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
+import ts from 'typescript';
 
 import { WalletSessionGuard } from './walletSession';
 import { TransactionTrackingController, publicTransactionTrackingRecord, transactionReplacementOutcome, transactionTrackingStage, transactionTrackingStatus, type TransactionTrackingData } from './transactionTracking';
@@ -89,7 +90,7 @@ describe('single session-local transaction window with durable recovery', () => 
   it('restores signed records but ignores persisted visibility after lock or restart', async () => {
     const { controller, ports, session, sessions } = setup();
     await controller.restore(session);
-    expect(controller.getSnapshot().window).toEqual({ lifecycleId: 'first', open: false });
+    expect(controller.getSnapshot().window).toBeNull();
     await controller.showSigned(session, 'first');
     expect(controller.getSnapshot().window?.open).toBe(true);
     sessions.invalidate();
@@ -97,26 +98,112 @@ describe('single session-local transaction window with durable recovery', () => 
     expect(controller.getSnapshot().records).toEqual([]);
     const reopened = sessions.begin('wallet');
     await controller.restore(reopened);
-    expect(controller.getSnapshot().window?.open).toBe(false);
+    expect(controller.getSnapshot().window).toBeNull();
     const restarted = new TransactionTrackingController(ports);
     await restarted.restore(reopened);
-    expect(restarted.getSnapshot().window?.open).toBe(false);
+    expect(restarted.getSnapshot().window).toBeNull();
     expect(restarted.getSnapshot().records).toHaveLength(1);
     expect(ports.writeWindow).not.toHaveBeenCalled();
+  });
+
+  it('does not select an old transaction when the current transaction is absent from a refresh', async () => {
+    const { controller, ports, session } = setup();
+    await controller.showSigned(session, 'first');
+    ports.read.mockResolvedValue({
+      records: [record({ lifecycleId: 'old', txid: 'old', state: 'confirmed' })],
+      window: { lifecycleId: 'old', open: true },
+    });
+    await controller.refresh(session);
+    expect(controller.getSnapshot().window).toBeNull();
+    expect(controller.getSnapshot().records).toHaveLength(1);
+  });
+
+  it('has no historical navigation, reopen entry point or TXID copy in the current transaction window', () => {
+    const app = readFileSync(new URL('../../App.tsx', import.meta.url), 'utf8');
+    const window = readFileSync(new URL('../ui/TransactionTrackingWindow.tsx', import.meta.url), 'utf8');
+    expect(app.includes("'tracking.reopen'")).toBe(false);
+    for (const removed of ['tracking.position', 'actions.previousPage', 'actions.nextPage', 'onCopyTxid', 'trackingNavigationItem']) {
+      expect(window.includes(removed), removed).toBe(false);
+    }
+  });
+
+  it('places the explorer and cancellation buttons in the same full-width container and variant', () => {
+    const source = readFileSync(new URL('../ui/TransactionTrackingWindow.tsx', import.meta.url), 'utf8');
+    const tree = ts.createSourceFile('TransactionTrackingWindow.tsx', source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+    const buttons: ts.JsxSelfClosingElement[] = [];
+    const visit = (node: ts.Node): void => {
+      if (ts.isJsxSelfClosingElement(node) && node.tagName.getText(tree) === 'ActionButton') buttons.push(node);
+      ts.forEachChild(node, visit);
+    };
+    visit(tree);
+    const button = (key: string) => buttons.find((node) => node.attributes.properties.some((attribute) => (
+      ts.isJsxAttribute(attribute) && attribute.name.getText(tree) === 'label'
+      && attribute.initializer?.getText(tree) === `{t('${key}')}`
+    )))!;
+    const container = (node: ts.Node): ts.Node | undefined => {
+      let parent = node.parent;
+      while (parent && !ts.isJsxElement(parent)) parent = parent.parent;
+      return parent;
+    };
+    const explorer = button('actions.viewTx');
+    const cancel = button('rbf.cancel');
+    expect(explorer).toBeDefined();
+    expect(cancel).toBeDefined();
+    expect(container(explorer)).toBe(container(cancel));
+    for (const node of [explorer, cancel]) {
+      expect(node.attributes.properties.some((attribute) => ts.isJsxAttribute(attribute)
+        && attribute.name.getText(tree) === 'variant' && attribute.initializer?.getText(tree) === '"secondary"')).toBe(true);
+    }
   });
 
   it('updates successive consolidation records without reopening a hidden window', async () => {
     const { controller, session, ports } = setup();
     await controller.restore(session);
     await controller.showSigned(session, 'first');
-    await controller.setWindow(session, { lifecycleId: 'first', open: false });
+    controller.closeWindow(session, 'first');
     controller.update(session, record({ state: 'published' }), false);
     controller.update(session, record({ lifecycleId: 'second', txid: 'cd'.repeat(32) }), true);
     ports.read.mockResolvedValue({ records: [record(), record({ lifecycleId: 'second' })], window: null });
-    await controller.refresh(session);
+    await controller.advanceSigned(session, 'first', 'second');
     expect(controller.getSnapshot().records).toHaveLength(2);
-    expect(controller.getSnapshot().window?.open).toBe(false);
+    expect(controller.getSnapshot().window).toBeNull();
     expect(ports.writeWindow).not.toHaveBeenCalled();
+  });
+
+  it('follows the current consolidation transaction without exposing unrelated history', async () => {
+    const { controller, session, ports } = setup();
+    ports.read.mockResolvedValue({ records: [record(), record({ lifecycleId: 'second' }), record({ lifecycleId: 'old', state: 'confirmed' })], window: null });
+    await controller.restore(session);
+    await controller.showSigned(session, 'first');
+    await controller.advanceSigned(session, 'first', 'second');
+    expect(controller.getSnapshot().window).toEqual({ lifecycleId: 'second', open: true });
+    controller.update(session, record({ lifecycleId: 'old', state: 'confirmed' }), false);
+    await controller.refresh(session);
+    expect(controller.getSnapshot().window).toEqual({ lifecycleId: 'second', open: true });
+    expect(controller.getSnapshot().records).toHaveLength(3);
+    controller.closeWindow(session, 'first');
+    expect(controller.getSnapshot().window?.lifecycleId).toBe('second');
+  });
+
+  it('never opens from recovery events but opens a newly signed send or replacement', async () => {
+    const { controller, session, ports } = setup();
+    const second = record({ lifecycleId: 'second', txid: 'second' });
+    const cancellation = record({ lifecycleId: 'cancel', txid: 'cancel', replacement: {
+      originalLifecycleId: 'second', originalTxid: 'second', mode: 'cancel',
+    } });
+    ports.read.mockResolvedValue({ records: [record(), second, cancellation], window: null });
+    await controller.restore(session);
+    controller.update(session, record({ state: 'published' }), true);
+    await controller.refresh(session);
+    expect(controller.getSnapshot().window).toBeNull();
+    await controller.showSigned(session, 'second');
+    expect(controller.getSnapshot().window).toEqual({ lifecycleId: 'second', open: true });
+    await controller.showSigned(session, 'cancel');
+    expect(controller.getSnapshot().window).toEqual({ lifecycleId: 'cancel', open: true });
+    controller.closeWindow(session, 'cancel');
+    controller.update(session, cancellation, false);
+    await controller.refresh(session);
+    expect(controller.getSnapshot().window).toBeNull();
   });
 
   it('rejects a delayed read and recovery event from a previous session', async () => {
@@ -132,23 +219,22 @@ describe('single session-local transaction window with durable recovery', () => 
     read.resolve({ records: [], window: { lifecycleId: 'first', open: true } });
     await restoring;
     expect(controller.getSnapshot().records[0]?.state).toBe('signed');
-    expect(controller.getSnapshot().window?.open).toBe(false);
+    expect(controller.getSnapshot().window).toBeNull();
   });
 
-  it.each([
-    { lifecycleId: 'first', open: false },
-    { lifecycleId: 'second', open: true },
-  ])('preserves $lifecycleId / $open during concurrent reads of delayed legacy SQLite writes', async (window) => {
+  it.each(['close', 'new signature'] as const)('preserves %s during concurrent reads of delayed legacy SQLite writes', async (action) => {
     const { controller, session, ports } = setup();
     ports.read.mockResolvedValue({ records: [record(), record({ lifecycleId: 'second' })], window: null });
     await controller.restore(session);
+    await controller.showSigned(session, 'first');
     const read = deferred<TransactionTrackingData>();
     ports.read.mockReturnValueOnce(read.promise);
     const refreshing = controller.refresh(session);
-    await controller.setWindow(session, window);
+    if (action === 'close') controller.closeWindow(session, 'first');
+    else await controller.showSigned(session, 'second');
     read.resolve({ records: [record()], window: { lifecycleId: 'first', open: true } });
     await refreshing;
-    expect(controller.getSnapshot().window).toEqual(window);
+    expect(controller.getSnapshot().window).toEqual(action === 'close' ? null : { lifecycleId: 'second', open: true });
     expect(ports.writeWindow).not.toHaveBeenCalled();
   });
 
@@ -158,15 +244,13 @@ describe('single session-local transaction window with durable recovery', () => 
     await controller.restore(session);
     const reads = [deferred<TransactionTrackingData>(), deferred<TransactionTrackingData>()];
     ports.read.mockReturnValueOnce(reads[0]!.promise).mockReturnValueOnce(reads[1]!.promise);
-    const first = controller.refresh(session);
-    await controller.setWindow(session, { lifecycleId: 'first', open: true });
-    const second = controller.refresh(session);
-    await controller.setWindow(session, { lifecycleId: 'second', open: true });
-    await controller.setWindow(session, { lifecycleId: 'second', open: false });
+    const first = controller.showSigned(session, 'first');
+    const second = controller.showSigned(session, 'second');
+    controller.closeWindow(session, 'second');
     reads[1]!.resolve({ records: [record()], window: { lifecycleId: 'first', open: true } });
     reads[0]!.resolve({ records: [record()], window: null });
     await Promise.all([first, second]);
-    expect(controller.getSnapshot().window).toEqual({ lifecycleId: 'second', open: false });
+    expect(controller.getSnapshot().window).toBeNull();
   });
 
   it('does not reopen when signing refresh finishes after the user closes the window', async () => {
@@ -177,10 +261,26 @@ describe('single session-local transaction window with durable recovery', () => 
     ports.read.mockImplementationOnce(() => { started.resolve(); return read.promise; });
     const showing = controller.showSigned(session, 'first');
     await started.promise;
-    await controller.setWindow(session, { lifecycleId: 'first', open: false });
+    controller.closeWindow(session, 'first');
     read.resolve({ records: [record()], window: { lifecycleId: 'first', open: true } });
     await showing;
-    expect(controller.getSnapshot().window?.open).toBe(false);
+    expect(controller.getSnapshot().window).toBeNull();
+  });
+
+  it('does not restore a previous consolidation selection after close or a newer send', async () => {
+    const { controller, session, ports } = setup();
+    ports.read.mockResolvedValue({ records: [record(), record({ lifecycleId: 'second' }), record({ lifecycleId: 'new-send' })], window: null });
+    await controller.showSigned(session, 'first');
+    const read = deferred<TransactionTrackingData>();
+    ports.read.mockReturnValueOnce(read.promise);
+    const advancing = controller.advanceSigned(session, 'first', 'second');
+    controller.closeWindow(session, 'second');
+    read.resolve({ records: [record(), record({ lifecycleId: 'second' })], window: null });
+    await advancing;
+    expect(controller.getSnapshot().window).toBeNull();
+    await controller.showSigned(session, 'new-send');
+    await controller.advanceSigned(session, 'first', 'second');
+    expect(controller.getSnapshot().window).toEqual({ lifecycleId: 'new-send', open: true });
   });
 
   it('reports failed reads without losing data or exposing signed payloads', async () => {
@@ -224,7 +324,7 @@ describe('single session-local transaction window with durable recovery', () => 
     const t = makeTranslator(code as (typeof LANGUAGES)[number]['code']);
     expect((['accepted', 'mempool', 'confirmed'] as const).map((state) => t(`tracking.${state}Hint`, { height: 1005010 })))
       .toEqual(expected);
-    for (const key of ['rbf.cancelHint', 'rbf.review', 'rbf.confirm', 'tracking.observationFailed', 'tracking.copyTxid'] as const) {
+    for (const key of ['rbf.cancelHint', 'rbf.review', 'rbf.confirm', 'tracking.observationFailed'] as const) {
       expect(t(key)).not.toBe(key);
       expect(t(key)).not.toMatch(/[—;]/);
     }
@@ -249,7 +349,8 @@ describe('single session-local transaction window with durable recovery', () => 
     expect(tracking).not.toMatch(/publishNetwork|setNetwork|saveWalletSnapshot|balanceSats|spendableSats/);
     expect(app).toContain('transactionTrackingController.restore(trackingSession)');
     expect(app).toContain('transactionTrackingController.reset()');
-    expect(app).toContain('if (reservation === reservations[0])');
+    expect(app).toContain('if (previousLifecycleId === undefined)');
+    expect(app).toContain('transactionTrackingController.advanceSigned(session, previousLifecycleId, reservation.lifecycleId)');
     expect(app).toContain('feedbackError={replacementError}');
     const window = readFileSync(new URL('../ui/TransactionTrackingWindow.tsx', import.meta.url), 'utf8');
     expect(window).not.toContain("'rbf.accelerate'");
@@ -257,6 +358,6 @@ describe('single session-local transaction window with durable recovery', () => 
     expect(window).not.toContain("'tracking.consolidationHint'");
     expect(window).not.toContain("'rbf.return'");
     expect(window).toContain('shortAddress(displayedTxid)');
-    expect(window).toContain('onCopyTxid(displayedTxid)');
+    expect(window).toContain('onExplorer(displayedTxid)');
   });
 });

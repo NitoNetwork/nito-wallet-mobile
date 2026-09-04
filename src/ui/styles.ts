@@ -7,8 +7,7 @@ const RAW_STYLES = StyleSheet.create({
   trackingCard: { maxHeight: '90%' },
   trackingContent: { gap: 10 },
   trackingTitle: { fontSize: 22, lineHeight: 28, marginBottom: 0 },
-  trackingNavigation: { flexDirection: 'row', gap: 10 },
-  trackingNavigationItem: { flex: 1 },
+  trackingProgressRow: { flexDirection: 'row', gap: 10 },
   trackingProgress: { flex: 1, height: 4, borderRadius: 2, backgroundColor: '#0b203a' },
   trackingProgressDone: { backgroundColor: '#8cc6ff' },
   safeArea: {
@@ -957,6 +956,7 @@ const RAW_STYLES = StyleSheet.create({
     borderRadius: 18,
     padding: 10,
   },
+  phraseCopy: { gap: 8 },
   mnemonicWord: {
     width: '48%',
     color: '#fff4d6',

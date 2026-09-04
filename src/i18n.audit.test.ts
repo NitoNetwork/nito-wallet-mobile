@@ -11,10 +11,21 @@ import {
 import { tr } from './i18n/tr';
 
 describe('i18n coverage', () => {
+  it.each(LANGUAGES)('resolves the phrase-copy consent and feedback in $code', ({ code }) => {
+    for (const key of ['backup.copyPhrase', 'backup.clipboardWarning', 'backup.confirmCopy', 'backup.copied', 'backup.copyFailed'] as const) {
+      const value = TRANSLATIONS[code][key];
+      expect(Object.hasOwn(TRANSLATIONS[code], key)).toBe(true);
+      expect(makeTranslator(code)(key)).toBe(value);
+      expect(value.trim().length).toBeGreaterThan(0);
+      if (code !== 'en') expect(value).not.toBe(TRANSLATIONS.en[key]);
+    }
+    expect(makeTranslator(code)('backup.copyPhrase')).toContain('BIP39');
+  });
+
   it.each(LANGUAGES)('defines every compact transaction popup message directly in the $code dictionary', ({ code }) => {
     const keys = [
       'tracking.acceptedHint', 'tracking.mempoolHint', 'tracking.confirmedHint',
-      'tracking.hide', 'tracking.observationFailed', 'tracking.copyTxid', 'tracking.copied', 'tracking.copyFailed',
+      'tracking.hide', 'tracking.observationFailed',
       'rbf.review', 'rbf.cancelHint', 'rbf.confirm',
     ] as const;
     for (const key of keys) {
@@ -23,6 +34,12 @@ describe('i18n coverage', () => {
       expect(dictionary[key].trim().length, `${code}:${key}`).toBeGreaterThan(0);
       expect(makeTranslator(code)(key, { height: 1005010 })).toBe(dictionary[key].replaceAll('{height}', '1005010'));
       if (code !== 'en') expect(dictionary[key], `${code}:${key}`).not.toBe(TRANSLATIONS.en[key]);
+    }
+  });
+
+  it.each(LANGUAGES)('removes obsolete tracking navigation and copy labels from $code', ({ code }) => {
+    for (const key of ['tracking.reopen', 'tracking.position', 'tracking.copyTxid', 'tracking.copied', 'tracking.copyFailed']) {
+      expect(Object.hasOwn(TRANSLATIONS[code], key), `${code}:${key}`).toBe(false);
     }
   });
 
@@ -112,21 +129,9 @@ describe('i18n coverage', () => {
     }
   });
 
-  it('resolves the internal transaction network-fee label in every language', () => {
-    const expected = {
-      en: 'Network fee',
-      zh: '网络手续费',
-      de: 'Netzwerkgebühr',
-      es: 'Comisión de red',
-      fr: 'Frais réseau',
-      ja: 'ネットワーク手数料',
-      tr: 'Ağ ücreti',
-      pt: 'Taxa de rede',
-      ru: 'Сетевая комиссия',
-    } satisfies Record<LanguageCode, string>;
-
-    for (const code of Object.keys(expected) as LanguageCode[]) {
-      expect(makeTranslator(code)('history.networkFee')).toBe(expected[code]);
+  it('removes the obsolete internal-history network-fee label from every language', () => {
+    for (const { code } of LANGUAGES) {
+      expect(Object.hasOwn(TRANSLATIONS[code], 'history.networkFee'), code).toBe(false);
     }
   });
 

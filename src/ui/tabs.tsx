@@ -14,7 +14,6 @@ import {
 } from '../constants/nito';
 import type { LanguageCode, Translator } from '../i18n';
 import { makeConsolidationTranslator } from '../i18n.consolidation';
-import { formatNitoDateTime } from '../i18n.datetime';
 import { HISTORY_PAGE_SIZE } from '../services/historyEnrichmentQueue';
 import type { CachedTransactionOutput } from '../services/historyExport';
 import { reportNonFinancialFailure } from '../services/diagnostics';
@@ -33,6 +32,7 @@ import { ActionButton } from './components';
 import {
   canShowHistoryExport,
   formatHomeBalance,
+  formatHistoryDetails,
   historyAmountBreakdown,
   historyPageFromInput,
   signedHistoryAmountLines,
@@ -556,20 +556,7 @@ export function HistoryTab({
                         : amountLines.join('\n')}
                     </Text>
                     <Text style={styles.helper}>
-                      {[
-                        entry.direction !== 'self' && entry.blockTime
-                          ? formatNitoDateTime(entry.blockTime, language)
-                          : '',
-                        entry.direction === 'received'
-                          ? t('history.received')
-                          : entry.direction === 'sent'
-                            ? t('history.sent')
-                            : entry.direction === 'self'
-                              ? t('history.self')
-                              : '',
-                        entry.direction === 'self' ? t('history.networkFee') : '',
-                        entry.height > 0 ? t('history.block', { height: entry.height }) : t('history.mempool'),
-                      ].filter(Boolean).join(' · ')}
+                      {formatHistoryDetails(entry, language, t)}
                     </Text>
                   </View>
                   <View style={styles.viewTxBadge}>

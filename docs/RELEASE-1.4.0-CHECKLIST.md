@@ -19,6 +19,9 @@ No release tag should precede successful device validation.
 - Signed transactions and retry state survive locking and application restart.
 - One transaction window follows sending, planned retries, server acceptance,
   mempool observation, confirmation and unresolved outcomes.
+- The window concerns only the current transaction. It has no history browser,
+  previous/next buttons, transaction counter or TXID copy button. The explorer
+  button occupies the full width, like the cancellation button.
 - Closing, locking or restarting does not automatically reopen the window.
   Signed transaction recovery remains durable and independent of visibility.
 - Cancellation attempts send the funds to a new internal address. The original
@@ -91,6 +94,13 @@ as part of this preparation.
       Unlock by password and biometrics. Check historical balances and history.
 - [ ] Create and import wallets. Verify Taproot default, all four address types,
       QR codes, distinct empty HD addresses and recovery near the gap boundary.
+- [ ] Using a disposable test wallet, copy the phrase at creation and after
+      revealing it in Settings. The first press must only show the warning.
+      Cancel and background the app before confirming, no copy should occur.
+      Confirm to copy all words in order without numbers. The creation challenge
+      and Settings reveal timeout must stay unchanged. Clear the clipboard after
+      this test, hiding the phrase does not clear it. Check both themes and all
+      nine languages on a small screen.
 - [ ] Receive and spend using all four families. Send to multiple recipients.
       Check amounts, fees, automatic change type and internal transaction
       formatting, including mixed recipient families.
@@ -106,9 +116,11 @@ as part of this preparation.
 - [ ] Interrupt after reservation, signing, persistence and network acceptance.
       Lock and restart. Confirm that saved signed transactions resume once,
       without a second payment or reuse of an internal index.
-- [ ] Hide and reopen the tracking window while writes or refreshes are in
-      flight. Lock and restart. The window must stay closed while signed
-      transactions resume. Verify that old saved visibility is ignored.
+- [ ] Close the tracking window while writes or refreshes are in flight. Lock
+      and restart. The window must stay closed while signed transactions resume.
+      No reopen button or old transaction selection may appear. A new send must
+      open only its own transaction. Consolidation follows the current signed
+      transaction without navigation and never reopens after Close.
 - [ ] Observe all seven tracking states, including a failed final retry. Restore
       the network after a lost broadcast response and check idempotent recovery.
 - [ ] Simulate delayed indexing and failed post-broadcast reads. Verify three

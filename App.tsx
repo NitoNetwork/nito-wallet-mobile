@@ -70,7 +70,6 @@ import {
 } from './src/ui/screens';
 import { HistoryTab, HomeTab, ReceiveTab, SendTab } from './src/ui/tabs';
 import { SecurityTab } from './src/ui/settings';
-import { ActionButton } from './src/ui/components';
 import { TransactionTrackingWindow } from './src/ui/TransactionTrackingWindow';
 import { TransactionTrackingController } from './src/services/transactionTracking';
 import { submitRbfReplacement } from './src/services/transactionReplacement';
@@ -3053,6 +3052,7 @@ function WalletApp({ theme, onSelectTheme }: {
         const sequence = rebuilt.transactions.map((transaction, index) => ({
           transaction,
           reservation: reservations[index],
+          previousLifecycleId: reservations[index - 1]?.lifecycleId,
         }));
         if (sequence.some(({ reservation }) => !reservation)) {
           throw new Error('Consolidation reservation is missing.');
@@ -3069,7 +3069,7 @@ function WalletApp({ theme, onSelectTheme }: {
               transaction: unsigned,
             });
           },
-          persistSigned: async ({ reservation }, transaction) => {
+          persistSigned: async ({ reservation, previousLifecycleId }, transaction) => {
             if (!reservation) throw new Error('Consolidation reservation is missing.');
             await markTransactionLifecycleSigned(
               activeWallet.walletId,
@@ -3077,11 +3077,11 @@ function WalletApp({ theme, onSelectTheme }: {
               transaction.txid,
               transaction.hex,
             );
-            // Open once for this user action. Later signatures must respect Close.
-            if (reservation === reservations[0]) {
+            // Follow only the current transaction in this action, respecting Close.
+            if (previousLifecycleId === undefined) {
               await transactionTrackingController.showSigned(session, reservation.lifecycleId);
             } else {
-              await transactionTrackingController.refresh(session);
+              await transactionTrackingController.advanceSigned(session, previousLifecycleId, reservation.lifecycleId);
             }
           },
           broadcastPersisted: async (_item, transaction) => {
@@ -4001,14 +4001,6 @@ function WalletApp({ theme, onSelectTheme }: {
             {screen === 'wallet' && transactionTracking.storageError ? (
               <Feedback error={t('errors.walletStorageUnavailable')} status="" />
             ) : null}
-            {screen === 'wallet' && transactionTracking.window ? (
-              <ActionButton label={t('tracking.reopen')} variant="secondary" onPress={() => {
-                const session = walletNetworkController.sessions.capture();
-                if (session && transactionTracking.window) {
-                  void transactionTrackingController.setWindow(session, { ...transactionTracking.window, open: true });
-                }
-              }} />
-            ) : null}
             {activeScreen()}
           </ScrollView>
           {shouldShowBlockingLoadingOverlay(pendingAction) ? (
@@ -4040,21 +4032,11 @@ function WalletApp({ theme, onSelectTheme }: {
             ));
           });
         }}
-        onCopyTxid={async (txid) => {
-          try {
-            await Clipboard.setStringAsync(txid);
-            return true;
-          } catch (caught) {
-            reportNonFinancialFailure('transaction identifier copy', caught);
-            setReplacementError(t('tracking.copyFailed'));
-            return false;
-          }
-        }}
-        onWindowChange={(lifecycleId, open) => {
+        onClose={(lifecycleId) => {
           clearRbfReview();
           setReplacementError('');
           const session = walletNetworkController.sessions.capture();
-          if (session) void transactionTrackingController.setWindow(session, { lifecycleId, open });
+          if (session) transactionTrackingController.closeWindow(session, lifecycleId);
         }}
       />
       <Modal animationType="fade" onRequestClose={closeQrScanner} presentationStyle="fullScreen" visible={qrScannerOpen}>

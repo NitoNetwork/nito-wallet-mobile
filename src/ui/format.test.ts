@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest';
+import { readFileSync } from 'node:fs';
 
 import {
   canShowHistoryExport,
   escapeTsvCell,
   formatHomeBalance,
+  formatHistoryDetails,
   historyAmountBreakdown,
   historyPageFromInput,
   isValidTransactionId,
@@ -12,7 +14,7 @@ import {
   transactionExplorerUrl,
 } from './format';
 import { satoshisToNito } from '../wallet/transparentScan';
-import type { LanguageCode } from '../i18n';
+import { makeTranslator, type LanguageCode } from '../i18n';
 
 describe('ui format helpers', () => {
   it('quotes a tab cell only when the value would break the table', () => {
@@ -205,5 +207,56 @@ describe('internal transaction fee line', () => {
 
   it('does not invent an internal amount when the fee is unavailable', () => {
     expect(signedHistoryAmountLines('self', ['1,2'], null)).toEqual([]);
+  });
+});
+
+describe('shared history date, direction and block layout', () => {
+  // Construct a local instant so these exact strings also hold on UTC CI runners.
+  const blockTime = new Date(2026, 8, 4, 16, 30, 0).getTime() / 1000;
+
+  it('shows the dated internal example while retaining only its network fee', () => {
+    const entry = { direction: 'self' as const, blockTime, height: 1005112 };
+    const amount = signedHistoryAmountLines('self', ['1', '999999'], '0,00000308');
+    expect([...amount, formatHistoryDetails(entry, 'fr', makeTranslator('fr'))].join('\n'))
+      .toBe('−0,00000308\n16h30 · 04/09/2026 · Interne\nBloc 1005112');
+  });
+
+  const expected = {
+    en: ['4:30 PM · 09/04/2026', 'Received', 'Sent', 'Internal', 'Block 1005112'],
+    zh: ['16:30 · 2026/09/04', '已收', '已发', '内部', '区块 1005112'],
+    de: ['16:30 · 04.09.2026', 'Empfangen', 'Gesendet', 'Intern', 'Block 1005112'],
+    es: ['16:30 · 04/09/2026', 'Recibido', 'Enviado', 'Interno', 'Bloque 1005112'],
+    fr: ['16h30 · 04/09/2026', 'Reçu', 'Envoyé', 'Interne', 'Bloc 1005112'],
+    ja: ['16:30 · 2026/09/04', '受取', '送金', '内部', 'ブロック 1005112'],
+    tr: ['16:30 · 04.09.2026', 'Alındı', 'Gönderildi', 'Dahili', 'Blok 1005112'],
+    pt: ['16:30 · 04/09/2026', 'Recebido', 'Enviado', 'Interno', 'Bloco 1005112'],
+    ru: ['16:30 · 04.09.2026', 'Получено', 'Отправлено', 'Внутренний', 'Блок 1005112'],
+  } satisfies Record<LanguageCode, readonly string[]>;
+
+  it.each(Object.keys(expected) as LanguageCode[])('uses the same dated two-line layout for all directions in %s', (language) => {
+    const [date, received, sent, self, block] = expected[language];
+    const t = makeTranslator(language);
+    for (const [direction, label] of [['received', received], ['sent', sent], ['self', self]] as const) {
+      const entry = Object.freeze({ direction, blockTime, height: 1005112 });
+      expect(formatHistoryDetails(entry, language, t)).toBe(`${date} · ${label}\n${block}`);
+    }
+  });
+
+  it.each([0, -1])('shows mempool height %s on its own line without inventing a date', (height) => {
+    expect(formatHistoryDetails({ direction: 'self', height }, 'fr', makeTranslator('fr')))
+      .toBe('Interne\nMempool');
+  });
+
+  it('keeps a mined row undated until its real timestamp is recovered', () => {
+    expect(formatHistoryDetails({ direction: 'self', height: 1005112 }, 'fr', makeTranslator('fr')))
+      .toBe('Interne\nBloc 1005112');
+    expect(formatHistoryDetails({ height: 1005112 }, 'fr', makeTranslator('fr')))
+      .toBe('Bloc 1005112');
+  });
+
+  it('uses the shared formatter in the real history row without a separate internal branch', () => {
+    const source = readFileSync(new URL('./tabs.tsx', import.meta.url), 'utf8');
+    expect(source.includes('{formatHistoryDetails(entry, language, t)}')).toBe(true);
+    expect(source.includes("entry.direction !== 'self' && entry.blockTime")).toBe(false);
   });
 });

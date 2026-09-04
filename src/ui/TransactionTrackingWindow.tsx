@@ -13,17 +13,16 @@ import { useStyles } from './themeContext';
 import type { NetworkState } from './types';
 
 export function TransactionTrackingWindow({
-  tracking, network, visible, t, feedbackError, onWindowChange, onExplorer, onActivity,
-  language, rbfReview, busy, onReplace, onConfirmReplacement, onCancelReplacement, onCopyTxid,
+  tracking, network, visible, t, feedbackError, onClose, onExplorer, onActivity,
+  language, rbfReview, busy, onReplace, onConfirmReplacement, onCancelReplacement,
 }: {
   tracking: ReturnType<TransactionTrackingController['getSnapshot']>;
   network: NetworkState;
   visible: boolean;
   t: Translator;
   feedbackError: string;
-  onWindowChange: (lifecycleId: string, open: boolean) => void;
+  onClose: (lifecycleId: string) => void;
   onExplorer: (txid: string) => void;
-  onCopyTxid: (txid: string) => Promise<boolean>;
   onActivity: () => void;
   language: LanguageCode;
   rbfReview: RbfQuote | null;
@@ -34,9 +33,7 @@ export function TransactionTrackingWindow({
 }) {
   const styles = useStyles();
   const [now, setNow] = useState(Date.now);
-  const [copiedTxid, setCopiedTxid] = useState('');
-  const index = tracking.records.findIndex(({ lifecycleId }) => lifecycleId === tracking.window?.lifecycleId);
-  const record = tracking.records[index];
+  const record = tracking.records.find(({ lifecycleId }) => lifecycleId === tracking.window?.lifecycleId);
   const winner = record ? confirmedTransactionFamilyMember(record, tracking.records, network.snapshot?.history ?? []) : undefined;
   const outcome = record ? transactionReplacementOutcome(record, tracking.records, network.snapshot?.history ?? []) : null;
   const displayed = winner ?? record;
@@ -56,7 +53,7 @@ export function TransactionTrackingWindow({
   const seconds = Math.max(0, Math.ceil(((record.nextBroadcastAttemptAt ?? 0) - now) / 1000));
   const height = network.snapshot?.history.find(({ txid }) => txid === displayedTxid)?.height;
   const review = rbfReview?.originalLifecycleId === record.lifecycleId ? rbfReview : null;
-  const close = () => onWindowChange(record.lifecycleId, false);
+  const close = () => onClose(record.lifecycleId);
 
   return (
     <Modal transparent animationType="fade" visible={visible} onRequestClose={close}>
@@ -76,7 +73,7 @@ export function TransactionTrackingWindow({
                 </>
               ) : (
                 <>
-                  <View style={styles.trackingNavigation} accessibilityRole="progressbar"
+                  <View style={styles.trackingProgressRow} accessibilityRole="progressbar"
                     accessibilityLabel={t('tracking.progress')}
                     accessibilityValue={{ min: 0, max: 4, now: transactionTrackingStage(status), text: t(`tracking.${status}`) }}>
                     {[1, 2, 3, 4].map((stage) => <View key={stage} style={[
@@ -93,32 +90,9 @@ export function TransactionTrackingWindow({
                   {tracking.storageError ? <Text style={styles.fieldError}>{t('errors.walletStorageUnavailable')}</Text> : null}
                   {feedbackError ? <Text style={styles.fieldError}>{feedbackError}</Text> : null}
                   <Text style={styles.helper}>{shortAddress(displayedTxid)}</Text>
-                  <View style={styles.trackingNavigation}>
-                    <View style={styles.trackingNavigationItem}>
-                      <ActionButton label={t('actions.viewTx')} variant="secondary" onPress={() => onExplorer(displayedTxid)} />
-                    </View>
-                    <View style={styles.trackingNavigationItem}>
-                      <ActionButton label={t(copiedTxid === displayedTxid ? 'tracking.copied' : 'tracking.copyTxid')} variant="secondary"
-                        onPress={() => { void onCopyTxid(displayedTxid).then((copied) => { if (copied) setCopiedTxid(displayedTxid); }); }} />
-                    </View>
-                  </View>
+                  <ActionButton label={t('actions.viewTx')} variant="secondary" onPress={() => onExplorer(displayedTxid)} />
                   {canCancel ? <ActionButton label={t('rbf.cancel')} variant="secondary" disabled={busy}
                     onPress={() => onReplace(record.lifecycleId, 'cancel')} /> : null}
-                  {tracking.records.length > 1 ? (
-                    <>
-                      <Text style={styles.helper}>{t('tracking.position', { current: index + 1, total: tracking.records.length })}</Text>
-                      <View style={styles.trackingNavigation}>
-                        <View style={styles.trackingNavigationItem}>
-                          <ActionButton label={t('actions.previousPage')} variant="secondary" disabled={index <= 0}
-                            onPress={() => { const previous = tracking.records[index - 1]; if (previous) onWindowChange(previous.lifecycleId, true); }} />
-                        </View>
-                        <View style={styles.trackingNavigationItem}>
-                          <ActionButton label={t('actions.nextPage')} variant="secondary" disabled={index >= tracking.records.length - 1}
-                            onPress={() => { const next = tracking.records[index + 1]; if (next) onWindowChange(next.lifecycleId, true); }} />
-                        </View>
-                      </View>
-                    </>
-                  ) : null}
                 </>
               )}
             </ScrollView>
