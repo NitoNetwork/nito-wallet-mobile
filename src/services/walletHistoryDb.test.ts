@@ -171,7 +171,7 @@ describe('wallet transaction output cache', () => {
     let highestIssuedIndex = 0;
     const events: string[] = [];
     db.getFirstAsync.mockImplementation(async (sql: string) => {
-      if (sql === 'PRAGMA user_version') return { user_version: 6 };
+      if (sql === 'PRAGMA user_version') return { user_version: 7 };
       if (String(sql).includes('FROM wallet_hd_sequences')) {
         return highestIssuedIndex > 0 ? {
           account_key: 'taproot',
@@ -371,7 +371,7 @@ describe('wallet transaction output cache', () => {
     };
 
     db.getFirstAsync.mockImplementation(async (sql: string) => (
-      sql === 'PRAGMA user_version' ? { user_version: 6 } : null
+      sql === 'PRAGMA user_version' ? { user_version: 7 } : null
     ));
     db.getAllAsync.mockImplementation(async (sql: string) => (
       String(sql).includes('SELECT txid FROM wallet_transactions')
@@ -566,7 +566,7 @@ describe('wallet transaction output cache', () => {
     };
 
     db.getFirstAsync.mockImplementation(async (sql: string) => (
-      sql === 'PRAGMA user_version' ? { user_version: 6 } : null
+      sql === 'PRAGMA user_version' ? { user_version: 7 } : null
     ));
     db.execAsync.mockImplementation(async (sql: string) => {
       if (sql === 'BEGIN IMMEDIATE TRANSACTION') {
@@ -618,7 +618,7 @@ describe('wallet transaction output cache', () => {
   it('chunks history and output inserts below the SQLite binding limit', async () => {
     vi.resetModules();
     db.getFirstAsync.mockImplementation(async (sql: string) => (
-      sql === 'PRAGMA user_version' ? { user_version: 6 } : null
+      sql === 'PRAGMA user_version' ? { user_version: 7 } : null
     ));
     db.runAsync.mockResolvedValue({ changes: 1, lastInsertRowId: 0 });
     sqlite.openDatabaseAsync.mockResolvedValue(db);
@@ -680,7 +680,7 @@ describe('wallet transaction output cache', () => {
       execAsync: vi.fn(async (_sql: string) => undefined),
       getAllAsync: vi.fn(async (_sql: string, ..._params: unknown[]) => []),
       getFirstAsync: vi.fn(async (sql: string) => (
-        sql === 'PRAGMA user_version' ? { user_version: 6 } : null
+        sql === 'PRAGMA user_version' ? { user_version: 7 } : null
       )),
       runAsync: vi.fn(async (_sql: string, ..._params: unknown[]) => ({
         changes: 1,
@@ -834,7 +834,7 @@ describe('wallet transaction output cache', () => {
     let rollback: { row: typeof row; window: { lifecycle_id: string; window_open: number } | null } = { row: { ...row }, window };
     let rejectWindow = true;
     db.getFirstAsync.mockImplementation(async (sql: string) => {
-      if (sql === 'PRAGMA user_version') return { user_version: 6 };
+      if (sql === 'PRAGMA user_version') return { user_version: 7 };
       if (sql.includes('FROM wallet_transaction_tracking')) return window;
       if (sql.includes('FROM wallet_transaction_lifecycle')) return exists ? { ...row } : null;
       return null;
@@ -885,7 +885,7 @@ describe('wallet transaction output cache', () => {
     let id = 0;
     const events: string[] = [];
     db.getFirstAsync.mockImplementation(async (sql: string) => {
-      if (sql === 'PRAGMA user_version') return { user_version: 6 };
+      if (sql === 'PRAGMA user_version') return { user_version: 7 };
       if (sql.includes('randomblob')) return { lifecycle_id: `reservation-${++id}` };
       if (sql.includes('FROM wallet_hd_sequences')) {
         return highestIssuedIndex >= 0 ? {
@@ -941,7 +941,7 @@ describe('wallet transaction output cache', () => {
   it('reloads signed transaction state after a database restart', async () => {
     vi.resetModules();
     db.getFirstAsync.mockImplementation(async (sql: string) => (
-      sql === 'PRAGMA user_version' ? { user_version: 6 } : null
+      sql === 'PRAGMA user_version' ? { user_version: 7 } : null
     ));
     db.getAllAsync.mockImplementation(async (sql: string) => (
       sql.includes('FROM wallet_transaction_lifecycle') ? [{
@@ -1002,7 +1002,7 @@ describe('wallet transaction output cache', () => {
       last_broadcast_attempt_at: null as number | null,
     };
     db.getFirstAsync.mockImplementation(async (sql: string) => {
-      if (sql === 'PRAGMA user_version') return { user_version: 6 };
+      if (sql === 'PRAGMA user_version') return { user_version: 7 };
       if (sql.includes('FROM wallet_transaction_lifecycle')) return { ...row };
       return null;
     });
@@ -1074,7 +1074,7 @@ describe('wallet transaction output cache', () => {
     };
     const states: string[] = [];
     db.getFirstAsync.mockImplementation(async (sql: string) => {
-      if (sql === 'PRAGMA user_version') return { user_version: 6 };
+      if (sql === 'PRAGMA user_version') return { user_version: 7 };
       if (sql.includes('FROM wallet_transaction_lifecycle')) return { ...row };
       return null;
     });

@@ -1,11 +1,11 @@
 import type { ElectrumHistoryEntry } from '../network/electrum';
 import type { WalletSessionToken } from './walletSession';
-import { TRANSACTION_BROADCAST_MAX_ATTEMPTS, type TransactionLifecycleRecord } from './transactionLifecycle';
+import { confirmedTransactionFamilyMember, TRANSACTION_BROADCAST_MAX_ATTEMPTS, type TransactionLifecycleRecord } from './transactionLifecycle';
 
 // Public display data only. No raw transaction, key, amount or balance is owned here.
 export type TrackedTransaction = Pick<TransactionLifecycleRecord,
   'lifecycleId' | 'walletId' | 'purpose' | 'state' | 'txid'
-  | 'broadcastInvocations' | 'nextBroadcastAttemptAt'>;
+  | 'broadcastInvocations' | 'nextBroadcastAttemptAt' | 'replacement'>;
 export type TransactionTrackingWindowState = {
   lifecycleId: string;
   open: boolean;
@@ -26,7 +26,23 @@ export const publicTransactionTrackingRecord = (record: TransactionLifecycleReco
   txid: record.txid,
   broadcastInvocations: record.broadcastInvocations,
   nextBroadcastAttemptAt: record.nextBroadcastAttemptAt,
+  replacement: record.replacement,
 });
+
+export const transactionReplacementOutcome = (
+  record: TrackedTransaction, records: readonly TrackedTransaction[], history: readonly ElectrumHistoryEntry[],
+): 'original-confirmed' | 'replacement-confirmed' | null => {
+  const winner = confirmedTransactionFamilyMember(record, records, history);
+  if (!winner || winner.lifecycleId === record.lifecycleId) return null;
+  const seen = new Set<string>();
+  let parent = record.replacement?.originalLifecycleId;
+  while (parent && !seen.has(parent)) {
+    if (parent === winner.lifecycleId) return 'original-confirmed';
+    seen.add(parent);
+    parent = records.find((candidate) => candidate.lifecycleId === parent)?.replacement?.originalLifecycleId;
+  }
+  return 'replacement-confirmed';
+};
 
 export const transactionTrackingStatus = (
   record: TrackedTransaction,
@@ -40,7 +56,7 @@ export const transactionTrackingStatus = (
   if (inFlight) return 'broadcasting';
   if (record.state === 'published') return 'accepted';
   // A persisted confirmation cannot overrule a missing/reorganized network snapshot.
-  if (record.state === 'confirmed') return 'unresolved';
+  if (record.state === 'confirmed' || record.state === 'conflicted') return 'unresolved';
   if (record.broadcastInvocations >= TRANSACTION_BROADCAST_MAX_ATTEMPTS) return 'unresolved';
   return record.state === 'signed' ? 'signed' : 'scheduled';
 };

@@ -5,7 +5,14 @@ export type TransactionLifecycleState =
   | 'signed'
   | 'broadcast-uncertain'
   | 'published'
-  | 'confirmed';
+  | 'confirmed'
+  | 'conflicted';
+
+export type TransactionReplacement = {
+  originalLifecycleId: string;
+  originalTxid: string;
+  mode: 'accelerate' | 'cancel';
+};
 
 export type TransactionLifecyclePurpose = 'send' | 'consolidation';
 
@@ -23,6 +30,7 @@ export type TransactionLifecycleRecord = {
   broadcastInvocations: number;
   nextBroadcastAttemptAt: number | null;
   lastBroadcastAttemptAt: number | null;
+  replacement?: TransactionReplacement;
 };
 
 export const TRANSACTION_BROADCAST_MAX_ATTEMPTS = 5;
@@ -53,6 +61,7 @@ const STATE_ORDER: Record<TransactionLifecycleState, number> = {
   'broadcast-uncertain': 2,
   published: 3,
   confirmed: 4,
+  conflicted: 4,
 };
 
 export const assertLifecycleTransition = (
@@ -69,10 +78,42 @@ export const reconciledLifecycleState = (
   txid: string | null,
   history: readonly ElectrumHistoryEntry[],
 ): TransactionLifecycleState => {
-  if (!txid || current === 'reserved' || current === 'signed' || current === 'confirmed') {
+  if (!txid || current === 'reserved' || current === 'signed' || current === 'confirmed' || current === 'conflicted') {
     return current;
   }
   const entry = history.find((candidate) => candidate.txid === txid);
   if (!entry) return current;
   return entry.height > 0 ? 'confirmed' : 'published';
+};
+
+export const transactionFamilyIds = (
+  records: readonly Pick<TransactionLifecycleRecord, 'lifecycleId' | 'replacement'>[], lifecycleId: string,
+): Set<string> => {
+  const family = new Set([lifecycleId]);
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const record of records) {
+      const parent = record.replacement?.originalLifecycleId;
+      if (!parent || (!family.has(parent) && !family.has(record.lifecycleId))) continue;
+      if (!family.has(parent) || !family.has(record.lifecycleId)) changed = true;
+      family.add(parent);
+      family.add(record.lifecycleId);
+    }
+  }
+  return family;
+};
+
+export const hasSignedReplacement = (
+  record: Pick<TransactionLifecycleRecord, 'lifecycleId'>,
+  records: readonly Pick<TransactionLifecycleRecord, 'state' | 'replacement'>[],
+): boolean => records.some((candidate) => candidate.state !== 'reserved'
+  && candidate.replacement?.originalLifecycleId === record.lifecycleId);
+
+export const confirmedTransactionFamilyMember = <T extends Pick<TransactionLifecycleRecord, 'lifecycleId' | 'replacement' | 'txid'>>(
+  record: T, records: readonly T[], history: readonly ElectrumHistoryEntry[],
+): T | undefined => {
+  const family = transactionFamilyIds(records, record.lifecycleId);
+  const confirmed = new Set(history.filter((entry) => entry.height > 0).map((entry) => entry.txid));
+  return records.find((candidate) => family.has(candidate.lifecycleId) && candidate.txid && confirmed.has(candidate.txid));
 };

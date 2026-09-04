@@ -16,10 +16,15 @@ transactions and new blocks, and to broadcast signed transactions.
 - Unlock with a password and, when enabled, device biometrics.
 - Configure automatic locking after 1, 5 or 15 minutes of inactivity.
 - Discover standard transparent HD branches with gap-limit scanning.
-- Receive with a Bech32 address and QR code.
+- Receive with Taproot by default, or select Legacy, P2SH or Bech32.
+- Generate additional HD receive addresses with a QR code for each address.
 - Send to multiple recipients in one transparent transaction with local signing
   and a review step.
 - Consolidate many small outputs into a few equal-value outputs.
+- Use a newly reserved internal Taproot address for each transaction's change.
+- Resume saved signed transactions after locking or restarting the app.
+- Follow sending, mempool observation and confirmation in one restorable window.
+- Accelerate an eligible unconfirmed transaction or attempt cancellation with RBF.
 - Import the full transaction history automatically, with each entry's amount
   and direction (received, sent or internal).
 - Manually clear and resynchronize the full transaction history.
@@ -47,6 +52,7 @@ Requirements:
 - Node.js 24
 - npm 11
 - Rust 1.97
+- Python 3 for the real SQLite integration tests
 - Android SDK and JDK 17 for Android builds
 - macOS and Xcode 26 for iOS device builds
 

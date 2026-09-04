@@ -34,6 +34,10 @@ Wallet metadata, synchronization checkpoints and optional reconstructed history
 are stored locally. Removing the wallet from the application deletes its local
 vault and cached metadata but does not erase the public blockchain.
 
+Issued HD address indices, signed transactions awaiting broadcast and their
+tracking status are also stored locally so interrupted sends can resume. This
+history database contains no recovery phrase or private key.
+
 The application blocks screen capture while recovery words are visible. On iOS,
 those phrase displays are also protected in application-switcher previews.
 

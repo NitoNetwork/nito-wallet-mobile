@@ -18,6 +18,7 @@ import {
   nextTransactionBroadcastAttemptAt,
   reconciledLifecycleState,
   TRANSACTION_BROADCAST_MAX_ATTEMPTS,
+  confirmedTransactionFamilyMember,
 } from './transactionLifecycle';
 import type { CachedTransactionOutput } from './historyExport';
 import type { TransactionTrackingData, TransactionTrackingWindowState, TrackedTransaction } from './transactionTracking';
@@ -254,6 +255,21 @@ const initializeHistoryDb = async () => {
       `);
     });
   }
+  if ((version?.user_version ?? 0) < 7) {
+    await runWriteTransaction(db, async () => {
+      await db.execAsync(`
+        CREATE TABLE IF NOT EXISTS wallet_transaction_replacements (
+          wallet_id TEXT NOT NULL,
+          original_lifecycle_id TEXT NOT NULL,
+          original_txid TEXT NOT NULL,
+          replacement_lifecycle_id TEXT PRIMARY KEY NOT NULL,
+          mode TEXT NOT NULL CHECK (mode IN ('accelerate', 'cancel')),
+          UNIQUE (wallet_id, original_lifecycle_id)
+        );
+        PRAGMA user_version = 7;
+      `);
+    });
+  }
 
   return db;
 };
@@ -452,6 +468,7 @@ export const reserveNextHdAddressIndex = async ({
 const isTransactionLifecycleState = (value: string): value is TransactionLifecycleState => (
   value === 'reserved'
   || value === 'signed'
+  || value === 'conflicted'
   || value === 'broadcast-uncertain'
   || value === 'published'
   || value === 'confirmed'
@@ -676,12 +693,14 @@ const transitionTransactionLifecycle = async ({
   state,
   txid,
   rawTxHex,
+  replacement,
 }: {
   walletId: string;
   lifecycleId: string;
   state: TransactionLifecycleState;
   txid?: string;
   rawTxHex?: string;
+  replacement?: TransactionLifecycleRecord['replacement'];
 }): Promise<void> => runWalletStorageOperation('transaction lifecycle write', async () => {
   const db = await openHistoryDb();
   await runWriteTransaction(db, async () => {
@@ -697,6 +716,21 @@ const transitionTransactionLifecycle = async ({
     if (!row) throw new Error('Transaction lifecycle reservation was not found.');
     const current = validateTransactionLifecycleRow(row);
     assertLifecycleTransition(current.state, state);
+    if (replacement) {
+      if (state !== 'signed' || current.state !== 'reserved' || replacement.originalLifecycleId === lifecycleId
+        || !['accelerate', 'cancel'].includes(replacement.mode)) throw new Error('Invalid replacement transition.');
+      const original = await db.getFirstAsync<{ txid: string; state: string }>(
+        'SELECT txid, state FROM wallet_transaction_lifecycle WHERE wallet_id = ? AND lifecycle_id = ?',
+        walletId, replacement.originalLifecycleId,
+      );
+      if (!original || original.txid !== replacement.originalTxid
+        || !['published', 'broadcast-uncertain'].includes(original.state)) throw new Error('Original transaction is no longer replaceable.');
+      await db.runAsync(
+        `INSERT INTO wallet_transaction_replacements
+         (wallet_id, original_lifecycle_id, original_txid, replacement_lifecycle_id, mode) VALUES (?, ?, ?, ?, ?)`,
+        walletId, replacement.originalLifecycleId, replacement.originalTxid, lifecycleId, replacement.mode,
+      );
+    }
     const nextTxid = txid ?? current.txid;
     const nextRawTxHex = rawTxHex ?? current.rawTxHex;
     if (state !== 'reserved' && (!nextTxid || !nextRawTxHex)) {
@@ -725,12 +759,14 @@ export const markTransactionLifecycleSigned = (
   lifecycleId: string,
   txid: string,
   rawTxHex: string,
+  replacement?: TransactionLifecycleRecord['replacement'],
 ): Promise<void> => transitionTransactionLifecycle({
   walletId,
   lifecycleId,
   state: 'signed',
   txid,
   rawTxHex,
+  replacement,
 });
 
 export const markTransactionLifecycleBroadcastUncertain = (
@@ -817,6 +853,11 @@ export const recordTransactionLifecycleBroadcastInvocation = async (
     }
     const db = await openHistoryDb();
     return runWriteTransaction(db, async () => {
+      const replacement = await db.getFirstAsync<{ replacement_lifecycle_id: string }>(
+        'SELECT replacement_lifecycle_id FROM wallet_transaction_replacements WHERE wallet_id = ? AND original_lifecycle_id = ?',
+        walletId, lifecycleId,
+      );
+      if (replacement) return null;
       const row = await db.getFirstAsync<TransactionLifecycleRow>(
         `SELECT lifecycle_id, wallet_id, account_key, branch, purpose, address_index, derivation_path, address, state, txid, raw_tx_hex,
                 recovery_attempts, broadcast_invocations,
@@ -864,6 +905,10 @@ export const markTransactionLifecyclePublished = (
   state: 'published',
 });
 
+export const markTransactionLifecycleConflicted = (walletId: string, lifecycleId: string): Promise<void> => (
+  transitionTransactionLifecycle({ walletId, lifecycleId, state: 'conflicted' })
+);
+
 export const loadTransactionLifecycles = async (
   walletId: string,
 ): Promise<TransactionLifecycleRecord[]> => runWalletStorageOperation(
@@ -879,9 +924,21 @@ export const loadTransactionLifecycles = async (
        ORDER BY address_index`,
       walletId,
     );
-    return rows.map(validateTransactionLifecycleRow);
+    const replacements = await readTransactionReplacements(db, walletId);
+    return rows.map((row) => ({ ...validateTransactionLifecycleRow(row), replacement: replacements.get(row.lifecycle_id) }));
   },
 );
+
+const readTransactionReplacements = async (db: SQLite.SQLiteDatabase, walletId: string) => {
+  const rows = await db.getAllAsync<{
+    original_lifecycle_id: string; original_txid: string; replacement_lifecycle_id: string; mode: 'accelerate' | 'cancel';
+  }>('SELECT original_lifecycle_id, original_txid, replacement_lifecycle_id, mode FROM wallet_transaction_replacements WHERE wallet_id = ?', walletId);
+  return new Map(rows.map((row) => {
+    if (!row.original_lifecycle_id || !row.replacement_lifecycle_id || !/^[a-f0-9]{64}$/i.test(row.original_txid)
+      || !['accelerate', 'cancel'].includes(row.mode)) throw new Error('Invalid persisted transaction replacement.');
+    return [row.replacement_lifecycle_id, { originalLifecycleId: row.original_lifecycle_id, originalTxid: row.original_txid, mode: row.mode }] as const;
+  }));
+};
 
 const writeTransactionTrackingWindow = async (
   db: SQLite.SQLiteDatabase,
@@ -933,13 +990,14 @@ export const loadTransactionTracking = async (
     typeof window.lifecycle_id !== 'string'
     || (window.window_open !== 0 && window.window_open !== 1)
   )) throw new Error('Invalid transaction tracking window.');
+  const replacements = await readTransactionReplacements(db, walletId);
   return {
     records: rows.map((row): TrackedTransaction => {
       if (
         typeof row.lifecycle_id !== 'string' || !row.lifecycle_id
         || row.wallet_id !== walletId
         || (row.purpose !== 'send' && row.purpose !== 'consolidation')
-        || !['signed', 'broadcast-uncertain', 'published', 'confirmed'].includes(row.state)
+        || !['signed', 'broadcast-uncertain', 'published', 'confirmed', 'conflicted'].includes(row.state)
         || typeof row.txid !== 'string' || !/^[a-f0-9]{64}$/i.test(row.txid)
         || !Number.isSafeInteger(row.broadcast_invocations) || row.broadcast_invocations < 0
         || (row.next_broadcast_attempt_at !== null && (
@@ -951,6 +1009,7 @@ export const loadTransactionTracking = async (
         state: row.state as TrackedTransaction['state'], txid: row.txid,
         broadcastInvocations: row.broadcast_invocations,
         nextBroadcastAttemptAt: row.next_broadcast_attempt_at,
+        replacement: replacements.get(row.lifecycle_id),
       };
     }),
     window: window ? { lifecycleId: window.lifecycle_id, open: window.window_open === 1 } : null,
@@ -968,13 +1027,17 @@ export const reconcileTransactionLifecycles = async (
               recovery_attempts, broadcast_invocations,
               next_broadcast_attempt_at, last_broadcast_attempt_at
        FROM wallet_transaction_lifecycle
-       WHERE wallet_id = ? AND state IN ('broadcast-uncertain', 'published')`,
+       WHERE wallet_id = ? AND state != 'reserved'`,
       walletId,
     );
     const now = new Date().toISOString();
-    for (const row of rows) {
-      const current = validateTransactionLifecycleRow(row);
-      const next = reconciledLifecycleState(current.state, current.txid, history);
+    const replacements = await readTransactionReplacements(db, walletId);
+    const records = rows.map((row) => ({ ...validateTransactionLifecycleRow(row), replacement: replacements.get(row.lifecycle_id) }));
+    for (const current of records) {
+      const winner = confirmedTransactionFamilyMember(current, records, history);
+      const next = winner
+        ? winner.lifecycleId === current.lifecycleId ? 'confirmed' : 'conflicted'
+        : reconciledLifecycleState(current.state, current.txid, history);
       if (next === current.state) continue;
       assertLifecycleTransition(current.state, next);
       await db.runAsync(
@@ -1263,6 +1326,7 @@ export const clearWalletPublicData = async (walletId: string): Promise<void> => 
       await db.runAsync('DELETE FROM wallet_hd_sequences WHERE wallet_id = ?', walletId);
       await db.runAsync('DELETE FROM wallet_transaction_lifecycle WHERE wallet_id = ?', walletId);
       await db.runAsync('DELETE FROM wallet_transaction_tracking WHERE wallet_id = ?', walletId);
+      await db.runAsync('DELETE FROM wallet_transaction_replacements WHERE wallet_id = ?', walletId);
     });
   })
 );

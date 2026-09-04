@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 
 import { WalletSessionGuard } from './walletSession';
-import { TransactionTrackingController, publicTransactionTrackingRecord, transactionTrackingStage, transactionTrackingStatus, type TransactionTrackingData } from './transactionTracking';
+import { TransactionTrackingController, publicTransactionTrackingRecord, transactionReplacementOutcome, transactionTrackingStage, transactionTrackingStatus, type TransactionTrackingData } from './transactionTracking';
 import type { TransactionLifecycleRecord } from './transactionLifecycle';
 import { mergeWalletHistoryPublication } from './walletHistory';
 import { LANGUAGES, makeTranslator } from '../i18n';
@@ -38,6 +38,19 @@ const setup = () => {
 };
 
 describe('single persistent transaction window', () => {
+  it('distinguishes original winning from a later replacement winning in the same window', () => {
+    const first = record({ lifecycleId: 'first', txid: 'first', state: 'published' });
+    const second = record({ lifecycleId: 'second', txid: 'second', replacement: { originalLifecycleId: 'first', originalTxid: 'first', mode: 'accelerate' } });
+    const third = record({ lifecycleId: 'third', txid: 'third', replacement: { originalLifecycleId: 'second', originalTxid: 'second', mode: 'cancel' } });
+    const records = [first, second, third];
+    const history = (txid: string, height = 42) => [{ txid, height, address: 'address' }];
+    expect(transactionReplacementOutcome(third, records, history('first'))).toBe('original-confirmed');
+    expect(transactionReplacementOutcome(second, records, history('third'))).toBe('replacement-confirmed');
+    expect(transactionReplacementOutcome(first, records, history('third'))).toBe('replacement-confirmed');
+    expect(transactionReplacementOutcome(third, records, history('third'))).toBeNull();
+    expect(transactionReplacementOutcome(third, records, history('first', 0))).toBeNull();
+  });
+
   it('distinguishes all seven stages without treating local history or server acceptance as a mempool observation', () => {
     const original = record();
     const pending = { txid: original.txid!, height: 0, address: 'change' };

@@ -52,6 +52,26 @@ const ports = (overrides: Partial<Parameters<typeof recoverPersistedTransactionB
 });
 
 describe('persistent transaction broadcast recovery', () => {
+  it('resumes only the signed replacement after restart, never its original', async () => {
+    const original = record({ lifecycleId: 'original', state: 'broadcast-uncertain' });
+    const replacement = record({ lifecycleId: 'replacement', txid: 'cd'.repeat(32), rawTxHex: 'aabb',
+      replacement: { originalLifecycleId: 'original', originalTxid: original.txid!, mode: 'cancel' } });
+    const beforeBroadcast = vi.fn(async () => true);
+    const recovery = ports({ records: [original, replacement], beforeBroadcast });
+    expect((await recoverPersistedTransactionBroadcasts(recovery)).publishedTxids).toEqual([replacement.txid]);
+    expect(recovery.broadcastTransaction).toHaveBeenCalledExactlyOnceWith('aabb', replacement.txid);
+    expect(beforeBroadcast).toHaveBeenCalledWith(expect.objectContaining({ replacement: replacement.replacement }));
+  });
+
+  it('does not consume an invocation or broadcast after the original wins the confirmation race', async () => {
+    const recovery = ports({ beforeBroadcast: async () => false });
+    const result = await recoverPersistedTransactionBroadcasts(recovery);
+    expect(result).toEqual({ publishedTxids: [], failures: [], nextAttemptAt: null });
+    expect(recovery.recordBroadcastInvocation).not.toHaveBeenCalled();
+    expect(recovery.broadcastTransaction).not.toHaveBeenCalled();
+    expect(recovery.markPublished).not.toHaveBeenCalled();
+  });
+
   it('does not let a display observer failure change the publication outcome', async () => {
     const report = vi.spyOn(diagnostics, 'reportNonFinancialFailure').mockImplementation(() => undefined);
     try {

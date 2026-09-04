@@ -3,6 +3,7 @@ import { reportNonFinancialFailure } from './diagnostics';
 import {
   nextTransactionBroadcastAttemptAt,
   TRANSACTION_BROADCAST_MAX_ATTEMPTS,
+  hasSignedReplacement,
 } from './transactionLifecycle';
 
 export type TransactionBroadcastRecoveryFailure = {
@@ -31,6 +32,7 @@ type TransactionBroadcastRecoveryPorts = {
   isTransactionNotFound: (error: unknown) => boolean;
   broadcastTransaction: (rawTxHex: string, expectedTxid: string) => Promise<string>;
   markPublished: (record: TransactionLifecycleRecord) => Promise<void>;
+  beforeBroadcast?: (record: TransactionLifecycleRecord) => Promise<boolean>;
   onRecordChanged?: (record: TransactionLifecycleRecord, active: boolean) => void;
 };
 
@@ -78,6 +80,7 @@ export const recoverPersistedTransactionBroadcasts = async (
   let consolidationBlocked = false;
 
   for (const record of ports.records) {
+    if (hasSignedReplacement(record, ports.records)) continue;
     if (record.purpose === 'consolidation' && consolidationBlocked) continue;
     if (
       (record.state !== 'signed' && record.state !== 'broadcast-uncertain')
@@ -117,15 +120,17 @@ export const recoverPersistedTransactionBroadcasts = async (
       }
 
       let found = false;
+      claimed = { ...claimed, replacement: record.replacement };
       notifyTracking(ports, claimed, true);
       try {
-        await ports.lookupTransaction(claimed.txid);
+        await ports.lookupTransaction(claimed.txid!);
         found = true;
       } catch (caught) {
         if (!ports.isTransactionNotFound(caught)) throw caught;
       }
 
       if (!found) {
+        if (ports.beforeBroadcast && !await ports.beforeBroadcast(claimed)) continue;
         try {
           const broadcastable = await ports.recordBroadcastInvocation(claimed, ports.now);
           if (!broadcastable || !broadcastable.txid || !broadcastable.rawTxHex) {
@@ -133,7 +138,7 @@ export const recoverPersistedTransactionBroadcasts = async (
             if (record.purpose === 'consolidation') consolidationBlocked = true;
             continue;
           }
-          claimed = broadcastable;
+          claimed = { ...broadcastable, replacement: record.replacement };
           notifyTracking(ports, claimed, true);
           await ports.broadcastTransaction(broadcastable.rawTxHex, broadcastable.txid);
         } catch (caught) {

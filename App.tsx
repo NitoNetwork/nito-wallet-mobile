@@ -73,6 +73,12 @@ import { SecurityTab } from './src/ui/settings';
 import { ActionButton } from './src/ui/components';
 import { TransactionTrackingWindow } from './src/ui/TransactionTrackingWindow';
 import { TransactionTrackingController } from './src/services/transactionTracking';
+import { submitRbfReplacement } from './src/services/transactionReplacement';
+import { hasSignedReplacement } from './src/services/transactionLifecycle';
+import {
+  RbfError, assertRbfOriginalPending, assertSignedRbfFee, loadRbfOriginal, prepareRbfQuote, rbfNetworkFeeRate,
+  type RbfQuote, type ReplacementMode,
+} from './src/wallet/transparentRbf';
 import { DiceEntropyScreen } from './src/ui/dice';
 import type {
   AppScreen,
@@ -151,6 +157,7 @@ import {
   claimTransactionLifecycleBroadcastAttempt,
   recordTransactionLifecycleBroadcastInvocation,
   markTransactionLifecyclePublished,
+  markTransactionLifecycleConflicted,
   markTransactionLifecycleSigned,
   reconcileTransactionLifecycles,
   reserveInternalTaprootTransactions,
@@ -545,6 +552,12 @@ function WalletApp({ theme, onSelectTheme }: {
   const [sendEstimate, setSendEstimate] = useState<SendEstimateState | null>(null);
   const [sendEstimatePending, setSendEstimatePending] = useState(false);
   const [preparedTx, setPreparedTx] = useState<UnsignedTransparentSend | null>(null);
+  const [rbfReview, setRbfReview] = useState<RbfQuote | null>(null);
+  const rbfRevision = useRef(0);
+  const clearRbfReview = useCallback(() => {
+    rbfRevision.current += 1;
+    setRbfReview(null);
+  }, []);
   const [preparedConsolidation, setPreparedConsolidation] =
     useState<UnsignedTransparentConsolidation | null>(null);
   const [broadcasting, setBroadcasting] = useState(false);
@@ -742,13 +755,14 @@ function WalletApp({ theme, onSelectTheme }: {
   }, []);
 
   const resetSendDraft = useCallback(() => {
+    clearRbfReview();
     nextSendRecipientIdRef.current = 2;
     qrRecipientIdRef.current = null;
     setSendRecipients(initialSendRecipients());
     setSendRecipientErrors({});
     setSendEstimate(null);
     setSendEstimatePending(false);
-  }, []);
+  }, [clearRbfReview]);
 
   const applyVaultTransition = useCallback((event: VaultSessionEvent) => {
     const next = transitionVaultSession(vaultSessionStateRef.current, event);
@@ -1226,15 +1240,34 @@ function WalletApp({ theme, onSelectTheme }: {
           : Promise.resolve(null)
       ),
       recordBroadcastInvocation: (record, now) => (
-        recordTransactionLifecycleBroadcastInvocation(walletId, record.lifecycleId, now)
+        walletNetworkController.isCurrent(session)
+          ? recordTransactionLifecycleBroadcastInvocation(walletId, record.lifecycleId, now)
+          : Promise.resolve(null)
       ),
       lookupTransaction: async (txid) => {
         await client.getTransactionHex(txid);
       },
       isTransactionNotFound: isElectrumTransactionNotFoundError,
-      broadcastTransaction: (rawTxHex, expectedTxid) => (
-        client.broadcastTransaction(rawTxHex, expectedTxid)
-      ),
+      broadcastTransaction: (rawTxHex, expectedTxid) => {
+        if (!walletNetworkController.isCurrent(session)) throw new Error('Transaction session ended.');
+        return client.broadcastTransaction(rawTxHex, expectedTxid);
+      },
+      beforeBroadcast: async (record) => {
+        if (!walletNetworkController.isCurrent(session)) return false;
+        if (record.replacement) {
+          const original = candidates.find((candidate) => candidate.lifecycleId === record.replacement!.originalLifecycleId);
+          const snapshot = networkRef.current.snapshot;
+          if (!original || !snapshot) throw new RbfError('unavailable');
+          try {
+            await loadRbfOriginal({ reader: client, lifecycle: original, snapshot, height: client.blockHeight, resumeSignedReplacement: true });
+          } catch (caught) {
+            if (!(caught instanceof RbfError) || caught.code !== 'confirmed') throw caught;
+            await markTransactionLifecycleConflicted(walletId, record.lifecycleId);
+            return false;
+          }
+        }
+        return walletNetworkController.isCurrent(session);
+      },
       markPublished: (record) => (
         markTransactionLifecyclePublished(walletId, record.lifecycleId)
       ),
@@ -1311,15 +1344,18 @@ function WalletApp({ theme, onSelectTheme }: {
     }, includeHistory, options);
     const activeWallet = walletRef.current;
     const currentNetwork = networkRef.current;
-    if (activeWallet && currentNetwork.status === 'connected' && currentNetwork.snapshot) {
+    const reconciliationSession = activeWallet ? walletNetworkController.sessions.capture(activeWallet.walletId) : null;
+    if (activeWallet && reconciliationSession && currentNetwork.status === 'connected' && currentNetwork.snapshot) {
       try {
         await reconcileTransactionLifecycles(
           activeWallet.walletId,
           currentNetwork.snapshot.history,
         );
         const lifecycles = await loadTransactionLifecycles(activeWallet.walletId);
+        if (!walletNetworkController.isCurrent(reconciliationSession)) return;
         await recoverTransactionBroadcasts(activeWallet.walletId, lifecycles);
       } catch (caught) {
+        if (!walletNetworkController.isCurrent(reconciliationSession)) return;
         setError(translatedErrorMessage(
           caught,
           t,
@@ -1454,7 +1490,7 @@ function WalletApp({ theme, onSelectTheme }: {
       clearClient: () => {
         electrumClientRef.current = null;
       },
-      clearPreparedTransaction: () => setPreparedTx(null),
+      clearPreparedTransaction: () => { setPreparedTx(null); clearRbfReview(); },
       clearPreparedConsolidation: () => setPreparedConsolidation(null),
       clearDeferredNetworkWork: () => {
         historyEnrichmentRetryScheduler.cancel();
@@ -1472,6 +1508,7 @@ function WalletApp({ theme, onSelectTheme }: {
     if (session) void transactionTrackingController.restore(session);
   }, [
     clearAddressSubscriptions,
+    clearRbfReview,
     historyEnrichmentRetryScheduler,
     transactionBroadcastRetryScheduler,
     transactionTrackingController,
@@ -2402,8 +2439,117 @@ function WalletApp({ theme, onSelectTheme }: {
     return Object.keys(fieldErrors).length === 0;
   };
 
+  const readReplacementQuote = async (
+    lifecycleId: string, mode: ReplacementMode, session: WalletSessionToken,
+    reserved?: { address: string; addressIndex: number },
+  ) => {
+    const activeWallet = walletRef.current;
+    const snapshot = networkRef.current.snapshot;
+    if (!activeWallet || !snapshot || !walletNetworkController.isCurrent(session)
+      || networkRef.current.status !== 'connected') throw new RbfError('unavailable');
+    const records = await loadTransactionLifecycles(session.walletId);
+    const lifecycle = records.find((record) => record.lifecycleId === lifecycleId);
+    if (!lifecycle || hasSignedReplacement(lifecycle, records)) throw new RbfError('unavailable');
+    const client = electrumClientRef.current;
+    if (!client || !walletNetworkController.isCurrent(session)) throw new RbfError('unavailable');
+    await client.connect();
+    const original = await loadRbfOriginal({ reader: client, lifecycle, snapshot, height: client.blockHeight });
+    const networkRate = rbfNetworkFeeRate(await client.request<unknown>('blockchain.estimatefee', [1]));
+    const index = reserved?.addressIndex ?? 0;
+    const address = reserved?.address ?? (await deriveHdAddress(activeWallet.mnemonic, 'taproot', 'internal', index)).address;
+    return prepareRbfQuote({ mnemonic: activeWallet.mnemonic, original, mode, networkRate, returnAddress: address, returnIndex: index });
+  };
+
+  const showReplacementError = (caught: unknown) => {
+    setError(caught instanceof RbfError ? t(`rbf.error.${caught.code}`)
+      : translatedErrorMessage(caught, t, t('errors.sendFailed'), 'transaction replacement'));
+  };
+
+  const prepareReplacement = async (lifecycleId: string, mode: ReplacementMode) => {
+    await runExclusiveAction('prepare', async () => {
+      resetFeedback();
+      clearRbfReview();
+      setPreparedTx(null);
+      setPreparedConsolidation(null);
+      const revision = rbfRevision.current;
+      const session = walletNetworkController.sessions.capture();
+      if (!session) return;
+      try {
+        const quote = await readReplacementQuote(lifecycleId, mode, session);
+        if (walletNetworkController.isCurrent(session) && revision === rbfRevision.current) setRbfReview(quote);
+      } catch (caught) {
+        if (walletNetworkController.isCurrent(session) && revision === rbfRevision.current) showReplacementError(caught);
+      }
+    });
+  };
+
+  const confirmReplacement = async () => {
+    await runExclusiveAction('broadcast', async () => {
+      const review = rbfReview;
+      const activeWallet = walletRef.current;
+      const session = walletNetworkController.sessions.capture();
+      const revision = rbfRevision.current;
+      if (!review || !activeWallet || !session) return;
+      const isCurrent = () => walletNetworkController.isCurrent(session) && revision === rbfRevision.current;
+      let persisted = false;
+      resetFeedback();
+      try {
+        const result = await submitRbfReplacement({
+          review, isCurrent,
+          rebuild: (reservation?: { lifecycleId: string; address: string; addressIndex: number }) => (
+            readReplacementQuote(review.originalLifecycleId, review.mode, session, reservation)
+          ),
+          reserve: async () => {
+            const requirements = await loadHdAddressRequirements(session.walletId);
+            const snapshot = networkRef.current.snapshot;
+            if (!snapshot || !isCurrent()) throw new RbfError('unavailable');
+            const highestIssuedIndex = requirements.find((item) => item.accountKey === 'taproot' && item.branch === 'internal')?.highestIssuedIndex ?? -1;
+            const range = internalTaprootReservationRange({ snapshot, highestIssuedIndex, count: 1 });
+            const [reserved] = await reserveInternalTaprootTransactions({ walletId: session.walletId, purpose: 'send', count: 1, ...range });
+            if (!reserved || reserved.addressIndex === null) throw new RbfError('inconsistent');
+            const derived = await deriveHdAddress(activeWallet.mnemonic, 'taproot', 'internal', reserved.addressIndex);
+            await attachInternalTransactionAddresses(session.walletId, [{ lifecycleId: reserved.lifecycleId, address: derived.address }]);
+            return { lifecycleId: reserved.lifecycleId, address: derived.address, addressIndex: reserved.addressIndex };
+          },
+          sign: async (quote) => {
+            const client = electrumClientRef.current;
+            if (!client || !isCurrent()) throw new RbfError('unavailable');
+            await assertRbfOriginalPending(client, quote.originalTxid, quote.transaction.walletInputs.map((input) => input.address));
+            if (!isCurrent()) throw new RbfError('unavailable');
+            const signed = await signUnsignedTransparentTx({ mnemonic: activeWallet.mnemonic, transaction: quote.transaction });
+            assertSignedRbfFee(quote, signed.hex, signed.txid);
+            return signed;
+          },
+          persist: (reservation, quote, signed) => markTransactionLifecycleSigned(
+            session.walletId, reservation.lifecycleId, signed.txid, signed.hex,
+            { originalLifecycleId: quote.originalLifecycleId, originalTxid: quote.originalTxid, mode: quote.mode },
+          ),
+        });
+        persisted = result.kind === 'signed';
+        if (!isCurrent()) return;
+        if (result.kind === 'changed') {
+          setRbfReview(result.quote);
+          setError(t('rbf.reviewChanged'));
+          return;
+        }
+        if (result.kind !== 'signed') return;
+        clearRbfReview();
+        await transactionTrackingController.refresh(session);
+        if (!walletNetworkController.isCurrent(session)) return;
+        await recoverTransactionBroadcasts(session.walletId);
+        if (!walletNetworkController.isCurrent(session)) return;
+        // Only a fresh network scan changes balances or removes the old mempool
+        // row. Never optimistically add the replacement on top of its original.
+        await syncTransparentNetwork(true, { force: true, rescanGap: true, silent: true });
+      } catch (caught) {
+        if (walletNetworkController.isCurrent(session) && (persisted || isCurrent())) showReplacementError(caught);
+      }
+    });
+  };
+
   const prepareTransparentSend = async () => {
     await runExclusiveAction('prepare', async () => {
+    clearRbfReview();
     resetFeedback();
 
     if (!wallet || !network.snapshot) {
@@ -2715,6 +2861,7 @@ function WalletApp({ theme, onSelectTheme }: {
 
   const prepareTransparentConsolidation = async () => {
     await runExclusiveAction('consolidate', async () => {
+      clearRbfReview();
       resetFeedback();
       const consolidationT = makeConsolidationTranslator(language);
       if (!wallet || !network.snapshot) {
@@ -3815,6 +3962,12 @@ function WalletApp({ theme, onSelectTheme }: {
         </KeyboardAvoidingView>
       </SafeAreaView>
       <TransactionTrackingWindow
+        language={language}
+        rbfReview={rbfReview}
+        busy={pendingAction !== null}
+        onReplace={(id, mode) => { void prepareReplacement(id, mode); }}
+        onConfirmReplacement={() => { void confirmReplacement(); }}
+        onCancelReplacement={clearRbfReview}
         tracking={transactionTracking}
         feedbackError={error}
         network={network}
@@ -3823,6 +3976,7 @@ function WalletApp({ theme, onSelectTheme }: {
         onActivity={registerActivity}
         onExplorer={(txid) => { void openTransactionExplorerWithFeedback(txid); }}
         onWindowChange={(lifecycleId, open) => {
+          clearRbfReview();
           const session = walletNetworkController.sessions.capture();
           if (session) void transactionTrackingController.setWindow(session, { lifecycleId, open });
         }}

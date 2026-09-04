@@ -29,6 +29,7 @@ export const NITO_SIGNER_NETWORK = {
 
 export const DEFAULT_FEE_PER_VBYTE = 2n;
 export const DUST_LIMIT_SATS = 546n;
+export const RBF_SEQUENCE = 0xffff_fffd;
 
 export type TransparentSendErrorCode =
   | 'invalid-amount-format'
@@ -210,7 +211,7 @@ const cloneInput = (input: Record<string, unknown>) => ({
       : input.witnessUtxo,
 });
 
-const prepareSpendableInputs = async (
+export const prepareSpendableInputs = async (
   mnemonic: string,
   snapshot: TransparentWalletSnapshot,
   crypto: NitoWalletCryptoApi,
@@ -232,7 +233,7 @@ const prepareSpendableInputs = async (
 
   for (const { utxo, owner } of candidates) {
     const material = materialByPath.get(owner.path);
-    if (!material) {
+    if (!material || material.address !== owner.address || material.scriptType !== owner.scriptType) {
       throw new TransparentSendError(
         'signing-material-unavailable',
         new Error(`Native HD material unavailable for ${owner.path}.`),
@@ -244,6 +245,7 @@ const prepareSpendableInputs = async (
       ...spend,
       txid: utxo.txid,
       index: utxo.vout,
+      sequence: RBF_SEQUENCE,
     };
 
     if (owner.scriptType === 'p2pkh') {
@@ -798,13 +800,17 @@ export const signUnsignedTransparentTx = async ({
     signers: transaction.signers,
   });
   const signedTransaction = btc.Transaction.fromPSBT(base64ToBytes(signed.psbtBase64));
-  if (signedTransaction.inputsLength !== transaction.transactionInputs.length) {
+  const reviewedTransaction = btc.Transaction.fromPSBT(base64ToBytes(transaction.psbtBase64));
+  if (signedTransaction.inputsLength !== transaction.transactionInputs.length
+    || signedTransaction.version !== reviewedTransaction.version
+    || signedTransaction.lockTime !== reviewedTransaction.lockTime) {
     throw new TransparentSendError('signing-material-unavailable');
   }
   transaction.transactionInputs.forEach((expected, index) => {
     const input = signedTransaction.getInput(index);
     if (
       input.index !== expected.vout
+      || input.sequence !== reviewedTransaction.getInput(index).sequence
       || !inputTxidCandidates(input.txid).includes(expected.txid.toLowerCase())
     ) {
       throw new TransparentSendError('signing-material-unavailable');
