@@ -3,6 +3,13 @@ import { Platform, StyleSheet } from 'react-native';
 import { mapStyleColors, type ThemeName } from './theme';
 
 const RAW_STYLES = StyleSheet.create({
+  trackingOverlay: { flex: 1, justifyContent: 'center', padding: 20, backgroundColor: 'rgba(2, 6, 17, 0.94)' },
+  trackingCard: { maxHeight: '90%' },
+  trackingContent: { gap: 10 },
+  trackingTitle: { fontSize: 22, lineHeight: 28, marginBottom: 0 },
+  trackingProgressRow: { flexDirection: 'row', gap: 10 },
+  trackingProgress: { flex: 1, height: 4, borderRadius: 2, backgroundColor: '#0b203a' },
+  trackingProgressDone: { backgroundColor: '#8cc6ff' },
   safeArea: {
     flex: 1,
     backgroundColor: '#020611',
@@ -606,6 +613,40 @@ const RAW_STYLES = StyleSheet.create({
     justifyContent: 'center',
     backgroundColor: '#f8fbff',
   },
+  receiveFamilyGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  receiveFamilyButton: {
+    width: '48%',
+    minHeight: 54,
+    borderRadius: 16,
+    paddingHorizontal: 12,
+    paddingVertical: 9,
+    justifyContent: 'center',
+    backgroundColor: 'rgba(2, 6, 17, 0.62)',
+    borderWidth: 1,
+    borderColor: 'rgba(126, 151, 188, 0.22)',
+  },
+  receiveFamilyButtonActive: {
+    backgroundColor: 'rgba(32, 118, 220, 0.18)',
+    borderColor: 'rgba(91, 166, 255, 0.54)',
+  },
+  receiveFamilyName: {
+    color: '#9fb4d3',
+    fontSize: 14,
+    fontWeight: '900',
+  },
+  receiveFamilyNameActive: { color: '#dbeaff' },
+  receiveRecommended: {
+    color: '#8cc6ff',
+    fontSize: 10,
+    fontWeight: '800',
+    marginTop: 2,
+  },
+  receiveActions: { flexDirection: 'row', gap: 8 },
+  receiveAction: { flex: 1 },
   empty: {
     borderRadius: 22,
     padding: 18,
@@ -915,6 +956,7 @@ const RAW_STYLES = StyleSheet.create({
     borderRadius: 18,
     padding: 10,
   },
+  phraseCopy: { gap: 8 },
   mnemonicWord: {
     width: '48%',
     color: '#fff4d6',

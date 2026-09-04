@@ -8,21 +8,31 @@ import {
 } from 'react-native';
 import QRCode from 'react-native-qrcode-svg';
 
-import { CONSOLIDATION_MIN_UTXOS } from '../constants/nito';
+import {
+  CONSOLIDATION_MIN_UTXOS,
+  MAX_NITO_AMOUNT_INPUT_LENGTH,
+} from '../constants/nito';
 import type { LanguageCode, Translator } from '../i18n';
 import { makeConsolidationTranslator } from '../i18n.consolidation';
-import { formatNitoDateTime } from '../i18n.datetime';
 import { HISTORY_PAGE_SIZE } from '../services/historyEnrichmentQueue';
 import type { CachedTransactionOutput } from '../services/historyExport';
 import { reportNonFinancialFailure } from '../services/diagnostics';
 import { loadTransactionOutputCache } from '../services/walletHistoryDb';
 import { isTransparentUtxoSpendable } from '../wallet/coinbaseMaturity';
+import {
+  HD_ACCOUNT_TEMPLATES,
+  type HdAccountKey,
+} from '../wallet/hdAddress';
 import { satoshisToNito } from '../wallet/transparentScan';
-import type { PreparedTransparentConsolidation, PreparedTransparentSend } from '../wallet/transparentSend';
+import type {
+  UnsignedTransparentConsolidation,
+  UnsignedTransparentSend,
+} from '../wallet/transparentSend';
 import { ActionButton } from './components';
 import {
   canShowHistoryExport,
   formatHomeBalance,
+  formatHistoryDetails,
   historyAmountBreakdown,
   historyPageFromInput,
   signedHistoryAmountLines,
@@ -38,24 +48,87 @@ import { QR_COLORS } from './theme';
 import { useStyles, useThemeColor, useThemeName } from './themeContext';
 import type { NetworkState, PendingAction, Wallet } from './types';
 
-export function ReceiveTab({ wallet, t, pendingAction, actionLocked, onCopyAddress }: {
+export function ReceiveTab({
+  wallet,
+  t,
+  pendingAction,
+  actionLocked,
+  addressBusy,
+  networkReady,
+  onSelectFamily,
+  onCreateAddress,
+  onCopyAddress,
+}: {
   wallet: Wallet;
   t: Translator;
   pendingAction: PendingAction | null;
   actionLocked: boolean;
+  addressBusy: boolean;
+  networkReady: boolean;
+  onSelectFamily: (accountKey: HdAccountKey) => void;
+  onCreateAddress: () => void;
   onCopyAddress: () => void;
 }) {
   const styles = useStyles();
   const qrColors = QR_COLORS[useThemeName()];
+  const selectedFamily = HD_ACCOUNT_TEMPLATES.find(
+    (template) => template.key === wallet.receiveAccountKey,
+  ) ?? HD_ACCOUNT_TEMPLATES[3];
   return (
     <View style={styles.card}>
       <Text style={styles.sectionTitle}>{t('receive.title')}</Text>
-      <View style={styles.qrPlaceholder}>
-        <QRCode value={wallet.address} size={204} quietZone={12} color={qrColors.foreground} backgroundColor={qrColors.background} />
+      <View style={styles.receiveFamilyGrid}>
+        {HD_ACCOUNT_TEMPLATES.map((family) => {
+          const selected = family.key === wallet.receiveAccountKey;
+          return (
+            <TouchableOpacity
+              accessibilityRole="button"
+              accessibilityState={{ selected, disabled: actionLocked || addressBusy }}
+              disabled={actionLocked || addressBusy}
+              key={family.key}
+              onPress={() => onSelectFamily(family.key)}
+              style={[
+                styles.receiveFamilyButton,
+                selected && styles.receiveFamilyButtonActive,
+              ]}
+            >
+              <Text style={[
+                styles.receiveFamilyName,
+                selected && styles.receiveFamilyNameActive,
+              ]}>
+                {family.label}
+              </Text>
+              {family.key === 'taproot' ? (
+                <Text style={styles.receiveRecommended}>{t('receive.recommended')}</Text>
+              ) : null}
+            </TouchableOpacity>
+          );
+        })}
       </View>
-      <Text style={styles.label}>{t('receive.bech32Address')}</Text>
-      <Text selectable style={styles.address}>{wallet.address}</Text>
-      <ActionButton label={t('actions.copyAddress')} loading={pendingAction === 'copy'} disabled={actionLocked} onPress={onCopyAddress} />
+      <View style={styles.qrPlaceholder}>
+        <QRCode value={wallet.receiveAddress} size={204} quietZone={12} color={qrColors.foreground} backgroundColor={qrColors.background} />
+      </View>
+      <Text style={styles.label}>
+        {t('receive.addressLabel', {
+          family: selectedFamily?.label ?? 'Taproot',
+          index: wallet.receiveIndex,
+        })}
+      </Text>
+      <Text selectable style={styles.address}>{wallet.receiveAddress}</Text>
+      <View style={styles.receiveActions}>
+        <View style={styles.receiveAction}>
+          <ActionButton label={t('actions.copyAddress')} loading={pendingAction === 'copy'} disabled={actionLocked || addressBusy} onPress={onCopyAddress} />
+        </View>
+        <View style={styles.receiveAction}>
+          <ActionButton
+            label={t('receive.newAddress')}
+            loading={addressBusy}
+            disabled={actionLocked || !networkReady}
+            variant="secondary"
+            onPress={onCreateAddress}
+          />
+        </View>
+      </View>
     </View>
   );
 }
@@ -93,8 +166,8 @@ export function SendTab({
   recipientErrors: SendRecipientFieldErrors;
   sendEstimate: { feeSats: number; totalSats: bigint; fitsAvailable: boolean } | null;
   sendEstimatePending: boolean;
-  preparedTx: PreparedTransparentSend | null;
-  preparedConsolidation: PreparedTransparentConsolidation | null;
+  preparedTx: UnsignedTransparentSend | null;
+  preparedConsolidation: UnsignedTransparentConsolidation | null;
   onChangeRecipient: (recipientId: number, field: 'address' | 'amount', value: string) => void;
   onAddRecipient: () => void;
   onRemoveRecipient: (recipientId: number) => void;
@@ -173,6 +246,7 @@ export function SendTab({
                   placeholder={t('send.amount')}
                   placeholderTextColor={themeColor('#6d7892')}
                   keyboardType="decimal-pad"
+                  maxLength={MAX_NITO_AMOUNT_INPUT_LENGTH}
                   style={[styles.input, styles.amountInput]}
                 />
                 <TouchableOpacity
@@ -245,7 +319,6 @@ export function SendTab({
           ))}
           <Text style={styles.previewAddress}>{t('send.fee', { amount: satoshisToNito(preparedTx.feeSats, language) })}</Text>
           <Text style={styles.helper}>{t('send.inputsOutputs', { inputs: preparedTx.inputCount, outputs: preparedTx.outputCount })}</Text>
-          <Text selectable style={styles.address}>{preparedTx.txid}</Text>
           <ActionButton
             label={broadcasting ? t('send.sending') : t('actions.sendNow')}
             loading={pendingAction === 'broadcast' || broadcasting}
@@ -481,20 +554,7 @@ export function HistoryTab({
                         : amountLines.join('\n')}
                     </Text>
                     <Text style={styles.helper}>
-                      {[
-                        entry.direction !== 'self' && entry.blockTime
-                          ? formatNitoDateTime(entry.blockTime, language)
-                          : '',
-                        entry.direction === 'received'
-                          ? t('history.received')
-                          : entry.direction === 'sent'
-                            ? t('history.sent')
-                            : entry.direction === 'self'
-                              ? t('history.self')
-                              : '',
-                        entry.direction === 'self' ? t('history.networkFee') : '',
-                        entry.height > 0 ? t('history.block', { height: entry.height }) : t('history.mempool'),
-                      ].filter(Boolean).join(' · ')}
+                      {formatHistoryDetails(entry, language, t)}
                     </Text>
                   </View>
                   <View style={styles.viewTxBadge}>
@@ -581,7 +641,7 @@ export function HomeTab({
   actionLocked: boolean;
   pendingAction: PendingAction | null;
   balanceRefreshing: boolean;
-  preparedConsolidation: PreparedTransparentConsolidation | null;
+  preparedConsolidation: UnsignedTransparentConsolidation | null;
   onRefreshBalance: () => void;
   onConfirmConsolidation: () => void;
 }) {
@@ -644,7 +704,7 @@ export function HomeTab({
       </View>
       <View style={styles.preview}>
         <Text style={styles.label}>{t('home.mainAddress')}</Text>
-        <Text style={styles.previewAddress}>{shortAddress(wallet.address)}</Text>
+        <Text style={styles.previewAddress}>{shortAddress(wallet.primaryAddress)}</Text>
       </View>
       {!preparedConsolidation && network.snapshot && eligibleUtxos.length >= CONSOLIDATION_MIN_UTXOS ? (
         <ActionButton

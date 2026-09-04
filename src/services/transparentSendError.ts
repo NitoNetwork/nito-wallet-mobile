@@ -7,6 +7,7 @@ import { reportNonFinancialFailure } from './diagnostics';
 
 const TRANSPARENT_SEND_ERROR_KEYS = {
   'invalid-amount-format': 'errors.invalidAmount',
+  'amount-above-max-money': 'errors.invalidAmount',
   'amount-not-positive': 'errors.invalidAmount',
   'amount-below-dust': 'errors.invalidAmount',
   'signing-material-unavailable': 'errors.txPrepareFailed',
@@ -18,6 +19,7 @@ const TRANSPARENT_SEND_ERROR_KEYS = {
   'recipient-output-dust': 'errors.invalidAmount',
   'max-recipient-unavailable': 'errors.txPrepareFailed',
   'insufficient-funds': 'errors.sendInsufficientFunds',
+  'review-changed': 'errors.txPrepareFailed',
   'consolidation-not-enough-utxos': 'errors.txPrepareFailed',
   'consolidation-unavailable': 'errors.txPrepareFailed',
   'consolidation-too-large': 'errors.txPrepareFailed',

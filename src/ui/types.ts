@@ -1,4 +1,5 @@
 import type { TransparentWalletSnapshot } from '../wallet/transparentScan';
+export type { Wallet } from '../wallet/walletIdentity';
 
 export type AppScreen =
   | 'loading'
@@ -29,12 +30,6 @@ export type PendingAction =
   | 'resynchronizeHistory'
   | 'reveal'
   | 'delete';
-
-export type Wallet = {
-  mnemonic: string;
-  address: string;
-  derivationPath: string;
-};
 
 export type NetworkState = {
   status: 'idle' | 'syncing' | 'connected' | 'error';

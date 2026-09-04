@@ -1,27 +1,27 @@
 export type WalletSessionToken = Readonly<{
   generation: number;
-  walletAddress: string;
+  walletId: string;
 }>;
 
 export class WalletSessionGuard {
   private generation = 0;
-  private walletAddress: string | null = null;
+  private walletId: string | null = null;
 
-  begin(walletAddress: string): WalletSessionToken {
+  begin(walletId: string): WalletSessionToken {
     this.generation += 1;
-    this.walletAddress = walletAddress;
+    this.walletId = walletId;
     return this.currentToken();
   }
 
   invalidate(): void {
     this.generation += 1;
-    this.walletAddress = null;
+    this.walletId = null;
   }
 
-  capture(expectedWalletAddress?: string): WalletSessionToken | null {
+  capture(expectedWalletId?: string): WalletSessionToken | null {
     if (
-      this.walletAddress === null
-      || (expectedWalletAddress !== undefined && expectedWalletAddress !== this.walletAddress)
+      this.walletId === null
+      || (expectedWalletId !== undefined && expectedWalletId !== this.walletId)
     ) {
       return null;
     }
@@ -32,7 +32,7 @@ export class WalletSessionGuard {
   isCurrent(session: WalletSessionToken | null): session is WalletSessionToken {
     return session !== null
       && session.generation === this.generation
-      && session.walletAddress === this.walletAddress;
+      && session.walletId === this.walletId;
   }
 
   runIfCurrent(session: WalletSessionToken, effect: () => void): boolean {
@@ -45,13 +45,13 @@ export class WalletSessionGuard {
   }
 
   private currentToken(): WalletSessionToken {
-    if (this.walletAddress === null) {
+    if (this.walletId === null) {
       throw new Error('No active wallet session.');
     }
 
     return Object.freeze({
       generation: this.generation,
-      walletAddress: this.walletAddress,
+      walletId: this.walletId,
     });
   }
 }

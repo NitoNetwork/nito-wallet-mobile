@@ -4,6 +4,7 @@ import { Animated, Image, StyleSheet, Text, TextInput, TouchableOpacity, View } 
 import { LANGUAGES, type LanguageCode, type Translator } from '../i18n';
 import type { SeedBackupChallenge } from '../services/seedBackup';
 import { ActionButton, MnemonicGrid, PasswordField } from './components';
+import { RecoveryPhraseCopy } from './RecoveryPhraseCopy';
 import { useStyles, useThemeColor } from './themeContext';
 import type { BiometricMethod, PendingAction, Wallet } from './types';
 
@@ -487,6 +488,7 @@ export function PersistScreen({
         <>
           <Text style={styles.helper}>{t('persist.seedBackupInstruction')}</Text>
           <MnemonicGrid mnemonic={pendingWallet.mnemonic} />
+          <RecoveryPhraseCopy mnemonic={pendingWallet.mnemonic} t={t} disabled={actionLocked} />
           {seedBackupConfirmationError ? (
             <Text accessibilityLiveRegion="polite" style={styles.fieldError}>
               {seedBackupConfirmationError}

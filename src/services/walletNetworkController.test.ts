@@ -12,6 +12,7 @@ import {
 } from './walletNetworkController';
 import { needsHistoryEnrichment } from './walletHistory';
 import { WalletStorageError } from './walletStorageError';
+import { observePublishedTransactions } from './transactionObservation';
 
 const transparentScanMocks = vi.hoisted(() => ({
   refreshKnownUsedAddresses: vi.fn(),
@@ -32,8 +33,15 @@ vi.mock('../wallet/transparentScan', async (importOriginal) => {
 
 const wallet: Wallet = {
   mnemonic: 'test mnemonic',
-  address: 'wallet-a',
-  derivationPath: "m/84'/0'/0'/0/0",
+  walletId: 'wallet-a',
+  walletIdDerivationPath: "m/84'/0'/0'/0/0",
+  primaryAddress: 'taproot-wallet-a',
+  primaryDerivationPath: "m/86'/0'/0'/0/0",
+  primaryIndex: 0,
+  receiveAccountKey: 'taproot',
+  receiveIndex: 0,
+  receiveAddress: 'wallet-a',
+  receiveDerivationPath: "m/84'/0'/0'/0/0",
 };
 const snapshot: TransparentWalletSnapshot = {
   confirmedSats: 0,
@@ -72,6 +80,50 @@ const client = {
 } as unknown as NitoElectrumClient;
 
 describe('WalletNetworkController', () => {
+  it.each(['recovers', 'offline', 'storage'] as const)('keeps snapshot ownership and retries post-broadcast reads without premature global feedback: %s', async (scenario) => {
+    const controller = new WalletNetworkController();
+    controller.beginWalletSession(wallet.walletId);
+    let current: NetworkState = { ...network, status: 'connected' };
+    const connect = vi.fn(async () => undefined);
+    const offline = new Error('offline');
+    if (scenario === 'offline') connect.mockRejectedValue(offline);
+    if (scenario === 'recovers') connect.mockRejectedValueOnce(offline).mockRejectedValueOnce(offline);
+    const saveSnapshot = vi.fn(async () => { if (scenario === 'storage') throw new WalletStorageError(); });
+    const setError = vi.fn();
+    const onFailure = vi.fn();
+    const wait = vi.fn(async (_ms: number) => { expect(onFailure).not.toHaveBeenCalled(); });
+    const result = await observePublishedTransactions({
+      isCurrent: () => true,
+      refresh: async () => {
+        await synchronizeWalletNetwork({
+          controller,
+          getWallet: () => wallet,
+          getNetwork: () => current,
+          getClient: () => ({ ...client, connect }) as unknown as NitoElectrumClient,
+          setClient: vi.fn(), actionPending: () => false,
+          readHistoryCache: async () => ({ status: 'hit', value: { history: [], fullHistoryHeight: 100 } }),
+          readHdAddressRequirements: async () => [],
+          saveHistory: vi.fn(), saveSnapshot,
+          publishNetwork: (next) => { current = next; },
+          setError, setHistorySyncing: vi.fn(), setHistoryProgress: vi.fn(), setBalanceRefreshing: vi.fn(),
+          finishSync: () => controller.finishSync(vi.fn()), messages,
+        }, true, { silent: true, postBroadcastObservation: true });
+        return true;
+      },
+      onFailure,
+      isRetryable: (error) => !(error instanceof WalletStorageError),
+      wait,
+    });
+    expect(result).toBe(scenario === 'recovers' ? 'observed' : 'failed');
+    expect(connect).toHaveBeenCalledTimes(scenario === 'storage' ? 1 : 3);
+    expect(wait.mock.calls).toEqual(scenario === 'storage' ? [] : [[3_000], [3_000]]);
+    expect(onFailure).toHaveBeenCalledTimes(scenario === 'recovers' ? 0 : 1);
+    expect(current.status).toBe(scenario === 'recovers' ? 'connected' : 'error');
+    expect(current.snapshot).toEqual(snapshot);
+    expect(setError).not.toHaveBeenCalled();
+    expect(controller.syncInFlight).toBe(false);
+  });
+
   it('cancels stale sessions, prefetches and deferred synchronization together', () => {
     const controller = new WalletNetworkController();
     const session = controller.beginWalletSession('wallet-a');
@@ -122,7 +174,7 @@ describe('WalletNetworkController', () => {
 
   it('does not write or publish after the active wallet changes during a cache read', async () => {
     const controller = new WalletNetworkController();
-    controller.beginWalletSession(wallet.address);
+    controller.beginWalletSession(wallet.walletId);
     const saveHistory = vi.fn();
     const saveSnapshot = vi.fn();
     const publishNetwork = vi.fn();
@@ -139,6 +191,7 @@ describe('WalletNetworkController', () => {
         controller.beginWalletSession('wallet-b');
         return { status: 'hit', value: { history: [], fullHistoryHeight: 100 } };
       },
+      readHdAddressRequirements: async () => [],
       saveHistory,
       saveSnapshot,
       publishNetwork,
@@ -158,7 +211,7 @@ describe('WalletNetworkController', () => {
 
   it('publishes a complete fresh-cache snapshot for the current session', async () => {
     const controller = new WalletNetworkController();
-    controller.beginWalletSession(wallet.address);
+    controller.beginWalletSession(wallet.walletId);
     const publishNetwork = vi.fn();
     const settlement: string[] = [];
     const finishSync = vi.fn(() => {
@@ -177,6 +230,7 @@ describe('WalletNetworkController', () => {
         status: 'hit',
         value: { history: [], fullHistoryHeight: 100 },
       }),
+      readHdAddressRequirements: async () => [],
       saveHistory: vi.fn(),
       saveSnapshot: vi.fn(async () => undefined),
       publishNetwork,
@@ -212,7 +266,7 @@ describe('WalletNetworkController', () => {
 
   it('preserves cached wallet data when a saved custom server is unreachable', async () => {
     const controller = new WalletNetworkController();
-    controller.beginWalletSession(wallet.address);
+    controller.beginWalletSession(wallet.walletId);
     let currentNetwork = network;
     const publishNetwork = vi.fn((next: NetworkState) => {
       currentNetwork = next;
@@ -235,6 +289,7 @@ describe('WalletNetworkController', () => {
       setClient: vi.fn(),
       actionPending: () => false,
       readHistoryCache: vi.fn(),
+      readHdAddressRequirements: async () => [],
       saveHistory: vi.fn(),
       saveSnapshot: vi.fn(),
       publishNetwork,
@@ -256,7 +311,7 @@ describe('WalletNetworkController', () => {
 
   it('never exposes a raw SQLite driver error during synchronization', async () => {
     const controller = new WalletNetworkController();
-    controller.beginWalletSession(wallet.address);
+    controller.beginWalletSession(wallet.walletId);
     const setError = vi.fn();
     const publishNetwork = vi.fn();
 
@@ -271,6 +326,7 @@ describe('WalletNetworkController', () => {
         status: 'hit',
         value: { history: [], fullHistoryHeight: 100 },
       }),
+      readHdAddressRequirements: async () => [],
       saveHistory: vi.fn(),
       saveSnapshot: vi.fn(async () => {
         throw new WalletStorageError();
@@ -294,9 +350,9 @@ describe('WalletNetworkController', () => {
 
   it('preserves enrichment published while a synchronization scan is in flight', async () => {
     const controller = new WalletNetworkController();
-    controller.beginWalletSession(wallet.address);
+    controller.beginWalletSession(wallet.walletId);
     const txid = 'a'.repeat(64);
-    const rawEntry = { txid, height: 100, address: wallet.address };
+    const rawEntry = { txid, height: 100, address: wallet.walletId };
     const enrichedEntry = {
       ...rawEntry,
       direction: 'received' as const,
@@ -335,6 +391,7 @@ describe('WalletNetworkController', () => {
         status: 'hit',
         value: { history: [rawEntry], fullHistoryHeight: 0 },
       }),
+      readHdAddressRequirements: async () => [],
       saveHistory: vi.fn(),
       saveSnapshot: vi.fn(),
       publishNetwork: (next) => {
@@ -392,7 +449,7 @@ describe('wallet network publication invariant', () => {
   const enrichedEntry = {
     txid,
     height: 100,
-    address: wallet.address,
+    address: wallet.walletId,
     direction: 'sent' as const,
     amountSats: 42_000_000,
     feeSats: 12_345,
@@ -413,8 +470,8 @@ describe('wallet network publication invariant', () => {
       snapshot: {
         ...snapshot,
         history: [
-          { txid, height: 100, address: wallet.address },
-          { txid: 'b'.repeat(64), height: 0, address: wallet.address },
+          { txid, height: 100, address: wallet.walletId },
+          { txid: 'b'.repeat(64), height: 0, address: wallet.walletId },
         ],
       },
     }],
@@ -444,7 +501,7 @@ describe('wallet network publication invariant', () => {
       ...network,
       snapshot: {
         ...snapshot,
-        history: [{ txid, height: 0, address: wallet.address }],
+        history: [{ txid, height: 0, address: wallet.walletId }],
       },
     });
     const confirmed = mergeWalletNetworkPublication(republished, {
@@ -452,7 +509,7 @@ describe('wallet network publication invariant', () => {
       height: 101,
       snapshot: {
         ...snapshot,
-        history: [{ txid, height: 101, address: wallet.address }],
+        history: [{ txid, height: 101, address: wallet.walletId }],
       },
     });
 
@@ -472,7 +529,7 @@ describe('wallet network publication invariant', () => {
     const staleMempool = {
       txid: 'c'.repeat(64),
       height: 0,
-      address: wallet.address,
+      address: wallet.walletId,
     };
     const current: NetworkState = {
       ...enrichedNetwork,
@@ -488,7 +545,7 @@ describe('wallet network publication invariant', () => {
       ...network,
       snapshot: {
         ...snapshot,
-        history: [{ txid, height: 103, address: wallet.address }],
+        history: [{ txid, height: 103, address: wallet.walletId }],
       },
     };
 
@@ -524,7 +581,7 @@ describe('wallet network publication invariant', () => {
         ...network,
         snapshot: {
           ...snapshot,
-          history: [{ txid, height: 100, address: wallet.address }],
+          history: [{ txid, height: 100, address: wallet.walletId }],
         },
       },
       true,
@@ -557,14 +614,14 @@ describe('wallet network publication invariant', () => {
         ...network,
         snapshot: {
           ...snapshot,
-          history: [{ txid, height: 100, address: wallet.address }],
+          history: [{ txid, height: 100, address: wallet.walletId }],
         },
       },
       true,
       'authoritative',
     );
     expect(freshScan.snapshot?.history).toEqual([
-      { txid, height: 100, address: wallet.address },
+      { txid, height: 100, address: wallet.walletId },
     ]);
     expect(freshScan.snapshot?.history.every(needsHistoryEnrichment)).toBe(true);
   });
@@ -596,7 +653,7 @@ describe('wallet network publication invariant', () => {
         ...network,
         snapshot: {
           ...snapshot,
-          history: [{ txid, height: 103, address: wallet.address }],
+          history: [{ txid, height: 103, address: wallet.walletId }],
         },
       },
       true,

@@ -1,53 +1,38 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { observePublishedTransactions } from './transactionObservation';
 
-import { ElectrumRpcError, type NitoElectrumClient } from '../network/electrum';
-import { reconcileBroadcastTransactions } from './walletNetworkController';
+describe('broadcast reconciliation timing', () => {
+  afterEach(() => { vi.useRealTimers(); });
 
-vi.mock('expo-secure-store', () => ({
-  getItemAsync: vi.fn(),
-  setItemAsync: vi.fn(),
-  deleteItemAsync: vi.fn(),
-}));
-
-describe('broadcast reconciliation', () => {
-  afterEach(() => {
-    vi.useRealTimers();
+  it('waits three seconds between real observation passes until a fresh transaction appears', async () => {
+    vi.useFakeTimers();
+    const refresh = vi.fn().mockResolvedValueOnce(false).mockRejectedValueOnce(new Error('not yet indexed')).mockResolvedValue(true);
+    const onFailure = vi.fn();
+    const reconciliation = observePublishedTransactions({ refresh, isCurrent: () => true, onFailure, isRetryable: () => true });
+    expect(refresh).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(2_999);
+    expect(refresh).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(refresh).toHaveBeenCalledTimes(2);
+    await vi.advanceTimersByTimeAsync(3_000);
+    await expect(reconciliation).resolves.toBe('observed');
+    expect(refresh).toHaveBeenCalledTimes(3);
+    expect(onFailure).not.toHaveBeenCalled();
+    expect(vi.getTimerCount()).toBe(0);
   });
 
-  it('continues through delayed passes until a freshly broadcast transaction is visible', async () => {
+  it('reports a persistent malformed response after three attempts rather than an absent transaction', async () => {
     vi.useFakeTimers();
-    const getTransactionHex = vi.fn()
-      .mockRejectedValueOnce(new ElectrumRpcError('No such mempool or blockchain transaction'))
-      .mockRejectedValueOnce(new ElectrumRpcError('No such mempool or blockchain transaction'))
-      .mockResolvedValueOnce('00');
-    const client = { connected: true, getTransactionHex } as unknown as NitoElectrumClient;
-
-    const reconciliation = reconcileBroadcastTransactions({
-      txids: ['ab'.repeat(32)],
-      client,
-      isCurrent: () => true,
-    });
-    await vi.runAllTimersAsync();
-
-    await expect(reconciliation).resolves.toBe(true);
-    expect(getTransactionHex).toHaveBeenCalledTimes(3);
-  });
-
-  it('does not hide malformed or unrelated Electrum failures as an absent transaction', async () => {
-    vi.useFakeTimers();
-    const client = {
-      connected: true,
-      getTransactionHex: vi.fn().mockRejectedValue(new Error('malformed response')),
-    } as unknown as NitoElectrumClient;
-
-    const reconciliation = reconcileBroadcastTransactions({
-      txids: ['ab'.repeat(32)],
-      client,
-      isCurrent: () => true,
-    });
-    const failure = expect(reconciliation).rejects.toThrow('malformed response');
-    await vi.advanceTimersByTimeAsync(250);
-
-    await failure;
+    const error = new Error('malformed response');
+    const refresh = vi.fn().mockRejectedValue(error);
+    const onFailure = vi.fn();
+    const reconciliation = observePublishedTransactions({ refresh, isCurrent: () => true, onFailure, isRetryable: () => true });
+    await vi.advanceTimersByTimeAsync(3_000);
+    expect(refresh).toHaveBeenCalledTimes(2);
+    expect(onFailure).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(3_000);
+    await expect(reconciliation).resolves.toBe('failed');
+    expect(onFailure).toHaveBeenCalledExactlyOnceWith(error);
+    expect(vi.getTimerCount()).toBe(0);
   });
 });

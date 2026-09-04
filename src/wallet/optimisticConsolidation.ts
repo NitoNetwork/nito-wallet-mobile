@@ -53,10 +53,9 @@ export const applyOptimisticWalletBroadcast = ({
   const consumedUtxos = snapshot.utxos.filter((utxo) => spentOutpoints.has(outpointKey(utxo)));
   const consumedSats = consumedUtxos.reduce((total, utxo) => total + utxo.valueSats, 0);
   const existingOutpoints = new Set(snapshot.utxos.map(outpointKey));
-  const ownerByAddress = new Map(snapshot.addresses.map((owner) => [owner.address, owner]));
   const pendingOutputs: ElectrumUtxo[] = outputs
     .filter((output) => !existingOutpoints.has(`${txid}:${output.vout}`))
-    .flatMap((output) => ownerByAddress.has(output.address) ? [{
+    .map((output) => ({
       txid,
       vout: output.vout,
       valueSats: output.valueSats,
@@ -64,7 +63,7 @@ export const applyOptimisticWalletBroadcast = ({
       address: output.address,
       confirmations: 0,
       isCoinbase: false,
-    }] : []);
+    }));
   const pendingHistory = createOptimisticHistoryEntry(snapshot, transaction, txid);
 
   const addresses = snapshot.addresses.map((address) => {

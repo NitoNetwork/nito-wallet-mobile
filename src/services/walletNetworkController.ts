@@ -1,6 +1,5 @@
 import {
   ElectrumSessionUnhealthyError,
-  isElectrumTransactionNotFoundError,
   type NitoElectrumClient,
 } from '../network/electrum';
 import type { NetworkState, Wallet } from '../ui/types';
@@ -8,6 +7,7 @@ import {
   refreshKnownUsedAddresses,
   scanTransparentWallet,
   TransparentScanIncompleteError,
+  type HdScanRequirement,
   type TransparentWalletSnapshot,
 } from '../wallet/transparentScan';
 import { pendingRefreshAddresses } from '../wallet/pendingRefresh';
@@ -17,7 +17,6 @@ import {
   type HistoryExportRecord,
 } from './historyExport';
 import type { OptionalCacheRead } from './cachePolicy';
-import { mapWithConcurrency } from './concurrency';
 import { createElectrumClient } from './electrumClientFactory';
 import {
   DirtyRequestQueue,
@@ -41,9 +40,8 @@ import type {
 import { userFacingErrorMessage } from './walletStorageError';
 
 const COINBASE_MATURITY = 101;
-const BROADCAST_RECONCILIATION_CONCURRENCY = 6;
 
-export type WalletSyncOptions = DirtySyncOptions;
+export type WalletSyncOptions = DirtySyncOptions & { postBroadcastObservation?: boolean };
 export type WalletNetworkHistoryPublicationMode = WalletHistoryPublicationMode | 'replace';
 
 export const createEmptyNetworkState = (): NetworkState => ({
@@ -120,12 +118,12 @@ export const prepareWalletEntry = ({
   cachedNetwork,
   cachedHistory,
 }: {
-  pendingNetwork: ({ address: string } & WalletSnapshotCache) | null;
+  pendingNetwork: ({ walletId: string } & WalletSnapshotCache) | null;
   wallet: Wallet;
   cachedNetwork?: WalletSnapshotCache | null;
   cachedHistory?: WalletHistoryCache | null;
 }) => {
-  const pendingPreload = pendingNetwork?.address === wallet.address ? pendingNetwork : null;
+  const pendingPreload = pendingNetwork?.walletId === wallet.walletId ? pendingNetwork : null;
   const fullHistoryEnabled = (cachedHistory?.fullHistoryHeight ?? 0) > 0;
   const quickCachedSnapshot = cachedNetwork
     ? toQuickWalletSnapshot(cachedNetwork.snapshot)
@@ -186,6 +184,7 @@ export const canUseFreshHistoryCache = ({
 export const prefetchWalletSnapshot = async (
   wallet: Wallet,
   client: NitoElectrumClient,
+  issuedAddresses: readonly HdScanRequirement[] = [],
 ): Promise<WalletSnapshotCache> => {
   await client.connect();
   const snapshot = await scanTransparentWallet({
@@ -193,6 +192,7 @@ export const prefetchWalletSnapshot = async (
     electrum: client,
     gapLimit: 20,
     includeHistory: false,
+    issuedAddresses,
   });
   if (!client.connected) {
     throw new ElectrumSessionUnhealthyError(
@@ -274,6 +274,7 @@ export const scanWalletNetwork = async ({
   options,
   onProgress,
   isCurrent,
+  issuedAddresses,
 }: {
   wallet: Wallet;
   currentNetwork: NetworkState;
@@ -283,6 +284,7 @@ export const scanWalletNetwork = async ({
   options: WalletSyncOptions;
   onProgress: (done: number, total: number) => void;
   isCurrent: () => boolean;
+  issuedAddresses: readonly HdScanRequirement[];
 }): Promise<TransparentWalletSnapshot> => {
   const onlyAddresses = options.pendingOnly && currentNetwork.snapshot
     ? [...new Set([
@@ -307,6 +309,7 @@ export const scanWalletNetwork = async ({
         ),
         previousSnapshot: currentNetwork.snapshot,
         onProgress,
+        issuedAddresses,
       });
 
   try {
@@ -326,15 +329,16 @@ type WalletNetworkSyncPorts = {
   getClient: () => NitoElectrumClient | null;
   setClient: (client: NitoElectrumClient) => void;
   actionPending: () => boolean;
-  readHistoryCache: (walletAddress: string) => Promise<OptionalCacheRead<WalletHistoryCache>>;
+  readHistoryCache: (walletId: string) => Promise<OptionalCacheRead<WalletHistoryCache>>;
+  readHdAddressRequirements: (walletId: string) => Promise<readonly HdScanRequirement[]>;
   saveHistory: (
-    walletAddress: string,
+    walletId: string,
     history: TransparentWalletSnapshot['history'],
     height: number,
     historyMode: WalletHistoryPublicationMode,
   ) => Promise<void>;
   saveSnapshot: (
-    walletAddress: string,
+    walletId: string,
     snapshot: TransparentWalletSnapshot,
     height: number,
   ) => Promise<void>;
@@ -381,7 +385,7 @@ export const synchronizeWalletNetwork = async (
     ports.setError(ports.messages.noActiveWallet);
     return;
   }
-  const session = ports.controller.sessions.capture(activeWallet.address);
+  const session = ports.controller.sessions.capture(activeWallet.walletId);
   if (!session) return;
   if ((ports.actionPending() && !options.force) || !ports.controller.startSync()) return;
   if (!includeHistory) ports.setBalanceRefreshing(true);
@@ -400,7 +404,8 @@ export const synchronizeWalletNetwork = async (
     };
     if (!ports.controller.isCurrent(session)) return;
     const knownHeight = client.blockHeight || currentNetwork.height;
-    const cacheRead = await ports.readHistoryCache(activeWallet.address);
+    const cacheRead = await ports.readHistoryCache(activeWallet.walletId);
+    const issuedAddresses = await ports.readHdAddressRequirements(activeWallet.walletId);
     const cacheReadFailed = cacheRead.status === 'failed';
     const cache = cacheRead.status === 'hit'
       ? cacheRead.value
@@ -448,7 +453,7 @@ export const synchronizeWalletNetwork = async (
         height: knownHeight,
         fullHistoryEnabled: true,
       };
-      await ports.saveSnapshot(activeWallet.address, toQuickWalletSnapshot(snapshot), knownHeight);
+      await ports.saveSnapshot(activeWallet.walletId, toQuickWalletSnapshot(snapshot), knownHeight);
       if (!ports.controller.isCurrent(session)) return;
       requireConnectedSession();
       publishNetwork(nextNetwork);
@@ -480,6 +485,7 @@ export const synchronizeWalletNetwork = async (
       options,
       onProgress,
       isCurrent: () => ports.controller.isCurrent(session),
+      issuedAddresses,
     });
     if (!ports.controller.isCurrent(session)) return;
     requireConnectedSession();
@@ -500,7 +506,7 @@ export const synchronizeWalletNetwork = async (
     if (!cacheAlreadyFresh || options.force || options.rescanGap) {
       requireConnectedSession();
       await ports.saveHistory(
-        activeWallet.address,
+        activeWallet.walletId,
         mergedHistory,
         historyMode === 'authoritative' ? knownHeight : cache.fullHistoryHeight,
         historyMode,
@@ -517,7 +523,7 @@ export const synchronizeWalletNetwork = async (
       height: knownHeight,
       fullHistoryEnabled: true,
     };
-    await ports.saveSnapshot(activeWallet.address, toQuickWalletSnapshot(snapshot), knownHeight);
+    await ports.saveSnapshot(activeWallet.walletId, toQuickWalletSnapshot(snapshot), knownHeight);
     if (!ports.controller.isCurrent(session)) return;
     requireConnectedSession();
     publishNetwork(nextNetwork, historyMode);
@@ -541,6 +547,9 @@ export const synchronizeWalletNetwork = async (
       height: client?.blockHeight || fallbackNetwork.height || 0,
       fullHistoryEnabled: fallbackNetwork.fullHistoryEnabled,
     });
+    // Keep network health truthful. Only the bounded observer reports the
+    // transaction-specific failure, after its last read, not on every attempt.
+    if (options.postBroadcastObservation) throw caught;
     ports.setError(message);
   } finally {
     if (ports.controller.isCurrent(session)) {
@@ -552,34 +561,6 @@ export const synchronizeWalletNetwork = async (
   }
 };
 
-export const reconcileBroadcastTransactions = async ({
-  txids,
-  client,
-  isCurrent,
-}: {
-  txids: readonly string[];
-  client: NitoElectrumClient;
-  isCurrent: () => boolean;
-}): Promise<boolean> => {
-  if (txids.length === 0 || !isCurrent()) return false;
-  for (const delayMs of [250, 750, 1_500, 3_000]) {
-    await new Promise<void>((resolve) => setTimeout(resolve, delayMs));
-    if (!isCurrent()) return false;
-    try {
-      await mapWithConcurrency(txids, BROADCAST_RECONCILIATION_CONCURRENCY, async (txid) => {
-        await client.getTransactionHex(txid);
-      });
-      if (!isCurrent()) return false;
-      return true;
-    } catch (caught) {
-      if (!isElectrumTransactionNotFoundError(caught)) {
-        throw caught;
-      }
-      if (!isCurrent()) return false;
-    }
-  }
-  return false;
-};
 
 export class WalletNetworkController {
   readonly sessions = new WalletSessionGuard();
@@ -589,13 +570,13 @@ export class WalletNetworkController {
   private syncing = false;
   private enriching = false;
 
-  beginWalletSession(walletAddress: string): WalletSessionToken {
+  beginWalletSession(walletId: string): WalletSessionToken {
     this.prefetchGeneration += 1;
     this.syncing = false;
     this.enriching = false;
     this.dirty.clear();
     this.dirtyEnrichment.clear();
-    return this.sessions.begin(walletAddress);
+    return this.sessions.begin(walletId);
   }
 
   cancel(): void {

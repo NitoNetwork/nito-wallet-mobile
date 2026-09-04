@@ -53,4 +53,15 @@ describe('bounded concurrency helpers', () => {
       return 1;
     })).rejects.toBeUndefined();
   });
+
+  it('releases a limiter slot when a task throws before returning a promise', async () => {
+    const limiter = createConcurrencyLimiter(1);
+    const failed = limiter.run(() => {
+      throw new Error('synchronous failure');
+    });
+    const next = limiter.run(async () => 42);
+
+    await expect(failed).rejects.toThrow('synchronous failure');
+    await expect(next).resolves.toBe(42);
+  }, 500);
 });

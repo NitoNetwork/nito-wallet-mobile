@@ -9,9 +9,11 @@ import {
   buildHistoryExportBatch,
   buildHistoryExportRecords,
   type CachedTransactionOutput,
+  type HistoryExportRecord,
 } from './historyExport';
 
 const MEASUREMENT_SIZE = 1_450;
+const MEASUREMENT_BLOCK_TIME = 1_700_000_000;
 
 const createMeasurementFixture = () => {
   let requests = 0;
@@ -29,6 +31,7 @@ const createMeasurementFixture = () => {
       await new Promise((resolve) => setTimeout(resolve, 1));
       if (txid.startsWith('tx-')) {
         return {
+          blocktime: MEASUREMENT_BLOCK_TIME - Number(txid.slice(3)) * 60,
           vin: [{ txid: `parent-${txid.slice(3)}`, vout: 0 }],
           vout: [{ n: 0, value: 0.99, scriptPubKey: { address: 'wallet-address' } }],
         };
@@ -68,6 +71,7 @@ describe.runIf(process.env.NITO_MEASURE_HISTORY === '1')('history enrichment mea
     const fixture = createMeasurementFixture();
     const queue = new HistoryEnrichmentQueue(fixture.history);
     const outputCache = new Map<string, CachedTransactionOutput>();
+    const recordCache = new Map<string, HistoryExportRecord>();
     const loadCachedOutputs = async (txids: readonly string[]) => {
       const requested = new Set(txids);
       return [...outputCache.values()].filter(({ txid }) => requested.has(txid));
@@ -94,6 +98,7 @@ describe.runIf(process.env.NITO_MEASURE_HISTORY === '1')('history enrichment mea
       }),
       publishBatch: async ({ records, outputs }) => {
         recordCount += records.length;
+        records.forEach((record) => recordCache.set(record.txid, record));
         persistOutputs(outputs);
         if (firstVisibleRowsMs === 0) {
           firstVisibleRowsMs = Math.round(performance.now() - startedAt);
@@ -112,21 +117,48 @@ describe.runIf(process.env.NITO_MEASURE_HISTORY === '1')('history enrichment mea
     expect(recordCount).toBe(MEASUREMENT_SIZE);
     expect(firstVisibleRowsMs).toBeLessThan(totalMs);
 
-    const enrichedHistory = fixture.history.map((entry) => ({
-      ...entry,
-      direction: 'received' as const,
-      amountSats: 99_000_000,
-      feeSats: 0,
-    }));
+    // A warm confirmed cache includes the date returned by the cold pass.
+    // Missing dates must still trigger enrichment, even with known amounts.
+    const enrichedHistory = fixture.history.map((entry, index) => {
+      const record = recordCache.get(entry.txid)!;
+      expect(record.blockTime).toBe(MEASUREMENT_BLOCK_TIME - index * 60);
+      return {
+        ...entry,
+        direction: record.direction,
+        amountSats: record.amountSats,
+        feeSats: record.feeSats,
+        counterparty: record.counterparty,
+        blockTime: record.blockTime ?? undefined,
+        provisional: false,
+      };
+    });
     const actualWarmQueue = new HistoryEnrichmentQueue(enrichedHistory);
+    expect(actualWarmQueue.remainingCount).toBe(0);
+    const warmRequestsBefore = fixture.requestCount();
+    const warmStartedAt = performance.now();
+    let warmRecordCount = 0;
+    await processHistoryEnrichmentQueue({
+      queue: actualWarmQueue,
+      enrichBatch: (batch) => buildHistoryExportBatch({
+        history: batch,
+        walletAddresses: ['wallet-address'],
+        reader: fixture.reader,
+        loadCachedOutputs,
+      }),
+      publishBatch: async ({ records }) => {
+        warmRecordCount += records.length;
+      },
+    });
+    const warmRequests = fixture.requestCount() - warmRequestsBefore;
     console.info(JSON.stringify({
       mode: 'second-app-enrichment',
-      transactions: 0,
-      requests: 0,
+      transactions: warmRecordCount,
+      requests: warmRequests,
       firstVisibleRowsMs: 0,
-      totalMs: 0,
+      totalMs: Math.round(performance.now() - warmStartedAt),
     }));
-    expect(actualWarmQueue.remainingCount).toBe(0);
+    expect(warmRecordCount).toBe(0);
+    expect(warmRequests).toBe(0);
 
     const forcedWarmFixture = createMeasurementFixture();
     const forcedWarmQueue = new HistoryEnrichmentQueue(forcedWarmFixture.history);

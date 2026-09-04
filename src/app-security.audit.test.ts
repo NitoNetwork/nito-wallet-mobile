@@ -27,6 +27,7 @@ import coinbaseSource from './wallet/coinbaseMaturity.ts?raw';
 import historyDbSource from './services/walletHistoryDb.ts?raw';
 import historyEnrichmentQueueSource from './services/historyEnrichmentQueue.ts?raw';
 import networkControllerSource from './services/walletNetworkController.ts?raw';
+import observationSource from './services/transactionObservation.ts?raw';
 import exclusiveActionGateSource from './services/exclusiveActionGate.ts?raw';
 import vaultSessionMachineSource from './services/vaultSessionMachine.ts?raw';
 import expoConfig from '../app.config.js?raw';
@@ -91,7 +92,7 @@ describe('mobile wallet UX and security invariants', () => {
       /setScreen\('wallet'\);\s*if \(lockWalletIfAppStateBackground\(\s*appStateRef\.current,\s*lockWalletRef\.current,\s*\)\) return;/,
     );
     expect(appSource).toMatch(
-      /systemPromptActiveRef\.current = true;\s*biometricPromptGuardActive = true;\s*const secret = await loadBiometricSecret\(\);[\s\S]*?enterWallet\([\s\S]*?\} finally \{\s*if \(biometricPromptGuardActive\) \{\s*systemPromptActiveRef\.current = false;/,
+      /systemPromptActiveRef\.current = true;\s*biometricPromptGuardActive = true;\s*const secret = await readBiometricSecretForUnlock\(loadBiometricSecret\);[\s\S]*?enterWallet\([\s\S]*?\} finally \{\s*if \(biometricPromptGuardActive\) \{\s*systemPromptActiveRef\.current = false;/,
     );
   });
 
@@ -124,6 +125,14 @@ describe('mobile wallet UX and security invariants', () => {
     expect(appStateSecuritySource).toContain('&& !biometricDismissedRef.current');
     expect(appStateSecuritySource).toContain('&& biometricInterruptedRef.current');
     expect(appSource).toMatch(/if \(auto\) \{\s*return;/);
+  });
+
+  it('only reports biometric cancellation for a cancelled authentication read, not a later unlock failure', () => {
+    const unlock = appSource.slice(appSource.indexOf('const unlockSavedWallet = async'), appSource.indexOf('unlockSavedWalletRef.current = unlockSavedWallet'));
+    expect(unlock).toContain('await readBiometricSecretForUnlock(loadBiometricSecret)');
+    expect(unlock).toMatch(/if \(caught instanceof BiometricUnlockCancelledError\) \{\s*if \(auto\) \{\s*return;/);
+    expect(unlock).not.toMatch(/if \(useBiometrics\) \{\s*setError\(t\('errors.biometricCancelled'/);
+    expect(unlock).not.toContain("t('errors.biometricReimport')");
   });
 
   it('clears the typed vault password when the wallet locks', () => {
@@ -196,14 +205,14 @@ describe('mobile wallet UX and security invariants', () => {
 
   it('binds deferred wallet writes to the active wallet session', () => {
     expect(networkControllerSource).toContain('readonly sessions = new WalletSessionGuard();');
-    expect(networkControllerSource).toContain('return this.sessions.begin(walletAddress);');
+    expect(networkControllerSource).toContain('return this.sessions.begin(walletId);');
     expect(networkControllerSource).toMatch(/cancel\(\): void \{[\s\S]*?this\.sessions\.invalidate\(\);/);
-    expect(appSource).toContain('walletNetworkController.sessions.capture(activeWallet.address)');
+    expect(appSource).toContain('walletNetworkController.sessions.capture(activeWallet.walletId)');
     expect(appSource.match(/walletNetworkController\.isCurrent\(session\)/g)?.length ?? 0).toBeGreaterThanOrEqual(12);
     expect(appSource).toContain('startBroadcastReconciliation([txid], session)');
-    expect(appSource).toContain('startBroadcastReconciliation(txids, session)');
+    expect(appSource).toContain('startBroadcastReconciliation(reconciliationTxids, session)');
     expect(appSource).toMatch(
-      /reconcileBroadcasts\(txids, session\)\.catch\(reportNetworkFailure\)/,
+      /reconcileBroadcasts\(txids, session\)\.catch\(\(caught\) => \{\s*if \(walletNetworkController\.isCurrent\(session\)\) reportNetworkFailure\(caught\);/,
     );
     expect(appSource).toContain('processHistoryEnrichmentPasses({');
     expect(appSource).toContain(
@@ -243,9 +252,11 @@ describe('mobile wallet UX and security invariants', () => {
   });
 
   it('bounds broadcast reconciliation and exposes transparent scan progress', () => {
-    expect(networkControllerSource).toMatch(
-      /mapWithConcurrency\(txids, BROADCAST_RECONCILIATION_CONCURRENCY,/,
-    );
+    expect(observationSource).toContain('attempt < 3');
+    expect(observationSource).toContain('await wait(3_000)');
+    expect(appSource).toContain('await observePublishedTransactions(');
+    expect(appSource).toContain('if (!options.postBroadcastObservation) await recoverTransactionBroadcasts(');
+    expect(observationSource).not.toMatch(/signPsbt|broadcastTransaction/);
     expect(networkControllerSource).toMatch(/scanWalletNetwork\(\{[\s\S]*?onProgress,/);
     expect(networkControllerSource).toContain('ports.setHistoryProgress({ done, total });');
     expect(networkControllerSource).toContain('includeHistory: true');
@@ -311,6 +322,7 @@ describe('mobile wallet UX and security invariants', () => {
   it('keeps field validation beside the edited value and removes recipient review numbering', () => {
     expect(tabsSource).toContain('recipientErrors[recipient.id]?.address');
     expect(tabsSource).toContain('recipientErrors[recipient.id]?.amount');
+    expect(tabsSource).toContain('maxLength={MAX_NITO_AMOUNT_INPUT_LENGTH}');
     expect(settingsSource).toContain('customServerError');
     expect(tabsSource).not.toContain('`${index + 1}. ${satoshisToNito');
     expect(appSource).toContain('setUnlockPasswordError');
@@ -382,6 +394,54 @@ describe('mobile wallet UX and security invariants', () => {
     );
   });
 
+  it('keeps previews unsigned and reserves internal state before final signing', () => {
+    const sendPreview = appSource.slice(
+      appSource.indexOf('const prepareTransparentSend = async'),
+      appSource.indexOf('const fillMaxSendAmount = async'),
+    );
+    expect(sendPreview).toContain('prepareUnsignedTransparentMultiSend');
+    expect(sendPreview).not.toContain('signUnsignedTransparentTx');
+
+    const sendFinal = appSource.slice(
+      appSource.indexOf('const broadcastPreparedTx = async'),
+      appSource.indexOf('const prepareTransparentConsolidation = async'),
+    );
+    expect(sendFinal.indexOf('reserveInternalTransactions')).toBeGreaterThanOrEqual(0);
+    expect(sendFinal.indexOf('signUnsignedTransparentTx')).toBeGreaterThan(
+      sendFinal.indexOf('reserveInternalTransactions'),
+    );
+    expect(sendFinal.indexOf('recoverTransactionBroadcasts')).toBeGreaterThan(
+      sendFinal.indexOf('signUnsignedTransparentTx'),
+    );
+    expect(sendFinal.indexOf('markTransactionLifecycleSigned')).toBeGreaterThan(
+      sendFinal.indexOf('signUnsignedTransparentTx'),
+    );
+    expect(sendFinal.indexOf('setPreparedTx(rebuilt)')).toBeGreaterThanOrEqual(0);
+    expect(sendFinal.indexOf('setPreparedTx(rebuilt)')).toBeLessThan(
+      sendFinal.indexOf('signUnsignedTransparentTx'),
+    );
+
+    const consolidationPreview = appSource.slice(
+      appSource.indexOf('const prepareTransparentConsolidation = async'),
+      appSource.indexOf('const confirmTransparentConsolidation = ()'),
+    );
+    expect(consolidationPreview).toContain('prepareUnsignedTransparentConsolidation');
+    expect(consolidationPreview).not.toContain('signUnsignedTransparentTx');
+
+    const consolidationFinal = appSource.slice(
+      appSource.indexOf('const broadcastPreparedConsolidation = async'),
+      appSource.indexOf('const verifySensitiveAction = async'),
+    );
+    expect(consolidationFinal).toContain('processPersistentTransactionSequence');
+    expect(consolidationFinal).not.toContain('signedTransactions');
+    expect(consolidationFinal.indexOf('persistSigned:')).toBeLessThan(
+      consolidationFinal.indexOf('broadcastPersisted:'),
+    );
+    expect(consolidationFinal.indexOf('setPreparedConsolidation(rebuilt)')).toBeLessThan(
+      consolidationFinal.indexOf('processPersistentTransactionSequence'),
+    );
+  });
+
   it('never recreates or replaces a vault after a stale PBKDF2 upgrade', () => {
     expect(appSource).toContain(
       'const upgradeCommit = prepareVaultUpgradeCommit(upgraded, latest, payload.address);',
@@ -394,7 +454,7 @@ describe('mobile wallet UX and security invariants', () => {
       /try \{\s*await deleteBiometricSecret\(\);[\s\S]*?await saveVault\(encrypted\);[\s\S]*?catch \(caught\) \{\s*setError\(translatedErrorMessage\([\s\S]*?errors\.saveFailed/,
     );
     expect(appSource).toMatch(
-      /await Clipboard\.setStringAsync\(wallet\.address\);[\s\S]*?catch \(caught\) \{\s*setError\(translatedErrorMessage\([\s\S]*?errors\.addressCopyFailed/,
+      /await Clipboard\.setStringAsync\(wallet\.receiveAddress\);[\s\S]*?catch \(caught\) \{\s*setError\(translatedErrorMessage\([\s\S]*?errors\.addressCopyFailed/,
     );
     expect(appSource).toMatch(
       /await openTransactionExplorer\(txid\);[\s\S]*?catch \(caught\) \{\s*setError\(translatedErrorMessage\([\s\S]*?errors\.explorerUnavailable/,
@@ -425,8 +485,8 @@ describe('mobile wallet UX and security invariants', () => {
     const resyncStart = appSource.indexOf('const resynchronizeWalletHistory = async () =>');
     const resyncEnd = appSource.indexOf('const askResynchronizeWalletHistory = () =>', resyncStart);
     const resyncSource = appSource.slice(resyncStart, resyncEnd);
-    const sqliteClear = resyncSource.indexOf('await clearWalletHistoryCache(activeWallet.address);');
-    const memoryReset = resyncSource.indexOf("}, activeWallet.address, 'replace');");
+    const sqliteClear = resyncSource.indexOf('await clearWalletHistoryCache(activeWallet.walletId);');
+    const memoryReset = resyncSource.indexOf("}, activeWallet.walletId, 'replace');");
     const attemptedReset = resyncSource.indexOf('enrichAttemptedRef.current.clear();');
     const freshScan = resyncSource.indexOf(
       'syncTransparentNetwork(true, { force: true, rescanGap: true })',
@@ -526,6 +586,14 @@ describe('password policy is declared once', () => {
 
     for (const buildConfiguration of [cargoConfigSource, androidWorkflowSource, iosWorkflowSource]) {
       expect(buildConfiguration).not.toContain('getrandom_backend');
+    }
+  });
+
+  it('runs the current zero-vulnerability audit in every device workflow', () => {
+    for (const workflowSource of [androidWorkflowSource, iosWorkflowSource]) {
+      expect(workflowSource).toContain('npm run audit:production 2>&1 | tee npm-audit.log');
+      expect(workflowSource).not.toContain('audit:production:self-test');
+      expect(workflowSource).not.toContain('npm-audit-self-test.log');
     }
   });
 

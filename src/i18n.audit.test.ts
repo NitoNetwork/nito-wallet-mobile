@@ -11,6 +11,55 @@ import {
 import { tr } from './i18n/tr';
 
 describe('i18n coverage', () => {
+  it('removes the two receive-screen explanatory paragraphs from every language', () => {
+    for (const { code } of LANGUAGES) {
+      for (const key of ['receive.hdInfo', 'receive.gapHelp']) {
+        expect(Object.hasOwn(TRANSLATIONS[code], key), `${code}:${key}`).toBe(false);
+      }
+    }
+  });
+
+  it.each(LANGUAGES)('resolves the phrase-copy consent and feedback in $code', ({ code }) => {
+    for (const key of ['backup.copyPhrase', 'backup.clipboardWarning', 'backup.confirmCopy', 'backup.copied', 'backup.copyFailed'] as const) {
+      const value = TRANSLATIONS[code][key];
+      expect(Object.hasOwn(TRANSLATIONS[code], key)).toBe(true);
+      expect(makeTranslator(code)(key)).toBe(value);
+      expect(value.trim().length).toBeGreaterThan(0);
+      if (code !== 'en') expect(value).not.toBe(TRANSLATIONS.en[key]);
+    }
+    expect(makeTranslator(code)('backup.copyPhrase')).toContain('BIP39');
+  });
+
+  it.each(LANGUAGES)('defines every compact transaction popup message directly in the $code dictionary', ({ code }) => {
+    const keys = [
+      'tracking.acceptedHint', 'tracking.mempoolHint', 'tracking.confirmedHint',
+      'tracking.hide', 'tracking.observationFailed',
+      'rbf.review', 'rbf.cancelHint', 'rbf.confirm',
+      'rbf.cancellation', 'rbf.cancelAccepted', 'rbf.cancelMempool',
+      'rbf.cancelConfirmed', 'rbf.cancelNotCompleted',
+    ] as const;
+    for (const key of keys) {
+      const dictionary = TRANSLATIONS[code];
+      expect(Object.hasOwn(dictionary, key), `${code}:${key}`).toBe(true);
+      expect(dictionary[key].trim().length, `${code}:${key}`).toBeGreaterThan(0);
+      expect(makeTranslator(code)(key, { height: 1005010 })).toBe(dictionary[key].replaceAll('{height}', '1005010'));
+      if (code !== 'en') expect(dictionary[key], `${code}:${key}`).not.toBe(TRANSLATIONS.en[key]);
+    }
+  });
+
+  it.each(LANGUAGES)('removes obsolete tracking navigation and copy labels from $code', ({ code }) => {
+    for (const key of ['tracking.reopen', 'tracking.position', 'tracking.copyTxid', 'tracking.copied', 'tracking.copyFailed']) {
+      expect(Object.hasOwn(TRANSLATIONS[code], key), `${code}:${key}`).toBe(false);
+    }
+  });
+
+  it('does not instruct users to reimport their seed after a biometric unlock failure', () => {
+    for (const { code } of LANGUAGES) {
+      expect(TRANSLATIONS[code]).not.toHaveProperty('errors.biometricReimport');
+      expect(makeTranslator(code)('errors.unlockFailed')).not.toBe('errors.unlockFailed');
+    }
+  });
+
   it('does not fall back to English for critical visible wallet copy', () => {
     expect(auditTranslationCoverage()).toEqual([]);
   });
@@ -90,21 +139,9 @@ describe('i18n coverage', () => {
     }
   });
 
-  it('resolves the internal transaction network-fee label in every language', () => {
-    const expected = {
-      en: 'Network fee',
-      zh: '网络手续费',
-      de: 'Netzwerkgebühr',
-      es: 'Comisión de red',
-      fr: 'Frais réseau',
-      ja: 'ネットワーク手数料',
-      tr: 'Ağ ücreti',
-      pt: 'Taxa de rede',
-      ru: 'Сетевая комиссия',
-    } satisfies Record<LanguageCode, string>;
-
-    for (const code of Object.keys(expected) as LanguageCode[]) {
-      expect(makeTranslator(code)('history.networkFee')).toBe(expected[code]);
+  it('removes the obsolete internal-history network-fee label from every language', () => {
+    for (const { code } of LANGUAGES) {
+      expect(Object.hasOwn(TRANSLATIONS[code], 'history.networkFee'), code).toBe(false);
     }
   });
 

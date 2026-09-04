@@ -6,6 +6,8 @@ export const AUTO_LOCK_TIMEOUT_OPTIONS_MS = [
 ] as const;
 export type AutoLockTimeoutMs = (typeof AUTO_LOCK_TIMEOUT_OPTIONS_MS)[number];
 export const MAX_SEND_RECIPIENTS = 20;
+export const MAX_NITO_AMOUNT_INPUT_LENGTH = 32;
+export const MAX_MONEY_SATS = 128_456_589_000_000_000n;
 export const VAULT_VERSION = 1 as const;
 export const SALT_BYTE_LENGTH = 16;
 export const SEED_ENTROPY_BYTE_LENGTH = 32;

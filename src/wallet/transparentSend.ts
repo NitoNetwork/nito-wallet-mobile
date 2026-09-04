@@ -4,6 +4,8 @@ import {
   CONSOLIDATION_MIN_SATS_PER_OUTPUT,
   CONSOLIDATION_MIN_UTXOS,
   CONSOLIDATION_TARGET_OUTPUTS,
+  MAX_MONEY_SATS,
+  MAX_NITO_AMOUNT_INPUT_LENGTH,
 } from '../constants/nito';
 import { nitoWalletCrypto } from '../native/nitoWalletCrypto';
 import type {
@@ -12,7 +14,9 @@ import type {
   NitoWalletCryptoApi,
 } from '../native/nitoWalletCryptoContract';
 import { isTransparentUtxoSpendable } from './coinbaseMaturity';
+import { chooseCoinSelection, type CoinSelectionCost } from './coinSelection';
 import type { ScannedAddress, TransparentWalletSnapshot } from './transparentScan';
+import type { HdAccountKey } from './hdAddress';
 
 export const NITO_SIGNER_NETWORK = {
   bech32: 'nito',
@@ -27,9 +31,27 @@ export const NITO_SIGNER_NETWORK = {
 
 export const DEFAULT_FEE_PER_VBYTE = 2n;
 export const DUST_LIMIT_SATS = 546n;
+export const RBF_SEQUENCE = 0xffff_fffd;
+
+/** Bitcoin Core v30 TransactionChangeType, with all four internal families available.
+ * No external recipient (consolidation/cancellation) defaults to Taproot.
+ * A P2SH recipient is opaque. Only our own change is known to wrap P2WPKH. */
+export const changeAccountForRecipients = (addresses: readonly string[]): HdAccountKey => {
+  const types = new Set(addresses.map((address) => {
+    const decoded = btc.Address(NITO_SIGNER_NETWORK).decode(address.trim());
+    if (!decoded) throw new Error('Invalid recipient address.');
+    return decoded.type;
+  }));
+  if (types.has('tr')) return 'taproot';
+  if (types.has('wpkh') || types.has('wsh')) return 'bech32';
+  if (types.has('sh')) return 'nested';
+  if (types.has('pkh')) return 'legacy';
+  return 'taproot';
+};
 
 export type TransparentSendErrorCode =
   | 'invalid-amount-format'
+  | 'amount-above-max-money'
   | 'amount-not-positive'
   | 'amount-below-dust'
   | 'signing-material-unavailable'
@@ -41,6 +63,7 @@ export type TransparentSendErrorCode =
   | 'recipient-output-dust'
   | 'max-recipient-unavailable'
   | 'insufficient-funds'
+  | 'review-changed'
   | 'consolidation-not-enough-utxos'
   | 'consolidation-unavailable'
   | 'consolidation-too-large';
@@ -56,6 +79,10 @@ export class TransparentSendError extends Error {
     this.detail = detail;
   }
 }
+
+export const isTransparentSendReviewChanged = (caught: unknown): boolean => (
+  caught instanceof TransparentSendError && caught.code === 'review-changed'
+);
 
 export const assertTransparentSendFitsAvailable = (fitsAvailable: boolean): void => {
   if (!fitsAvailable) {
@@ -83,12 +110,31 @@ export type PreparedTransparentTx = {
   }[];
 };
 
+type PlannedTransparentOutput = {
+  valueSats: number;
+  scriptHex: string;
+};
+
+export type UnsignedTransparentTx = Omit<PreparedTransparentTx, 'txid' | 'hex'> & {
+  psbtBase64: string;
+  signers: NativePsbtSigner[];
+  transactionInputs: {
+    txid: string;
+    vout: number;
+  }[];
+  transactionOutputs: PlannedTransparentOutput[];
+};
+
 export type TransparentSendOutput = {
   address: string;
   amountSats: bigint;
 };
 
 export type PreparedTransparentSend = PreparedTransparentTx & {
+  recipients: TransparentSendOutput[];
+};
+
+export type UnsignedTransparentSend = UnsignedTransparentTx & {
   recipients: TransparentSendOutput[];
 };
 
@@ -107,6 +153,10 @@ export type TransparentSendEstimate = Omit<MaxTransparentSendAmount, 'amountSats
 };
 
 export const parseNitoAmountToSats = (amount: string) => {
+  if (amount.length > MAX_NITO_AMOUNT_INPUT_LENGTH) {
+    throw new TransparentSendError('invalid-amount-format');
+  }
+
   const normalized = amount.trim().replace(/[\s\u00a0\u202f']/g, '').replace(',', '.');
 
   if (!/^\d+(\.\d{1,8})?$/.test(normalized)) {
@@ -118,6 +168,10 @@ export const parseNitoAmountToSats = (amount: string) => {
 
   if (sats <= 0n) {
     throw new TransparentSendError('amount-not-positive');
+  }
+
+  if (sats > MAX_MONEY_SATS) {
+    throw new TransparentSendError('amount-above-max-money');
   }
 
   if (sats < DUST_LIMIT_SATS) {
@@ -175,7 +229,7 @@ const cloneInput = (input: Record<string, unknown>) => ({
       : input.witnessUtxo,
 });
 
-const prepareSpendableInputs = async (
+export const prepareSpendableInputs = async (
   mnemonic: string,
   snapshot: TransparentWalletSnapshot,
   crypto: NitoWalletCryptoApi,
@@ -197,7 +251,7 @@ const prepareSpendableInputs = async (
 
   for (const { utxo, owner } of candidates) {
     const material = materialByPath.get(owner.path);
-    if (!material) {
+    if (!material || material.address !== owner.address || material.scriptType !== owner.scriptType) {
       throw new TransparentSendError(
         'signing-material-unavailable',
         new Error(`Native HD material unavailable for ${owner.path}.`),
@@ -209,6 +263,7 @@ const prepareSpendableInputs = async (
       ...spend,
       txid: utxo.txid,
       index: utxo.vout,
+      sequence: RBF_SEQUENCE,
     };
 
     if (owner.scriptType === 'p2pkh') {
@@ -273,18 +328,56 @@ const selectSpend = ({
 }) => {
   const inputs = spendable.map((utxo) => cloneInput(utxo.input)) as Parameters<typeof btc.selectUTXO>[0];
 
-  return btc.selectUTXO(
-    inputs,
-    outputs.map((output) => ({ address: output.address.trim(), amount: output.amount })),
-    'default',
-    {
-      changeAddress,
-      feePerByte: feePerVbyte,
-      bip69: true,
-      createTx: true,
-      network: NITO_SIGNER_NETWORK,
-    },
-  );
+  const recipients = outputs.map((output) => ({ address: output.address.trim(), amount: output.amount }));
+  const options = {
+    changeAddress,
+    feePerByte: feePerVbyte,
+    bip69: true,
+    createTx: true,
+    network: NITO_SIGNER_NETWORK,
+  };
+  type Selection = NonNullable<ReturnType<typeof btc.selectUTXO>>;
+  const candidates: (CoinSelectionCost & { selection: Selection })[] = [];
+  const consider = (candidate: Selection | undefined) => {
+    if (!candidate?.tx) return;
+    candidates.push({
+      selection: candidate,
+      feeSats: candidate.tx.fee,
+      inputCount: candidate.inputs.length,
+      inputValueSats: candidate.outputs.reduce((total, output) => total + output.amount, 0n) + candidate.tx.fee,
+    });
+  };
+  // Preserve the existing candidate, then compare one greedy alternative and
+  // sufficient single inputs. Never search subsets exponentially or prefer dust
+  // merely because it is small. All fees/dust/weights still come from the library.
+  consider(btc.selectUTXO(inputs, recipients, 'default', options));
+  consider(btc.selectUTXO(inputs, recipients, 'accumBiggest', options));
+  const groups = new Map<string, number[]>();
+  spendable.forEach((item, index) => {
+    const group = groups.get(item.signer.scriptType) ?? [];
+    group.push(index);
+    groups.set(item.signer.scriptType, group);
+  });
+  for (const group of groups.values()) {
+    group.sort((a, b) => spendable[a]!.valueSats - spendable[b]!.valueSats);
+    // Within a script family input weights are identical. Funding and creating
+    // viable change are monotone in value, so two binary searches suffice.
+    for (const requireChange of [false, true]) {
+      let low = 0;
+      let high = group.length - 1;
+      while (low <= high) {
+        const middle = Math.floor((low + high) / 2);
+        const candidate = btc.selectUTXO([inputs[group[middle]!]!], recipients, 'default', options);
+        if (candidate?.tx && (!requireChange || candidate.change)) {
+          consider(candidate);
+          high = middle - 1;
+        } else {
+          low = middle + 1;
+        }
+      }
+    }
+  }
+  return chooseCoinSelection(candidates)?.selection;
 };
 
 type CalculateMaxTransparentSendAmountArgs = {
@@ -311,6 +404,7 @@ const normalizeSendOutputs = (outputs: TransparentSendOutput[]) => {
     throw new TransparentSendError('recipient-required');
   }
 
+  let totalSats = 0n;
   return outputs.map((output) => {
     const address = output.address.trim();
     if (!address) {
@@ -318,6 +412,13 @@ const normalizeSendOutputs = (outputs: TransparentSendOutput[]) => {
     }
     if (output.amountSats < DUST_LIMIT_SATS) {
       throw new TransparentSendError('recipient-output-dust');
+    }
+    if (output.amountSats > MAX_MONEY_SATS) {
+      throw new TransparentSendError('amount-above-max-money');
+    }
+    totalSats += output.amountSats;
+    if (totalSats > MAX_MONEY_SATS) {
+      throw new TransparentSendError('amount-above-max-money');
     }
     return { address, amountSats: output.amountSats };
   });
@@ -354,7 +455,9 @@ export const calculateMaxTransparentSendAmount = (
   }
   const fixedTotalSats = fixedOutputs.reduce((total, output) => total + output.amountSats, 0n);
   let low = DUST_LIMIT_SATS;
-  let high = totalSats - fixedTotalSats;
+  const availableForTarget = totalSats - fixedTotalSats;
+  const policyForTarget = MAX_MONEY_SATS - fixedTotalSats;
+  let high = availableForTarget < policyForTarget ? availableForTarget : policyForTarget;
   let best: MaxTransparentSendAmount | null = null;
 
   while (low <= high) {
@@ -475,6 +578,13 @@ export type PreparedTransparentConsolidation = {
   totalFeeSats: number;
 };
 
+export type UnsignedTransparentConsolidation = {
+  transactions: UnsignedTransparentTx[];
+  inputCount: number;
+  outputCount: number;
+  totalFeeSats: number;
+};
+
 const calculateMaxEqualSplit = async ({
   mnemonic,
   snapshot,
@@ -491,7 +601,7 @@ const calculateMaxEqualSplit = async ({
   crypto: NitoWalletCryptoApi;
 }): Promise<bigint | null> => {
   const { spendable, totalSats } = await prepareSpendableInputs(mnemonic, snapshot, crypto);
-  const resolvedChangeAddress = resolveChangeAddress(snapshot);
+  const resolvedChangeAddress = resolveChangeAddress(snapshot, toAddress);
   const count = BigInt(outputCount);
   let low = DUST_LIMIT_SATS;
   let high = totalSats / count;
@@ -513,19 +623,22 @@ const calculateMaxEqualSplit = async ({
   return best;
 };
 
-export const buildTransparentConsolidation = async ({
+export const prepareUnsignedTransparentConsolidation = async ({
   mnemonic,
   snapshot,
-  toAddress,
+  toAddresses,
   feePerVbyte = DEFAULT_FEE_PER_VBYTE,
   crypto = nitoWalletCrypto,
 }: {
   mnemonic: string;
   snapshot: TransparentWalletSnapshot;
-  toAddress: string;
+  toAddresses: readonly string[];
   feePerVbyte?: bigint;
   crypto?: NitoWalletCryptoApi;
-}): Promise<PreparedTransparentConsolidation> => {
+}): Promise<UnsignedTransparentConsolidation> => {
+  if (toAddresses.length === 0 || toAddresses.some((address) => address.trim() === '')) {
+    throw new TransparentSendError('change-address-unavailable');
+  }
   const confirmedUtxos = snapshot.utxos
     .filter(isTransparentUtxoSpendable)
     .sort((left, right) => left.valueSats - right.valueSats);
@@ -558,10 +671,11 @@ export const buildTransparentConsolidation = async ({
     throw new TransparentSendError('consolidation-unavailable');
   }
 
-  const transactions: PreparedTransparentTx[] = [];
-  for (const utxos of usefulBatches) {
+  const transactions: UnsignedTransparentTx[] = [];
+  for (const [batchIndex, utxos] of usefulBatches.entries()) {
     const batchSnapshot: TransparentWalletSnapshot = { ...snapshot, utxos };
-    let built: PreparedTransparentTx | null = null;
+    const toAddress = toAddresses[Math.min(batchIndex, toAddresses.length - 1)]!;
+    let built: UnsignedTransparentTx | null = null;
 
     for (const target of CONSOLIDATION_OUTPUT_STEPS) {
       const outputCount = Math.min(target, utxos.length);
@@ -580,11 +694,13 @@ export const buildTransparentConsolidation = async ({
       }
 
       const outputs = Array.from({ length: outputCount }, () => ({ address: toAddress, amount: perOutput }));
-      const transaction = await buildTransparentTx({
+      const transaction = await prepareUnsignedTransparentTx({
         mnemonic,
         snapshot: batchSnapshot,
         outputs,
         feePerVbyte,
+        changeAddress: toAddress,
+        ownedOutputAddresses: [toAddress],
         crypto,
       });
       if (
@@ -594,10 +710,6 @@ export const buildTransparentConsolidation = async ({
       ) {
         continue;
       }
-      if (transaction.hex.length / 2 > 100_000) {
-        throw new TransparentSendError('consolidation-too-large');
-      }
-
       built = transaction;
       break;
     }
@@ -616,12 +728,13 @@ export const buildTransparentConsolidation = async ({
   };
 };
 
-const buildTransparentTx = ({
+const prepareUnsignedTransparentTx = ({
   mnemonic,
   snapshot,
   outputs,
   feePerVbyte = DEFAULT_FEE_PER_VBYTE,
   changeAddress,
+  ownedOutputAddresses = [],
   crypto = nitoWalletCrypto,
 }: {
   mnemonic: string;
@@ -629,8 +742,9 @@ const buildTransparentTx = ({
   outputs: { address: string; amount: bigint }[];
   feePerVbyte?: bigint;
   changeAddress?: string;
+  ownedOutputAddresses?: readonly string[];
   crypto?: NitoWalletCryptoApi;
-}): Promise<PreparedTransparentTx> => {
+}): Promise<UnsignedTransparentTx> => {
   return (async () => {
   const { spendable } = await prepareSpendableInputs(mnemonic, snapshot, crypto);
   const resolvedChangeAddress = resolveChangeAddress(snapshot, changeAddress);
@@ -644,14 +758,6 @@ const buildTransparentTx = ({
   if (!selected || !selected.tx) {
     throw new TransparentSendError('insufficient-funds');
   }
-
-  const signed = await crypto.signPsbt({
-    mnemonic,
-    psbtBase64: bytesToBase64(selected.tx.toPSBT(0)),
-    signers: spendable.map(({ signer }) => signer),
-  });
-  const signedTransaction = btc.Transaction.fromPSBT(base64ToBytes(signed.psbtBase64));
-  signedTransaction.finalize();
 
   const spendableByOutpoint = new Map(spendable.map((item) => [
     `${item.signer.txid}:${item.signer.vout}`,
@@ -684,7 +790,11 @@ const buildTransparentTx = ({
     ownedAddressByScript.set(bytesToHex(script), owner.address);
   }
   const ownedAddressByAddress = new Map(
-    snapshot.addresses.map((owner) => [owner.address.toLowerCase(), owner.address]),
+    [
+      ...snapshot.addresses.map((owner) => owner.address),
+      resolvedChangeAddress,
+      ...ownedOutputAddresses,
+    ].map((address) => [address.toLowerCase(), address]),
   );
   const walletOutputs = selected.outputs.flatMap((output, vout) => {
     const address = 'address' in output
@@ -695,9 +805,26 @@ const buildTransparentTx = ({
     return address ? [{ vout, valueSats: Number(output.amount), address }] : [];
   });
 
+  const selectedOutpoints = new Set(walletInputs.map((input) => `${input.txid}:${input.vout}`));
+  const signers = spendable
+    .filter(({ signer }) => selectedOutpoints.has(`${signer.txid}:${signer.vout}`))
+    .map(({ signer }) => signer);
+  if (signers.length !== selected.inputs.length || walletInputs.length !== selected.inputs.length) {
+    throw new TransparentSendError('signing-material-unavailable');
+  }
+
   return {
-    txid: signedTransaction.id,
-    hex: signedTransaction.hex,
+    psbtBase64: bytesToBase64(selected.tx.toPSBT(0)),
+    signers,
+    transactionInputs: walletInputs.map(({ txid, vout }) => ({ txid, vout })),
+    transactionOutputs: selected.outputs.map((output) => ({
+      valueSats: Number(output.amount),
+      scriptHex: 'address' in output
+        ? bytesToHex(btc.OutScript.encode(
+          addressCodec.decode(output.address) as Parameters<typeof btc.OutScript.encode>[0],
+        ))
+        : bytesToHex(output.script),
+    })),
     feeSats: Number(selected.tx.fee || selected.fee),
     inputCount: selected.inputs.length,
     outputCount: selected.outputs.length,
@@ -706,6 +833,187 @@ const buildTransparentTx = ({
     walletOutputs,
   };
   })();
+};
+
+const inputTxidCandidates = (txid: string | Uint8Array | undefined): string[] => {
+  if (typeof txid === 'string') return [txid.toLowerCase()];
+  if (!(txid instanceof Uint8Array)) return [];
+  return [bytesToHex(txid), bytesToHex(Uint8Array.from(txid).reverse())];
+};
+
+export const signUnsignedTransparentTx = async ({
+  mnemonic,
+  transaction,
+  crypto = nitoWalletCrypto,
+}: {
+  mnemonic: string;
+  transaction: UnsignedTransparentTx;
+  crypto?: NitoWalletCryptoApi;
+}): Promise<PreparedTransparentTx> => {
+  const signed = await crypto.signPsbt({
+    mnemonic,
+    psbtBase64: transaction.psbtBase64,
+    signers: transaction.signers,
+  });
+  const signedTransaction = btc.Transaction.fromPSBT(base64ToBytes(signed.psbtBase64));
+  const reviewedTransaction = btc.Transaction.fromPSBT(base64ToBytes(transaction.psbtBase64));
+  if (signedTransaction.inputsLength !== transaction.transactionInputs.length
+    || signedTransaction.version !== reviewedTransaction.version
+    || signedTransaction.lockTime !== reviewedTransaction.lockTime) {
+    throw new TransparentSendError('signing-material-unavailable');
+  }
+  transaction.transactionInputs.forEach((expected, index) => {
+    const input = signedTransaction.getInput(index);
+    if (
+      input.index !== expected.vout
+      || input.sequence !== reviewedTransaction.getInput(index).sequence
+      || !inputTxidCandidates(input.txid).includes(expected.txid.toLowerCase())
+    ) {
+      throw new TransparentSendError('signing-material-unavailable');
+    }
+  });
+  if (signedTransaction.outputsLength !== transaction.transactionOutputs.length) {
+    throw new TransparentSendError('signing-material-unavailable');
+  }
+  transaction.transactionOutputs.forEach((expected, index) => {
+    const output = signedTransaction.getOutput(index);
+    if (
+      Number(output.amount) !== expected.valueSats
+      || !(output.script instanceof Uint8Array)
+      || bytesToHex(output.script) !== expected.scriptHex
+    ) {
+      throw new TransparentSendError('signing-material-unavailable');
+    }
+  });
+  signedTransaction.finalize();
+  if (signedTransaction.hex.length / 2 > 100_000) {
+    throw new TransparentSendError('consolidation-too-large');
+  }
+  return {
+    txid: signedTransaction.id,
+    hex: signedTransaction.hex,
+    feeSats: transaction.feeSats,
+    inputCount: transaction.inputCount,
+    outputCount: transaction.outputCount,
+    changeUsed: transaction.changeUsed,
+    walletInputs: transaction.walletInputs,
+    walletOutputs: transaction.walletOutputs,
+  };
+};
+
+const sameInputs = (
+  left: UnsignedTransparentTx,
+  right: UnsignedTransparentTx,
+) => left.transactionInputs.length === right.transactionInputs.length
+  && left.transactionInputs.every((input, index) => {
+    const candidate = right.transactionInputs[index];
+    return candidate?.txid === input.txid && candidate.vout === input.vout;
+  });
+
+const assertTransactionPlanMatches = (
+  preview: UnsignedTransparentTx,
+  rebuilt: UnsignedTransparentTx,
+): void => {
+  const previewOutputValues = preview.transactionOutputs
+    .map((output) => output.valueSats)
+    .sort((left, right) => left - right);
+  const rebuiltOutputValues = rebuilt.transactionOutputs
+    .map((output) => output.valueSats)
+    .sort((left, right) => left - right);
+  if (
+    preview.feeSats !== rebuilt.feeSats
+    || preview.inputCount !== rebuilt.inputCount
+    || preview.outputCount !== rebuilt.outputCount
+    || preview.changeUsed !== rebuilt.changeUsed
+    || !sameInputs(preview, rebuilt)
+    || preview.transactionOutputs.length !== rebuilt.transactionOutputs.length
+    || previewOutputValues.some((value, index) => (
+      value !== rebuiltOutputValues[index]
+    ))
+  ) {
+    throw new TransparentSendError('review-changed');
+  }
+};
+
+export const assertUnsignedTransparentInputsAvailable = (
+  transaction: UnsignedTransparentTx,
+  snapshot: TransparentWalletSnapshot,
+): void => {
+  const spendableByOutpoint = new Map(
+    snapshot.utxos
+      .filter(isTransparentUtxoSpendable)
+      .map((utxo) => [`${utxo.txid}:${utxo.vout}`, utxo] as const),
+  );
+  if (transaction.walletInputs.some((input) => {
+    const current = spendableByOutpoint.get(`${input.txid}:${input.vout}`);
+    return !current
+      || current.valueSats !== input.valueSats
+      || current.address !== input.address;
+  })) {
+    throw new TransparentSendError('insufficient-funds');
+  }
+};
+
+export const assertTransparentSendPlanMatches = (
+  preview: UnsignedTransparentSend,
+  rebuilt: UnsignedTransparentSend,
+): void => {
+  assertTransactionPlanMatches(preview, rebuilt);
+  if (
+    preview.recipients.length !== rebuilt.recipients.length
+    || preview.recipients.some((recipient, index) => {
+      const candidate = rebuilt.recipients[index];
+      return candidate?.address !== recipient.address
+        || candidate.amountSats !== recipient.amountSats;
+    })
+  ) {
+    throw new TransparentSendError('review-changed');
+  }
+};
+
+export const assertTransparentConsolidationPlanMatches = (
+  preview: UnsignedTransparentConsolidation,
+  rebuilt: UnsignedTransparentConsolidation,
+): void => {
+  if (preview.transactions.length !== rebuilt.transactions.length) {
+    throw new TransparentSendError('review-changed');
+  }
+  preview.transactions.forEach((transaction, index) => {
+    const candidate = rebuilt.transactions[index];
+    if (!candidate) throw new TransparentSendError('review-changed');
+    assertTransactionPlanMatches(transaction, candidate);
+  });
+};
+
+export const prepareUnsignedTransparentMultiSend = async ({
+  mnemonic,
+  snapshot,
+  outputs,
+  feePerVbyte = DEFAULT_FEE_PER_VBYTE,
+  changeAddress,
+  crypto = nitoWalletCrypto,
+}: {
+  mnemonic: string;
+  snapshot: TransparentWalletSnapshot;
+  outputs: TransparentSendOutput[];
+  feePerVbyte?: bigint;
+  changeAddress?: string;
+  crypto?: NitoWalletCryptoApi;
+}): Promise<UnsignedTransparentSend> => {
+  const recipients = normalizeSendOutputs(outputs);
+  const transaction = await prepareUnsignedTransparentTx({
+    mnemonic,
+    snapshot,
+    outputs: recipients.map((recipient) => ({
+      address: recipient.address,
+      amount: recipient.amountSats,
+    })),
+    feePerVbyte,
+    changeAddress,
+    ownedOutputAddresses: changeAddress ? [changeAddress] : [],
+    crypto,
+  });
+  return { ...transaction, recipients };
 };
 
 export const buildTransparentMultiSend = async ({
@@ -723,20 +1031,48 @@ export const buildTransparentMultiSend = async ({
   changeAddress?: string;
   crypto?: NitoWalletCryptoApi;
 }): Promise<PreparedTransparentSend> => {
-  const recipients = normalizeSendOutputs(outputs);
-  const transaction = await buildTransparentTx({
+  const unsigned = await prepareUnsignedTransparentMultiSend({
     mnemonic,
     snapshot,
-    outputs: recipients.map((recipient) => ({
-      address: recipient.address,
-      amount: recipient.amountSats,
-    })),
+    outputs,
     feePerVbyte,
     changeAddress,
     crypto,
   });
+  const transaction = await signUnsignedTransparentTx({ mnemonic, transaction: unsigned, crypto });
+  return { ...transaction, recipients: unsigned.recipients };
+};
 
-  return { ...transaction, recipients };
+export const buildTransparentConsolidation = async ({
+  mnemonic,
+  snapshot,
+  toAddress,
+  feePerVbyte = DEFAULT_FEE_PER_VBYTE,
+  crypto = nitoWalletCrypto,
+}: {
+  mnemonic: string;
+  snapshot: TransparentWalletSnapshot;
+  toAddress: string;
+  feePerVbyte?: bigint;
+  crypto?: NitoWalletCryptoApi;
+}): Promise<PreparedTransparentConsolidation> => {
+  const unsigned = await prepareUnsignedTransparentConsolidation({
+    mnemonic,
+    snapshot,
+    toAddresses: [toAddress],
+    feePerVbyte,
+    crypto,
+  });
+  const transactions: PreparedTransparentTx[] = [];
+  for (const transaction of unsigned.transactions) {
+    transactions.push(await signUnsignedTransparentTx({ mnemonic, transaction, crypto }));
+  }
+  return {
+    transactions,
+    inputCount: unsigned.inputCount,
+    outputCount: unsigned.outputCount,
+    totalFeeSats: unsigned.totalFeeSats,
+  };
 };
 
 export const buildTransparentSend = ({

@@ -25,6 +25,18 @@ describe('Nito Electrum helpers', () => {
     expect(toHex(script)).toBe('0014c0cebcd6c3d3ca8c75dc5ec62ebe55330ef910e2');
   });
 
+  it('marks only validated network history as observed for transaction tracking', async () => {
+    const client = new NitoElectrumClient();
+    vi.spyOn(client, 'request').mockResolvedValue([
+      { tx_hash: 'ab'.repeat(32), height: 0 },
+    ]);
+    await expect(client.getAddressHistory(address)).resolves.toEqual([
+      { txid: 'ab'.repeat(32), height: 0, address, networkObserved: true },
+    ]);
+    vi.mocked(client.request).mockRejectedValueOnce(new Error('offline'));
+    await expect(client.getAddressHistory(address)).rejects.toThrow('offline');
+  });
+
   it('uses reversed sha256(scriptPubKey) for Electrum scripthash', () => {
     const script = scriptPubKeyForNitoAddress(address);
     expect(electrumScripthashFromScript(script)).toBe('6e4f16236139f15046b38f399a683fb2aa8edf5fd128b3e5db017fb0ac74078a');
@@ -87,6 +99,19 @@ describe('Nito Electrum helpers', () => {
       ElectrumInvalidResponseError,
     );
 
+    vi.mocked(client.request).mockResolvedValueOnce('00'.repeat(800_000));
+    await expect(client.getTransactionHex('ab'.repeat(32))).resolves.toHaveLength(1_600_000);
+
+    vi.mocked(client.request).mockResolvedValueOnce('00'.repeat(800_001));
+    await expect(client.getTransactionHex('ab'.repeat(32))).rejects.toBeInstanceOf(
+      ElectrumInvalidResponseError,
+    );
+
+    vi.mocked(client.request).mockResolvedValueOnce('not-a-status-hash');
+    await expect(client.subscribeAddressStatus(address, () => undefined)).rejects.toBeInstanceOf(
+      ElectrumInvalidResponseError,
+    );
+
     vi.mocked(client.request).mockResolvedValueOnce({
       vin: [{ txid: 'not-a-txid', vout: 0 }],
       vout: [{ n: 0, value: 1 }],
@@ -100,6 +125,10 @@ describe('Nito Electrum helpers', () => {
     expect(() => handleMessage(JSON.stringify({
       method: 'blockchain.headers.subscribe',
       params: [{}],
+    }))).toThrow(ElectrumInvalidResponseError);
+    expect(() => handleMessage(JSON.stringify({
+      method: 'blockchain.scripthash.subscribe',
+      params: ['ab'.repeat(32), 'not-a-status-hash'],
     }))).toThrow(ElectrumInvalidResponseError);
   });
 
@@ -329,7 +358,7 @@ describe('Nito Electrum helpers', () => {
           : request.method === 'blockchain.headers.subscribe'
             ? { height: 123, hex: 'aa' }
             : request.method === 'blockchain.scripthash.subscribe'
-              ? `status-${this.generation}`
+              ? this.generation.toString(16).padStart(64, '0')
               : [];
         queueMicrotask(() => this.onmessage?.({
           data: JSON.stringify({ id: request.id, result }),
@@ -359,7 +388,7 @@ describe('Nito Electrum helpers', () => {
     await vi.advanceTimersByTimeAsync(1);
 
     expect(ReconnectingWebSocket.instances).toHaveLength(2);
-    expect(replayedStatuses).toEqual(['status-2']);
+    expect(replayedStatuses).toEqual(['2'.padStart(64, '0')]);
     expect(connectionStates).toEqual([true, false, true]);
     expect(client.connected).toBe(true);
     subscription.unsubscribe();

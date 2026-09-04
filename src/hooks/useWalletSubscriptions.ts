@@ -22,7 +22,7 @@ import {
  */
 export const useWalletSubscriptions = ({
   enabled,
-  wallet: { address: walletAddress, snapshot },
+  wallet: { walletId, snapshot },
   electrum: { clientRef, networkRef },
   synchronization: { controller, request: requestSync },
   onHeightAdvance,
@@ -30,7 +30,7 @@ export const useWalletSubscriptions = ({
 }: {
   enabled: boolean;
   wallet: {
-    address: string | undefined;
+    walletId: string | undefined;
     snapshot: TransparentWalletSnapshot | null;
   };
   electrum: {
@@ -127,7 +127,7 @@ export const useWalletSubscriptions = ({
 
   useEffect(() => () => {
     clearSubscriptions();
-  }, [clearSubscriptions, walletAddress]);
+  }, [clearSubscriptions, walletId]);
 
   useEffect(() => {
     if (!enabled || !snapshot) {

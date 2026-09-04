@@ -26,7 +26,7 @@ describe('Electrum server transition', () => {
     invalidateElectrumRuntimeForServerChange({
       client: { disconnect } as unknown as NitoElectrumClient,
       controller,
-      walletAddress: 'wallet-a',
+      walletId: 'wallet-a',
       clearClient,
       clearPreparedTransaction,
       clearPreparedConsolidation,

@@ -106,7 +106,7 @@ struct GenerateMnemonicResponse {
     mnemonic: String,
 }
 
-#[derive(Debug, Clone, Copy, Deserialize)]
+#[derive(Debug, Clone, Copy, Deserialize, Serialize)]
 #[serde(rename_all = "kebab-case")]
 enum ScriptType {
     P2pkh,
@@ -148,6 +148,7 @@ struct DeriveAddressRequest {
 #[serde(rename_all = "camelCase")]
 struct DerivedAddressResponse {
     path: String,
+    script_type: ScriptType,
     address: String,
     public_key_hex: String,
     script_hex: String,
@@ -355,6 +356,7 @@ fn derive_address(
 
     Ok(DerivedAddressResponse {
         path: request.path,
+        script_type: request.script_type,
         address,
         public_key_hex: hex::encode(public_key.to_bytes()),
         script_hex: hex::encode(script.as_bytes()),
@@ -410,26 +412,150 @@ fn derive_addresses(request: &str) -> Result<Value, CryptoError> {
     serde_json::to_value(addresses).map_err(|error| CryptoError::Crypto(error.to_string()))
 }
 
-fn previous_output(psbt: &Psbt, index: usize) -> Result<TxOut, CryptoError> {
+fn non_witness_previous_output(psbt: &Psbt, index: usize) -> Result<TxOut, CryptoError> {
     let input = psbt
         .inputs
         .get(index)
         .ok_or(CryptoError::MissingPrevout(index))?;
-    if let Some(output) = &input.witness_utxo {
-        return Ok(output.clone());
-    }
     let outpoint = psbt
         .unsigned_tx
         .input
         .get(index)
         .ok_or(CryptoError::MissingPrevout(index))?
         .previous_output;
-    input
+    let transaction = input
         .non_witness_utxo
         .as_ref()
-        .and_then(|transaction| transaction.output.get(outpoint.vout as usize))
+        .ok_or(CryptoError::MissingPrevout(index))?;
+    if transaction.compute_txid() != outpoint.txid {
+        return Err(CryptoError::InvalidPsbt(format!(
+            "Non-witness transaction does not match input {index}"
+        )));
+    }
+    transaction
+        .output
+        .get(outpoint.vout as usize)
         .cloned()
         .ok_or(CryptoError::MissingPrevout(index))
+}
+
+fn witness_previous_output(psbt: &Psbt, index: usize) -> Result<TxOut, CryptoError> {
+    let input = psbt
+        .inputs
+        .get(index)
+        .ok_or(CryptoError::MissingPrevout(index))?;
+    let output = input
+        .witness_utxo
+        .as_ref()
+        .cloned()
+        .ok_or(CryptoError::MissingPrevout(index))?;
+    if input.non_witness_utxo.is_some() && non_witness_previous_output(psbt, index)? != output {
+        return Err(CryptoError::InvalidPsbt(format!(
+            "Previous output records disagree for input {index}"
+        )));
+    }
+    Ok(output)
+}
+
+struct ValidatedSignerInput {
+    index: usize,
+    script_type: ScriptType,
+    secret_key: SecretKey,
+    public_key: PublicKey,
+    previous_output: TxOut,
+    witness_program: Option<ScriptBuf>,
+}
+
+fn validate_signer_inputs(
+    psbt: &Psbt,
+    root: &Xpriv,
+    signers: &HashMap<(String, u32), SignerRequest>,
+    secp: &Secp256k1<bitcoin::secp256k1::All>,
+) -> Result<Vec<ValidatedSignerInput>, CryptoError> {
+    psbt.unsigned_tx
+        .input
+        .iter()
+        .enumerate()
+        .map(|(index, transaction_input)| {
+            let outpoint = transaction_input.previous_output;
+            let signer = signers
+                .get(&(outpoint.txid.to_string().to_lowercase(), outpoint.vout))
+                .ok_or(CryptoError::MissingSigner(index))?;
+            let secret_key = derive_secret(root, &signer.path)?;
+            let secp_public_key = bitcoin::secp256k1::PublicKey::from_secret_key(secp, &secret_key);
+            let public_key = PublicKey::new(secp_public_key);
+            let psbt_input = psbt
+                .inputs
+                .get(index)
+                .ok_or(CryptoError::MissingPrevout(index))?;
+
+            let (previous_output, expected_script, witness_program) = match signer.script_type {
+                ScriptType::P2pkh => {
+                    let previous_output = non_witness_previous_output(psbt, index)?;
+                    let expected_script = ScriptBuf::new_p2pkh(&public_key.pubkey_hash());
+                    (previous_output, expected_script, None)
+                }
+                ScriptType::P2shP2wpkh => {
+                    let previous_output = witness_previous_output(psbt, index)?;
+                    let witness_key_hash = public_key
+                        .wpubkey_hash()
+                        .map_err(|error| CryptoError::Crypto(error.to_string()))?;
+                    let expected_redeem_script = ScriptBuf::new_p2wpkh(&witness_key_hash);
+                    if psbt_input.redeem_script.as_ref() != Some(&expected_redeem_script) {
+                        return Err(CryptoError::InvalidPsbt(format!(
+                            "P2SH redeem script does not match signer for input {index}"
+                        )));
+                    }
+                    let expected_script =
+                        ScriptBuf::new_p2sh(&expected_redeem_script.script_hash());
+                    (
+                        previous_output,
+                        expected_script,
+                        Some(expected_redeem_script),
+                    )
+                }
+                ScriptType::P2wpkh => {
+                    let previous_output = witness_previous_output(psbt, index)?;
+                    let witness_key_hash = public_key
+                        .wpubkey_hash()
+                        .map_err(|error| CryptoError::Crypto(error.to_string()))?;
+                    let expected_script = ScriptBuf::new_p2wpkh(&witness_key_hash);
+                    (
+                        previous_output,
+                        expected_script.clone(),
+                        Some(expected_script),
+                    )
+                }
+                ScriptType::P2tr => {
+                    let previous_output = witness_previous_output(psbt, index)?;
+                    let keypair = Keypair::from_secret_key(secp, &secret_key);
+                    let (internal_key, _) = keypair.x_only_public_key();
+                    if psbt_input.tap_internal_key != Some(internal_key) {
+                        return Err(CryptoError::InvalidPsbt(format!(
+                            "Taproot internal key does not match signer for input {index}"
+                        )));
+                    }
+                    let expected_script = ScriptBuf::new_p2tr(secp, internal_key, None);
+                    (previous_output, expected_script, None)
+                }
+            };
+
+            if previous_output.script_pubkey != expected_script {
+                return Err(CryptoError::InvalidPsbt(format!(
+                    "Previous output script does not match signer for input {index}"
+                )));
+            }
+
+            Ok(ValidatedSignerInput {
+                index,
+                script_type: signer.script_type,
+                secret_key,
+                public_key,
+                previous_output,
+                witness_program,
+            })
+        })
+        .collect()
 }
 
 enum PendingSignature {
@@ -451,25 +577,19 @@ fn sign_psbt(request: &str) -> Result<Value, CryptoError> {
         .into_iter()
         .map(|signer| ((signer.txid.to_lowercase(), signer.vout), signer))
         .collect();
-    let prevouts = (0..psbt.inputs.len())
-        .map(|index| previous_output(&psbt, index))
-        .collect::<Result<Vec<_>, _>>()?;
     let secp = Secp256k1::new();
+    let validated_inputs = validate_signer_inputs(&psbt, &root, &signers, &secp)?;
+    let prevouts = validated_inputs
+        .iter()
+        .map(|input| input.previous_output.clone())
+        .collect::<Vec<_>>();
     let signatures = {
         let mut cache = SighashCache::new(&psbt.unsigned_tx);
         let mut signatures = Vec::with_capacity(psbt.inputs.len());
 
-        for (index, transaction_input) in psbt.unsigned_tx.input.iter().enumerate() {
-            let outpoint = transaction_input.previous_output;
-            let signer = signers
-                .get(&(outpoint.txid.to_string().to_lowercase(), outpoint.vout))
-                .ok_or(CryptoError::MissingSigner(index))?;
-            let secret_key = derive_secret(&root, &signer.path)?;
-            let secp_public_key =
-                bitcoin::secp256k1::PublicKey::from_secret_key(&secp, &secret_key);
-            let public_key = PublicKey::new(secp_public_key);
-
-            match signer.script_type {
+        for input in &validated_inputs {
+            let index = input.index;
+            match input.script_type {
                 ScriptType::P2tr => {
                     let sighash = cache
                         .taproot_key_spend_signature_hash(
@@ -479,7 +599,7 @@ fn sign_psbt(request: &str) -> Result<Value, CryptoError> {
                         )
                         .map_err(|error| CryptoError::Crypto(error.to_string()))?;
                     let message = Message::from_digest(sighash.to_byte_array());
-                    let keypair = Keypair::from_secret_key(&secp, &secret_key)
+                    let keypair = Keypair::from_secret_key(&secp, &input.secret_key)
                         .tap_tweak(&secp, None)
                         .to_keypair();
                     let signature = secp.sign_schnorr_no_aux_rand(&message, &keypair);
@@ -500,10 +620,10 @@ fn sign_psbt(request: &str) -> Result<Value, CryptoError> {
                         )
                         .map_err(|error| CryptoError::Crypto(error.to_string()))?;
                     let message = Message::from_digest(sighash.to_byte_array());
-                    let signature = secp.sign_ecdsa(&message, &secret_key);
+                    let signature = secp.sign_ecdsa(&message, &input.secret_key);
                     signatures.push(PendingSignature::Ecdsa(
                         index,
-                        public_key,
+                        input.public_key,
                         bitcoin::ecdsa::Signature {
                             signature,
                             sighash_type: EcdsaSighashType::All,
@@ -511,15 +631,11 @@ fn sign_psbt(request: &str) -> Result<Value, CryptoError> {
                     ));
                 }
                 ScriptType::P2shP2wpkh | ScriptType::P2wpkh => {
-                    let witness_program = match signer.script_type {
-                        ScriptType::P2shP2wpkh => {
-                            psbt.inputs[index].redeem_script.as_ref().ok_or_else(|| {
-                                CryptoError::InvalidPsbt("Missing P2SH redeem script".into())
-                            })?
-                        }
-                        ScriptType::P2wpkh => &prevouts[index].script_pubkey,
-                        _ => unreachable!(),
-                    };
+                    let witness_program = input.witness_program.as_ref().ok_or_else(|| {
+                        CryptoError::InvalidPsbt(format!(
+                            "Missing witness program for input {index}"
+                        ))
+                    })?;
                     let sighash = cache
                         .p2wpkh_signature_hash(
                             index,
@@ -529,10 +645,10 @@ fn sign_psbt(request: &str) -> Result<Value, CryptoError> {
                         )
                         .map_err(|error| CryptoError::Crypto(error.to_string()))?;
                     let message = Message::from_digest(sighash.to_byte_array());
-                    let signature = secp.sign_ecdsa(&message, &secret_key);
+                    let signature = secp.sign_ecdsa(&message, &input.secret_key);
                     signatures.push(PendingSignature::Ecdsa(
                         index,
-                        public_key,
+                        input.public_key,
                         bitcoin::ecdsa::Signature {
                             signature,
                             sighash_type: EcdsaSighashType::All,
@@ -659,6 +775,129 @@ mod tests {
     };
 
     const MNEMONIC: &str = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
+
+    fn assert_valid_signatures(psbt: &Psbt) {
+        let secp = Secp256k1::verification_only();
+        let prevouts: Vec<TxOut> = psbt
+            .iter_funding_utxos()
+            .map(|out| out.unwrap().clone())
+            .collect();
+        let mut cache = SighashCache::new(&psbt.unsigned_tx);
+        for (index, input) in psbt.inputs.iter().enumerate() {
+            let prevout = &prevouts[index];
+            if prevout.script_pubkey.is_p2tr() {
+                let signature = input.tap_key_sig.unwrap();
+                let output_key = bitcoin::secp256k1::XOnlyPublicKey::from_slice(
+                    &prevout.script_pubkey.as_bytes()[2..],
+                )
+                .unwrap();
+                let hash = cache
+                    .taproot_key_spend_signature_hash(
+                        index,
+                        &Prevouts::All(&prevouts),
+                        signature.sighash_type,
+                    )
+                    .unwrap();
+                secp.verify_schnorr(
+                    &signature.signature,
+                    &Message::from_digest(hash.to_byte_array()),
+                    &output_key,
+                )
+                .unwrap();
+            } else {
+                let (key, signature) = input.partial_sigs.iter().next().unwrap();
+                let digest = if prevout.script_pubkey.is_p2pkh() {
+                    cache
+                        .legacy_signature_hash(
+                            index,
+                            &prevout.script_pubkey,
+                            signature.sighash_type.to_u32(),
+                        )
+                        .unwrap()
+                        .to_byte_array()
+                } else {
+                    let script = input
+                        .redeem_script
+                        .as_ref()
+                        .unwrap_or(&prevout.script_pubkey);
+                    cache
+                        .p2wpkh_signature_hash(index, script, prevout.value, signature.sighash_type)
+                        .unwrap()
+                        .to_byte_array()
+                };
+                secp.verify_ecdsa(
+                    &Message::from_digest(digest),
+                    &signature.signature,
+                    &key.inner,
+                )
+                .unwrap();
+            }
+        }
+    }
+
+    #[test]
+    fn address_json_preserves_each_requested_script_type_and_path() {
+        for (purpose, script_type) in [
+            (44, "p2pkh"),
+            (49, "p2sh-p2wpkh"),
+            (84, "p2wpkh"),
+            (86, "p2tr"),
+        ] {
+            for branch in [0, 1] {
+                let path = format!("m/{purpose}'/0'/0'/{branch}/3");
+                let response: Value = serde_json::from_str(&invoke_envelope(
+                    "deriveAddresses",
+                    &json!({
+                        "mnemonic": MNEMONIC,
+                        "requests": [{ "path": path, "scriptType": script_type }]
+                    })
+                    .to_string(),
+                ))
+                .unwrap();
+                assert_eq!(response["ok"], true);
+                assert_eq!(response["result"][0]["path"], path);
+                assert_eq!(response["result"][0]["scriptType"], script_type);
+            }
+        }
+    }
+
+    fn unsigned_spend(outpoint: OutPoint, script_pubkey: ScriptBuf) -> Transaction {
+        Transaction {
+            version: Version::TWO,
+            lock_time: absolute::LockTime::ZERO,
+            input: vec![TxIn {
+                previous_output: outpoint,
+                script_sig: ScriptBuf::new(),
+                sequence: Sequence::MAX,
+                witness: Witness::new(),
+            }],
+            output: vec![TxOut {
+                value: Amount::from_sat(90_000),
+                script_pubkey,
+            }],
+        }
+    }
+
+    fn sign_test_psbt(
+        psbt: &Psbt,
+        outpoint: OutPoint,
+        path: &str,
+        script_type: &str,
+    ) -> Result<Value, CryptoError> {
+        sign_psbt(
+            &json!({
+                "mnemonic": MNEMONIC,
+                "psbtBase64": BASE64.encode(psbt.serialize()),
+                "signers": [{
+                    "txid": outpoint.txid.to_string(),
+                    "vout": outpoint.vout,
+                    "path": path,
+                    "scriptType": script_type
+                }]
+            })
+            .to_string(),
+        )
+    }
 
     #[test]
     fn pbkdf2_sha256_matches_known_vector() {
@@ -874,6 +1113,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(signed.inputs[0].partial_sigs.len(), 1);
+        assert_valid_signatures(&signed);
     }
 
     #[test]
@@ -926,6 +1166,7 @@ mod tests {
         )
         .unwrap();
         assert!(signed.inputs[0].tap_key_sig.is_some());
+        assert_valid_signatures(&signed);
     }
 
     #[test]
@@ -985,6 +1226,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(signed.inputs[0].partial_sigs.len(), 1);
+        assert_valid_signatures(&signed);
     }
 
     #[test]
@@ -1040,5 +1282,115 @@ mod tests {
         )
         .unwrap();
         assert_eq!(signed.inputs[0].partial_sigs.len(), 1);
+        assert_valid_signatures(&signed);
+    }
+
+    #[test]
+    fn rejects_a_witness_prevout_not_owned_by_the_derived_key() {
+        let root = master_xpriv(MNEMONIC).unwrap();
+        let secp = Secp256k1::new();
+        let expected_secret = derive_secret(&root, "m/84'/0'/0'/0/0").unwrap();
+        let expected_public = PublicKey::new(bitcoin::secp256k1::PublicKey::from_secret_key(
+            &secp,
+            &expected_secret,
+        ));
+        let other_secret = derive_secret(&root, "m/84'/0'/0'/0/1").unwrap();
+        let other_public = PublicKey::new(bitcoin::secp256k1::PublicKey::from_secret_key(
+            &secp,
+            &other_secret,
+        ));
+        let expected_script = ScriptBuf::new_p2wpkh(&expected_public.wpubkey_hash().unwrap());
+        let other_script = ScriptBuf::new_p2wpkh(&other_public.wpubkey_hash().unwrap());
+        let outpoint = OutPoint::new(Txid::from_byte_array([0x44; 32]), 0);
+        let mut psbt = Psbt::from_unsigned_tx(unsigned_spend(outpoint, expected_script)).unwrap();
+        psbt.inputs[0].witness_utxo = Some(TxOut {
+            value: Amount::from_sat(100_000),
+            script_pubkey: other_script,
+        });
+
+        let error = sign_test_psbt(&psbt, outpoint, "m/84'/0'/0'/0/0", "p2wpkh").unwrap_err();
+        assert!(matches!(error, CryptoError::InvalidPsbt(_)));
+    }
+
+    #[test]
+    fn rejects_a_nested_witness_redeem_script_not_owned_by_the_derived_key() {
+        let root = master_xpriv(MNEMONIC).unwrap();
+        let secp = Secp256k1::new();
+        let expected_secret = derive_secret(&root, "m/49'/0'/0'/0/0").unwrap();
+        let expected_public = PublicKey::new(bitcoin::secp256k1::PublicKey::from_secret_key(
+            &secp,
+            &expected_secret,
+        ));
+        let expected_redeem = ScriptBuf::new_p2wpkh(&expected_public.wpubkey_hash().unwrap());
+        let expected_script = ScriptBuf::new_p2sh(&expected_redeem.script_hash());
+        let other_secret = derive_secret(&root, "m/49'/0'/0'/0/1").unwrap();
+        let other_public = PublicKey::new(bitcoin::secp256k1::PublicKey::from_secret_key(
+            &secp,
+            &other_secret,
+        ));
+        let outpoint = OutPoint::new(Txid::from_byte_array([0x55; 32]), 0);
+        let mut psbt =
+            Psbt::from_unsigned_tx(unsigned_spend(outpoint, expected_script.clone())).unwrap();
+        psbt.inputs[0].witness_utxo = Some(TxOut {
+            value: Amount::from_sat(100_000),
+            script_pubkey: expected_script,
+        });
+        psbt.inputs[0].redeem_script =
+            Some(ScriptBuf::new_p2wpkh(&other_public.wpubkey_hash().unwrap()));
+
+        let error = sign_test_psbt(&psbt, outpoint, "m/49'/0'/0'/0/0", "p2sh-p2wpkh").unwrap_err();
+        assert!(matches!(error, CryptoError::InvalidPsbt(_)));
+    }
+
+    #[test]
+    fn rejects_a_taproot_internal_key_not_owned_by_the_derived_key() {
+        let root = master_xpriv(MNEMONIC).unwrap();
+        let secp = Secp256k1::new();
+        let expected_secret = derive_secret(&root, "m/86'/0'/0'/0/0").unwrap();
+        let expected_keypair = Keypair::from_secret_key(&secp, &expected_secret);
+        let (expected_internal_key, _) = expected_keypair.x_only_public_key();
+        let expected_script = ScriptBuf::new_p2tr(&secp, expected_internal_key, None);
+        let other_secret = derive_secret(&root, "m/86'/0'/0'/0/1").unwrap();
+        let other_keypair = Keypair::from_secret_key(&secp, &other_secret);
+        let (other_internal_key, _) = other_keypair.x_only_public_key();
+        let outpoint = OutPoint::new(Txid::from_byte_array([0x66; 32]), 0);
+        let mut psbt =
+            Psbt::from_unsigned_tx(unsigned_spend(outpoint, expected_script.clone())).unwrap();
+        psbt.inputs[0].witness_utxo = Some(TxOut {
+            value: Amount::from_sat(100_000),
+            script_pubkey: expected_script,
+        });
+        psbt.inputs[0].tap_internal_key = Some(other_internal_key);
+
+        let error = sign_test_psbt(&psbt, outpoint, "m/86'/0'/0'/0/0", "p2tr").unwrap_err();
+        assert!(matches!(error, CryptoError::InvalidPsbt(_)));
+    }
+
+    #[test]
+    fn rejects_a_legacy_parent_transaction_with_a_different_txid() {
+        let root = master_xpriv(MNEMONIC).unwrap();
+        let secp = Secp256k1::new();
+        let secret_key = derive_secret(&root, "m/44'/0'/0'/0/0").unwrap();
+        let public_key = PublicKey::new(bitcoin::secp256k1::PublicKey::from_secret_key(
+            &secp,
+            &secret_key,
+        ));
+        let script = ScriptBuf::new_p2pkh(&public_key.pubkey_hash());
+        let previous = Transaction {
+            version: Version::TWO,
+            lock_time: absolute::LockTime::ZERO,
+            input: vec![],
+            output: vec![TxOut {
+                value: Amount::from_sat(100_000),
+                script_pubkey: script.clone(),
+            }],
+        };
+        let outpoint = OutPoint::new(Txid::from_byte_array([0x77; 32]), 0);
+        assert_ne!(previous.compute_txid(), outpoint.txid);
+        let mut psbt = Psbt::from_unsigned_tx(unsigned_spend(outpoint, script)).unwrap();
+        psbt.inputs[0].non_witness_utxo = Some(previous);
+
+        let error = sign_test_psbt(&psbt, outpoint, "m/44'/0'/0'/0/0", "p2pkh").unwrap_err();
+        assert!(matches!(error, CryptoError::InvalidPsbt(_)));
     }
 }

@@ -13,34 +13,39 @@ import {
   getImmatureCoinbaseSummary,
   isTransparentUtxoSpendable,
 } from './coinbaseMaturity';
+import {
+  DEFAULT_HD_GAP_LIMIT,
+  HD_ACCOUNT_TEMPLATES,
+  type HdAccountKey,
+  type HdBranch,
+  type HdScanRequirement,
+} from './hdAddress';
 
-const DEFAULT_GAP_LIMIT = 20;
+const DEFAULT_GAP_LIMIT = DEFAULT_HD_GAP_LIMIT;
 const SCAN_BATCH_SIZE = 5;
 const ELECTRUM_READ_MAX_ATTEMPTS = 3;
 const ELECTRUM_READ_RETRY_DELAY_MS = 100;
 const SCAN_NETWORK_CONCURRENCY = 6;
 const SCAN_COLLECTION_CONCURRENCY = 6;
 
-export type HdBranch = 'external' | 'internal';
+export type { HdBranch, HdScanRequirement } from './hdAddress';
 export type TransparentScriptType = NativeTransparentScriptType;
 
 type AccountTemplate = {
-  key: string;
+  key: HdAccountKey;
   label: string;
   accountPath: string;
   scriptType: TransparentScriptType;
   spendable: boolean;
 };
 
-const ACCOUNT_TEMPLATES: AccountTemplate[] = [
-  { key: 'legacy', label: 'Legacy', accountPath: "m/44'/0'/0'", scriptType: 'p2pkh', spendable: true },
-  { key: 'nested', label: 'Nested SegWit', accountPath: "m/49'/0'/0'", scriptType: 'p2sh-p2wpkh', spendable: true },
-  { key: 'bech32', label: 'Bech32', accountPath: "m/84'/0'/0'", scriptType: 'p2wpkh', spendable: true },
-  { key: 'taproot', label: 'Taproot', accountPath: "m/86'/0'/0'", scriptType: 'p2tr', spendable: true },
-];
+const ACCOUNT_TEMPLATES: AccountTemplate[] = HD_ACCOUNT_TEMPLATES.map((template) => ({
+  ...template,
+  spendable: true,
+}));
 
 export type DerivedAddress = {
-  accountKey: string;
+  accountKey: HdAccountKey;
   accountLabel: string;
   accountPath: string;
   scriptType: TransparentScriptType;
@@ -424,6 +429,7 @@ const scanBranch = async (
   control: ScanControl,
   progress?: ScanProgressTracker,
   previousSnapshot?: TransparentWalletSnapshot,
+  highestIssuedIndex = -1,
 ) => {
   const addresses: ScannedAddress[] = [];
   const previousBranch = previousSnapshot?.addresses
@@ -454,11 +460,19 @@ const scanBranch = async (
     const lastUsed = sorted.reduce((last, address) => (address.used ? address.index : last), -1);
     const highestScanned = sorted.at(-1)?.index ?? -1;
 
-    if (lastUsed >= 0 && highestScanned - lastUsed >= gapLimit) {
+    if (
+      highestScanned >= highestIssuedIndex
+      && lastUsed >= 0
+      && highestScanned - lastUsed >= gapLimit
+    ) {
       return sorted;
     }
 
-    if (lastUsed === -1 && sorted.length >= gapLimit) {
+    if (
+      highestScanned >= highestIssuedIndex
+      && lastUsed === -1
+      && sorted.length >= gapLimit
+    ) {
       return sorted;
     }
   }
@@ -484,8 +498,15 @@ const scanBranch = async (
     return count;
   })();
 
-  while (consecutiveEmpty < gapLimit) {
-    const batchSize = Math.min(SCAN_BATCH_SIZE, gapLimit - consecutiveEmpty);
+  while (consecutiveEmpty < gapLimit || index <= highestIssuedIndex) {
+    const gapBatchSize = Math.min(
+      SCAN_BATCH_SIZE,
+      Math.max(0, gapLimit - consecutiveEmpty),
+    );
+    const issuedBatchSize = index <= highestIssuedIndex
+      ? Math.min(SCAN_BATCH_SIZE, highestIssuedIndex - index + 1)
+      : 0;
+    const batchSize = Math.max(gapBatchSize, issuedBatchSize);
     const batchIndices = Array.from({ length: batchSize }, (_, offset) => index + offset);
     const missingIndices = batchIndices.filter((candidate) => !previousByIndex.has(candidate));
     const freshlyDerived = missingIndices.length > 0
@@ -529,6 +550,7 @@ export const scanTransparentWallet = async ({
   crypto = nitoWalletCrypto,
   onProgress,
   maxConcurrentNetworkRequests = SCAN_NETWORK_CONCURRENCY,
+  issuedAddresses = [],
 }: {
   mnemonic: string;
   electrum: ElectrumReader;
@@ -538,7 +560,22 @@ export const scanTransparentWallet = async ({
   crypto?: NitoWalletCryptoApi;
   onProgress?: TransparentScanProgress;
   maxConcurrentNetworkRequests?: number;
+  issuedAddresses?: readonly HdScanRequirement[];
 }): Promise<TransparentWalletSnapshot> => {
+  const issuedBySequence = new Map<string, number>();
+  for (const requirement of issuedAddresses) {
+    if (
+      !Number.isSafeInteger(requirement.highestIssuedIndex)
+      || requirement.highestIssuedIndex < 0
+    ) {
+      throw new Error('Invalid issued HD address requirement.');
+    }
+    const key = `${requirement.accountKey}:${requirement.branch}`;
+    if (issuedBySequence.has(key)) {
+      throw new Error(`Duplicate issued HD address requirement for ${key}.`);
+    }
+    issuedBySequence.set(key, requirement.highestIssuedIndex);
+  }
   const control = createScanControl();
   const networkLimiter = createConcurrencyLimiter(maxConcurrentNetworkRequests);
   const runNetworkTask: NetworkTaskRunner = (task) => networkLimiter.run(() => {
@@ -562,6 +599,7 @@ export const scanTransparentWallet = async ({
         control,
         progress,
         previousSnapshot ?? undefined,
+        issuedBySequence.get(`${template.key}:external`) ?? -1,
       ),
       scanBranch(
         mnemonic,
@@ -575,6 +613,7 @@ export const scanTransparentWallet = async ({
         control,
         progress,
         previousSnapshot ?? undefined,
+        issuedBySequence.get(`${template.key}:internal`) ?? -1,
       ),
     ]),
   );

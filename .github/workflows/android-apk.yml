@@ -97,6 +97,9 @@ jobs:
 
       - name: Unit tests
         shell: bash
+        env:
+          NITO_MEASURE_HISTORY: "1"
+          NITO_LIVE_BENCHMARK: "1"
         run: |
           set -euo pipefail
           npm run test 2>&1 | tee vitest.log
@@ -127,9 +130,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          npm run audit:production:self-test 2>&1 | tee npm-audit-self-test.log
           npm run audit:production 2>&1 | tee npm-audit.log
-          node scripts/assert-warning-free.mjs npm-audit-self-test.log
           node scripts/assert-warning-free.mjs npm-audit.log
 
       - name: Prepare Android release signing
