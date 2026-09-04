@@ -48,7 +48,8 @@ describe('single session-local transaction window with durable recovery', () => 
     expect(transactionReplacementOutcome(third, records, history('first'))).toBe('original-confirmed');
     expect(transactionReplacementOutcome(second, records, history('third'))).toBe('replacement-confirmed');
     expect(transactionReplacementOutcome(first, records, history('third'))).toBe('replacement-confirmed');
-    expect(transactionReplacementOutcome(third, records, history('third'))).toBeNull();
+    expect(transactionReplacementOutcome(third, records, history('third'))).toBe('replacement-confirmed');
+    expect(transactionReplacementOutcome(first, records, history('first'))).toBeNull();
     expect(transactionReplacementOutcome(third, records, history('first', 0))).toBeNull();
   });
 

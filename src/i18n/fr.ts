@@ -1,6 +1,11 @@
 import type { TranslationSet } from '../i18n';
 
 export const fr: TranslationSet = {
+  'rbf.cancellation': "Annulation",
+  'rbf.cancelAccepted': "Annulation transmise. En attente d’intégration dans la mempool.",
+  'rbf.cancelMempool': "Annulation présente dans la mempool, en attente de confirmation.",
+  'rbf.cancelConfirmed': "Annulation confirmée au bloc {height}. L’envoi initial a été remplacé.",
+  'rbf.cancelNotCompleted': "Annulation non aboutie. L’envoi initial a été confirmé au bloc {height}.",
   'backup.copyPhrase': "Copier la phrase BIP39",
   'backup.clipboardWarning': "Le presse-papiers peut être lu par d’autres applications et synchronisé entre appareils. Copie seulement si tu acceptes ce risque.",
   'backup.confirmCopy': "Je comprends, copier",

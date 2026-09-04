@@ -3,6 +3,11 @@
  * key that does not exist here does not exist at all.
  */
 export const en = {
+  'rbf.cancellation': "Cancellation",
+  'rbf.cancelAccepted': "Cancellation submitted. Waiting for it to appear in the mempool.",
+  'rbf.cancelMempool': "Cancellation in the mempool, awaiting confirmation.",
+  'rbf.cancelConfirmed': "Cancellation confirmed in block {height}. The original payment has been replaced.",
+  'rbf.cancelNotCompleted': "Cancellation unsuccessful. The original payment was confirmed in block {height}.",
   'backup.copyPhrase': "Copy BIP39 phrase",
   'backup.clipboardWarning': "Other apps may read the clipboard, and it may sync across devices. Copy only if you accept this risk.",
   'backup.confirmCopy': "I understand, copy",

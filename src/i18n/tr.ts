@@ -1,6 +1,11 @@
 import type { TranslationSet } from '../i18n';
 
 export const tr: TranslationSet = {
+  'rbf.cancellation': "İptal",
+  'rbf.cancelAccepted': "İptal iletildi. Mempool içine alınması bekleniyor.",
+  'rbf.cancelMempool': "İptal mempool içinde, onay bekleniyor.",
+  'rbf.cancelConfirmed': "İptal {height} numaralı blokta onaylandı. İlk gönderim değiştirildi.",
+  'rbf.cancelNotCompleted': "İptal gerçekleşmedi. İlk gönderim {height} numaralı blokta onaylandı.",
   'backup.copyPhrase': "BIP39 ifadesini kopyala",
   'backup.clipboardWarning': "Diğer uygulamalar panoyu okuyabilir ve pano içeriği cihazlar arasında eşitlenebilir. Yalnızca bu riski kabul ediyorsan kopyala.",
   'backup.confirmCopy': "Anladım, kopyala",

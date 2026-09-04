@@ -3,13 +3,14 @@ import { Modal, ScrollView, Text, View } from 'react-native';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 
 import type { LanguageCode, Translator } from '../i18n';
-import { confirmedTransactionFamilyMember, hasSignedReplacement } from '../services/transactionLifecycle';
+import { hasSignedReplacement } from '../services/transactionLifecycle';
 import type { RbfQuote, ReplacementMode } from '../wallet/transparentRbf';
 import { satoshisToNito } from '../wallet/transparentScan';
-import { transactionReplacementOutcome, transactionTrackingStage, transactionTrackingStatus, type TransactionTrackingController } from '../services/transactionTracking';
+import { transactionTrackingStage, type TransactionTrackingController } from '../services/transactionTracking';
 import { ActionButton } from './components';
 import { shortAddress } from './format';
 import { useStyles } from './themeContext';
+import { transactionTrackingPresentation } from './transactionTrackingPresentation';
 import type { NetworkState } from './types';
 
 export function TransactionTrackingWindow({
@@ -34,24 +35,22 @@ export function TransactionTrackingWindow({
   const styles = useStyles();
   const [now, setNow] = useState(Date.now);
   const record = tracking.records.find(({ lifecycleId }) => lifecycleId === tracking.window?.lifecycleId);
-  const winner = record ? confirmedTransactionFamilyMember(record, tracking.records, network.snapshot?.history ?? []) : undefined;
-  const outcome = record ? transactionReplacementOutcome(record, tracking.records, network.snapshot?.history ?? []) : null;
-  const displayed = winner ?? record;
-  const status = record ? transactionTrackingStatus(
-    displayed!, network.snapshot?.history ?? [], tracking.inFlight.has(record.lifecycleId),
+  const presentation = record ? transactionTrackingPresentation(
+    record, tracking.records, network.snapshot?.history ?? [], tracking.inFlight.has(record.lifecycleId), t,
   ) : null;
+  const status = presentation?.status;
   useEffect(() => {
     if (!visible || status !== 'scheduled') return;
     const timer = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(timer);
   }, [visible, status]);
-  if (!record || !record.txid || !status) return null;
-  const displayedTxid = displayed?.txid ?? record.txid;
+  if (!record || !record.txid || !status || !presentation) return null;
+  const { winner } = presentation;
+  const displayedTxid = presentation.displayedTxid ?? record.txid;
   const replaced = hasSignedReplacement(record, tracking.records);
   const canCancel = !winner && !replaced && record.replacement?.mode !== 'cancel' && status === 'mempool'
     && ['published', 'broadcast-uncertain'].includes(record.state) && network.status === 'connected';
   const seconds = Math.max(0, Math.ceil(((record.nextBroadcastAttemptAt ?? 0) - now) / 1000));
-  const height = network.snapshot?.history.find(({ txid }) => txid === displayedTxid)?.height;
   const review = rbfReview?.originalLifecycleId === record.lifecycleId ? rbfReview : null;
   const close = () => onClose(record.lifecycleId);
 
@@ -61,7 +60,7 @@ export function TransactionTrackingWindow({
         <SafeAreaView style={styles.trackingOverlay} onTouchStart={onActivity}>
           <View style={[styles.card, styles.trackingCard]} accessibilityViewIsModal>
             <Text accessibilityRole="header" style={[styles.sectionTitle, styles.trackingTitle]}>
-              {t(review ? 'rbf.review' : outcome ? `rbf.${outcome}` : record.purpose === 'send' ? 'tracking.send' : 'tracking.consolidation')}
+              {review ? t('rbf.review') : presentation.title}
             </Text>
             <ScrollView contentContainerStyle={styles.trackingContent}>
               {review ? (
@@ -80,10 +79,9 @@ export function TransactionTrackingWindow({
                       styles.trackingProgress, stage <= transactionTrackingStage(status) && styles.trackingProgressDone,
                     ]} />)}
                   </View>
-                  {outcome ? <Text style={styles.body}>{t(outcome === 'original-confirmed' ? 'rbf.error.confirmed' : 'rbf.otherConfirmed')}</Text> : null}
-                  <Text accessibilityLiveRegion="polite" style={styles.body}>{t(`tracking.${status}Hint`, { height: height ?? '' })}</Text>
+                  {presentation.detail ? <Text style={styles.body}>{presentation.detail}</Text> : null}
+                  <Text accessibilityLiveRegion="polite" style={styles.body}>{presentation.message}</Text>
                   {replaced && !winner ? <Text style={styles.helper}>{t('rbf.replacementStarted')}</Text> : null}
-                  {record.replacement?.mode === 'cancel' && !winner ? <Text style={styles.helper}>{t('rbf.cancel')}</Text> : null}
                   {status === 'scheduled' ? <Text style={styles.helper}>{seconds > 0
                     ? t('tracking.retryIn', { seconds }) : t('tracking.retryReady')}</Text> : null}
                   {tracking.observationFailures.has(displayedTxid) ? <Text style={styles.fieldError}>{t('tracking.observationFailed')}</Text> : null}

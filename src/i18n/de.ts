@@ -1,6 +1,11 @@
 import type { TranslationSet } from '../i18n';
 
 export const de: TranslationSet = {
+  'rbf.cancellation': "Stornierung",
+  'rbf.cancelAccepted': "Stornierung übermittelt. Warten auf die Aufnahme in den Mempool.",
+  'rbf.cancelMempool': "Stornierung im Mempool, wartet auf Bestätigung.",
+  'rbf.cancelConfirmed': "Stornierung in Block {height} bestätigt. Die ursprüngliche Zahlung wurde ersetzt.",
+  'rbf.cancelNotCompleted': "Stornierung nicht erfolgreich. Die ursprüngliche Zahlung wurde in Block {height} bestätigt.",
   'backup.copyPhrase': "BIP39-Phrase kopieren",
   'backup.clipboardWarning': "Andere Apps können die Zwischenablage lesen. Ihr Inhalt kann zwischen Geräten synchronisiert werden. Kopiere nur, wenn du dieses Risiko akzeptierst.",
   'backup.confirmCopy': "Verstanden, kopieren",

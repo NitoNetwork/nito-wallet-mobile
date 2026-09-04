@@ -1,6 +1,11 @@
 import type { TranslationSet } from '../i18n';
 
 export const ru: TranslationSet = {
+  'rbf.cancellation': "Отмена",
+  'rbf.cancelAccepted': "Отмена отправлена. Ожидание появления в мемпуле.",
+  'rbf.cancelMempool': "Транзакция отмены в мемпуле, ожидает подтверждения.",
+  'rbf.cancelConfirmed': "Отмена подтверждена в блоке {height}. Исходный перевод заменён.",
+  'rbf.cancelNotCompleted': "Отмена не выполнена. Исходный перевод подтверждён в блоке {height}.",
   'backup.copyPhrase': "Копировать фразу BIP39",
   'backup.clipboardWarning': "Другие приложения могут читать буфер обмена, а его содержимое может синхронизироваться между устройствами. Копируйте, только если принимаете этот риск.",
   'backup.confirmCopy': "Понимаю, копировать",

@@ -1,6 +1,11 @@
 import type { TranslationSet } from '../i18n';
 
 export const zh: TranslationSet = {
+  'rbf.cancellation': "取消交易",
+  'rbf.cancelAccepted': "取消交易已提交，等待进入内存池。",
+  'rbf.cancelMempool': "取消交易已在内存池中，等待确认。",
+  'rbf.cancelConfirmed': "取消交易已在区块 {height} 中确认，原始转账已被替换。",
+  'rbf.cancelNotCompleted': "取消未成功，原始转账已在区块 {height} 中确认。",
   'backup.copyPhrase': "复制 BIP39 助记词",
   'backup.clipboardWarning': "其他应用可能读取剪贴板，其内容也可能在设备间同步。仅在接受此风险时复制。",
   'backup.confirmCopy': "我已了解，复制",

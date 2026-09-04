@@ -27,6 +27,8 @@ describe('i18n coverage', () => {
       'tracking.acceptedHint', 'tracking.mempoolHint', 'tracking.confirmedHint',
       'tracking.hide', 'tracking.observationFailed',
       'rbf.review', 'rbf.cancelHint', 'rbf.confirm',
+      'rbf.cancellation', 'rbf.cancelAccepted', 'rbf.cancelMempool',
+      'rbf.cancelConfirmed', 'rbf.cancelNotCompleted',
     ] as const;
     for (const key of keys) {
       const dictionary = TRANSLATIONS[code];

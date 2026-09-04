@@ -1,6 +1,11 @@
 import type { TranslationSet } from '../i18n';
 
 export const ja: TranslationSet = {
+  'rbf.cancellation': "キャンセル",
+  'rbf.cancelAccepted': "キャンセル取引を送信しました。メモリプールへの追加を待っています。",
+  'rbf.cancelMempool': "キャンセル取引はメモリプール内にあり、承認待ちです。",
+  'rbf.cancelConfirmed': "キャンセル取引はブロック {height} で承認されました。元の送金は置き換えられました。",
+  'rbf.cancelNotCompleted': "キャンセルは成立しませんでした。元の送金がブロック {height} で承認されました。",
   'backup.copyPhrase': "BIP39 フレーズをコピー",
   'backup.clipboardWarning': "クリップボードは他のアプリに読み取られたり、端末間で同期されたりする可能性があります。このリスクを受け入れる場合のみコピーしてください。",
   'backup.confirmCopy': "理解してコピー",

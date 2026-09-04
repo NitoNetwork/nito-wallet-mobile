@@ -33,7 +33,10 @@ export const transactionReplacementOutcome = (
   record: TrackedTransaction, records: readonly TrackedTransaction[], history: readonly ElectrumHistoryEntry[],
 ): 'original-confirmed' | 'replacement-confirmed' | null => {
   const winner = confirmedTransactionFamilyMember(record, records, history);
-  if (!winner || winner.lifecycleId === record.lifecycleId) return null;
+  if (!winner) return null;
+  if (winner.lifecycleId === record.lifecycleId) {
+    return record.replacement ? 'replacement-confirmed' : null;
+  }
   const seen = new Set<string>();
   let parent = record.replacement?.originalLifecycleId;
   while (parent && !seen.has(parent)) {
