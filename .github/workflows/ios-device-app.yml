@@ -105,6 +105,9 @@ jobs:
 
       - name: Unit tests
         shell: bash
+        env:
+          NITO_MEASURE_HISTORY: "1"
+          NITO_LIVE_BENCHMARK: "1"
         run: |
           set -euo pipefail
           npm run test 2>&1 | tee vitest.log

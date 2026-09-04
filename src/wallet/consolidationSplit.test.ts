@@ -109,6 +109,8 @@ describe('consolidation multi-output', () => {
     });
   });
 
+  // This CPU-bound 1,400-input scenario exceeded the default 5s on the macOS runner.
+  // Keep the full fixture and assertions, with a bounded budget for this test only.
   it('keeps consolidation review unsigned and assigns one Taproot address per transaction', async () => {
     const snapshot = await makeConsolidationSnapshot(1400, 100_000);
     const destinations = await crypto.deriveAddresses(mnemonic, [
@@ -132,5 +134,5 @@ describe('consolidation multi-output', () => {
         output.address === destinations[index]?.address
       ))).toBe(true);
     });
-  });
+  }, 30_000);
 });
