@@ -74,7 +74,7 @@ import { TransactionTrackingWindow } from './src/ui/TransactionTrackingWindow';
 import { TransactionTrackingController } from './src/services/transactionTracking';
 import { submitRbfReplacement } from './src/services/transactionReplacement';
 import { observePublishedTransactions } from './src/services/transactionObservation';
-import { releaseReceiveAddressBeforeRefresh } from './src/services/receiveAddress';
+import { ReceiveAddressSelection, releaseReceiveAddressBeforeRefresh } from './src/services/receiveAddress';
 import { hasSignedReplacement } from './src/services/transactionLifecycle';
 import {
   RbfError, assertRbfOriginalPending, assertSignedRbfFee, loadRbfOriginal, prepareRbfQuote, rbfNetworkFeeRate,
@@ -142,7 +142,7 @@ import { nitoWalletCrypto } from './src/native/nitoWalletCrypto';
 import {
   clearWalletPublicData,
   clearWalletHistoryCache,
-  loadCurrentHdAddressIndex,
+  rememberReceiveAddressIndex,
   loadHdAddressRequirements,
   loadTransactionLifecycles,
   loadTransactionTracking,
@@ -152,7 +152,6 @@ import {
   saveHistoryEnrichmentBatch,
   saveWalletHistoryCache,
   saveWalletSnapshotCache,
-  reserveNextHdAddressIndex,
   attachInternalTransactionAddresses,
   claimTransactionLifecycleBroadcastAttempt,
   recordTransactionLifecycleBroadcastInvocation,
@@ -487,6 +486,7 @@ function WalletApp({ theme, onSelectTheme }: {
     setReceiveAddressBusyState(busy);
   }, []);
   const receiveAddressOperationRef = useRef(0);
+  const receiveSelectionRef = useRef(new ReceiveAddressSelection());
   const [pendingWallet, setPendingWallet] = useState<Wallet | null>(null);
   const [pendingWalletRequiresSeedBackup, setPendingWalletRequiresSeedBackup] = useState(false);
   const [diceSessionKey, setDiceSessionKey] = useState(0);
@@ -962,6 +962,7 @@ function WalletApp({ theme, onSelectTheme }: {
     });
     const { pendingPreload, network: nextNetwork } = entry;
     walletNetworkController.beginWalletSession(nextWallet.walletId);
+    receiveSelectionRef.current = new ReceiveAddressSelection();
     receiveAddressOperationRef.current += 1;
     setReceiveAddressBusy(false);
     walletRef.current = nextWallet;
@@ -1834,15 +1835,10 @@ function WalletApp({ theme, onSelectTheme }: {
       const candidateCachedHistory = candidateCachedHistoryRead.status === 'hit'
         ? candidateCachedHistoryRead.value
         : null;
-      const receiveIndex = await loadCurrentHdAddressIndex(
-        payload.address,
-        'taproot',
-        'external',
-      );
       const unlockedWallet = await restoreLegacyCompatibleWallet(
         payload,
         'taproot',
-        receiveIndex,
+        0,
       );
       const cachedNetwork = vault.address === payload.address
         ? candidateCachedNetwork
@@ -2302,11 +2298,6 @@ function WalletApp({ theme, onSelectTheme }: {
     ) return false;
     const nextWallet: Wallet = {
       ...activeWallet,
-      ...(accountKey === 'taproot' ? {
-        primaryAddress: derived.address,
-        primaryDerivationPath: derived.path,
-        primaryIndex: index,
-      } : {}),
       receiveAccountKey: accountKey,
       receiveIndex: index,
       receiveAddress: derived.address,
@@ -2314,6 +2305,7 @@ function WalletApp({ theme, onSelectTheme }: {
     };
     walletRef.current = nextWallet;
     setWallet(nextWallet);
+    receiveSelectionRef.current.select(accountKey, index);
     return true;
   }, [walletNetworkController]);
 
@@ -2329,11 +2321,7 @@ function WalletApp({ theme, onSelectTheme }: {
     setReceiveAddressBusy(true);
     resetFeedback();
     try {
-      const index = await loadCurrentHdAddressIndex(
-        activeWallet.walletId,
-        accountKey,
-        'external',
-      );
+      const index = receiveSelectionRef.current.current(accountKey);
       await applyReceiveAddress(activeWallet, accountKey, index, operation, session);
     } catch (caught) {
       if (receiveAddressOperationRef.current === operation) {
@@ -2371,22 +2359,8 @@ function WalletApp({ theme, onSelectTheme }: {
       branch: 'external' as const,
     };
     try {
-      const highestUsed = highestUsedHdIndex(snapshot.addresses, sequence);
-      const minimumIndex = Math.max(activeWallet.receiveIndex + 1, highestUsed + 1);
-      assertGapSafeIssuedIndex({
-        addresses: snapshot.addresses,
-        sequence,
-        index: minimumIndex,
-        gapLimit: snapshot.gapLimit,
-      });
-      const maximumIndex = highestUsed + snapshot.gapLimit;
-      const index = await reserveNextHdAddressIndex({
-        walletId: activeWallet.walletId,
-        accountKey: sequence.accountKey,
-        branch: sequence.branch,
-        minimumIndex,
-        maximumIndex,
-      });
+      const index = receiveSelectionRef.current.next(sequence.accountKey, snapshot.addresses, snapshot.gapLimit);
+      await rememberReceiveAddressIndex(activeWallet.walletId, sequence.accountKey, index);
       const applied = await applyReceiveAddress(
         activeWallet,
         sequence.accountKey,

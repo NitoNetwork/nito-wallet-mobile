@@ -394,6 +394,27 @@ export const loadHdAddressRequirements = async (
   },
 );
 
+/** Remember external addresses for scanning without treating them as spent/reserved forever. */
+export const rememberReceiveAddressIndex = async (
+  walletId: string,
+  accountKey: HdAccountKey,
+  index: number,
+): Promise<void> => runWalletStorageOperation('HD receive address tracking', async () => {
+  if (!Number.isSafeInteger(index) || index < 0) throw new Error('Invalid HD address index.');
+  const db = await openHistoryDb();
+  await runWriteTransaction(db, async () => {
+    await db.runAsync(
+      `INSERT INTO wallet_hd_sequences
+         (wallet_id, account_key, branch, highest_issued_index, updated_at)
+       VALUES (?, ?, 'external', ?, ?)
+       ON CONFLICT(wallet_id, account_key, branch) DO UPDATE SET
+         highest_issued_index = MAX(wallet_hd_sequences.highest_issued_index, excluded.highest_issued_index),
+         updated_at = excluded.updated_at`,
+      walletId, accountKey, index, new Date().toISOString(),
+    );
+  });
+});
+
 export const loadCurrentHdAddressIndex = async (
   walletId: string,
   accountKey: HdAccountKey,

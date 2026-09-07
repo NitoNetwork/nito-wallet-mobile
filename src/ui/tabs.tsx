@@ -702,10 +702,6 @@ export function HomeTab({
           </View>
         ) : null}
       </View>
-      <View style={styles.preview}>
-        <Text style={styles.label}>{t('home.mainAddress')}</Text>
-        <Text style={styles.previewAddress}>{shortAddress(wallet.primaryAddress)}</Text>
-      </View>
       {!preparedConsolidation && network.snapshot && eligibleUtxos.length >= CONSOLIDATION_MIN_UTXOS ? (
         <ActionButton
           label={makeConsolidationTranslator(language)('action')}
