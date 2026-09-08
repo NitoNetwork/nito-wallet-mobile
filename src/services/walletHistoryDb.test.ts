@@ -166,6 +166,19 @@ describe('wallet transaction output cache', () => {
     );
   });
 
+  it('tracks a reoffered receive index without lowering the durable scan boundary or reserving another index', async () => {
+    const { rememberReceiveAddressIndex } = await import('./walletHistoryDb');
+    await rememberReceiveAddressIndex('wallet-address', 'taproot', 1);
+    expect(db.runAsync).toHaveBeenCalledWith(
+      expect.stringContaining('MAX(wallet_hd_sequences.highest_issued_index, excluded.highest_issued_index)'),
+      'wallet-address', 'taproot', 1, expect.any(String),
+    );
+    expect(db.runAsync).toHaveBeenCalledWith(
+      expect.stringContaining("VALUES (?, ?, 'external', ?, ?)"),
+      'wallet-address', 'taproot', 1, expect.any(String),
+    );
+  });
+
   it('reserves concurrent HD addresses atomically in order', async () => {
     vi.resetModules();
     let highestIssuedIndex = 0;
