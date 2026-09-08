@@ -63,6 +63,8 @@ jobs:
           node scripts/assert-warning-free.mjs npm-install.log
 
       - name: Install CocoaPods 1.17.0
+        env:
+          BUNDLE_FROZEN: "true"
         shell: bash
         run: |
           set -euo pipefail
@@ -72,6 +74,7 @@ jobs:
           grep -Eq "(^|[[:space:]])${BUNDLE_VERSION}([[:space:]]|$)" <<< "$BUNDLE_RUNTIME_VERSION"
           bundle install --jobs 4 --retry 3 2>&1 | tee -a ruby-toolchain.log
           test "$(bundle exec pod --version)" = "1.17.0"
+          bundle exec ruby scripts/check-ios-ruby-json.rb 2>&1 | tee -a ruby-toolchain.log
           node scripts/assert-warning-free.mjs ruby-toolchain.log
 
       - name: Verify dependency alignment
