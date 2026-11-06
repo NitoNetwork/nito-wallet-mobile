@@ -16,6 +16,11 @@ import { observePublishedTransactions } from './transactionObservation';
 
 const transparentScanMocks = vi.hoisted(() => ({
   refreshKnownUsedAddresses: vi.fn(),
+  scanTransparentWallet: vi.fn(),
+}));
+const walletIdentityMocks = vi.hoisted(() => ({
+  walletCrypto: { marker: 'passphrase-bound-crypto' },
+  cryptoForWallet: vi.fn(),
 }));
 
 vi.mock('expo-secure-store', () => ({
@@ -28,11 +33,20 @@ vi.mock('../wallet/transparentScan', async (importOriginal) => {
   return {
     ...original,
     refreshKnownUsedAddresses: transparentScanMocks.refreshKnownUsedAddresses,
+    scanTransparentWallet: transparentScanMocks.scanTransparentWallet,
+  };
+});
+vi.mock('../wallet/walletIdentity', async (importOriginal) => {
+  const original = await importOriginal<typeof import('../wallet/walletIdentity')>();
+  return {
+    ...original,
+    cryptoForWallet: walletIdentityMocks.cryptoForWallet,
   };
 });
 
 const wallet: Wallet = {
   mnemonic: 'test mnemonic',
+  bip39Passphrase: '',
   walletId: 'wallet-a',
   walletIdDerivationPath: "m/84'/0'/0'/0/0",
   primaryAddress: 'taproot-wallet-a',
@@ -80,6 +94,40 @@ const client = {
 } as unknown as NitoElectrumClient;
 
 describe('WalletNetworkController', () => {
+  it('passes the active wallet passphrase binding into a full network scan', async () => {
+    const protectedWallet = { ...wallet, bip39Passphrase: 'Nito recovery secret' };
+    const controller = new WalletNetworkController();
+    controller.beginWalletSession(protectedWallet.walletId);
+    walletIdentityMocks.cryptoForWallet.mockReturnValueOnce(walletIdentityMocks.walletCrypto);
+    transparentScanMocks.scanTransparentWallet.mockResolvedValueOnce(snapshot);
+
+    await synchronizeWalletNetwork({
+      controller,
+      getWallet: () => protectedWallet,
+      getNetwork: () => ({ ...network, snapshot: null }),
+      getClient: () => client,
+      setClient: vi.fn(),
+      actionPending: () => false,
+      readHistoryCache: async () => ({ status: 'miss', value: null }),
+      readHdAddressRequirements: async () => [],
+      saveHistory: vi.fn(),
+      saveSnapshot: vi.fn(async () => undefined),
+      publishNetwork: vi.fn(),
+      setError: vi.fn(),
+      setHistorySyncing: vi.fn(),
+      setHistoryProgress: vi.fn(),
+      setBalanceRefreshing: vi.fn(),
+      finishSync: vi.fn(),
+      messages,
+    });
+
+    expect(walletIdentityMocks.cryptoForWallet).toHaveBeenCalledWith(protectedWallet);
+    expect(transparentScanMocks.scanTransparentWallet).toHaveBeenCalledWith(expect.objectContaining({
+      mnemonic: protectedWallet.mnemonic,
+      crypto: walletIdentityMocks.walletCrypto,
+    }));
+  });
+
   it.each(['recovers', 'offline', 'storage'] as const)('keeps snapshot ownership and retries post-broadcast reads without premature global feedback: %s', async (scenario) => {
     const controller = new WalletNetworkController();
     controller.beginWalletSession(wallet.walletId);

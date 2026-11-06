@@ -74,6 +74,7 @@ export function PasswordField({
   showLabel,
   hideLabel,
   error,
+  disableAutofill = false,
 }: {
   value: string;
   onChangeText: (value: string) => void;
@@ -83,6 +84,7 @@ export function PasswordField({
   showLabel: string;
   hideLabel: string;
   error?: string;
+  disableAutofill?: boolean;
 }) {
   const styles = useStyles();
   const themeColor = useThemeColor();
@@ -94,6 +96,12 @@ export function PasswordField({
           onChangeText={onChangeText}
           placeholder={placeholder}
           placeholderTextColor={themeColor('#6d7892')}
+          autoCapitalize={disableAutofill ? 'none' : undefined}
+          autoCorrect={disableAutofill ? false : undefined}
+          spellCheck={disableAutofill ? false : undefined}
+          autoComplete={disableAutofill ? 'off' : undefined}
+          textContentType={disableAutofill ? 'none' : undefined}
+          importantForAutofill={disableAutofill ? 'noExcludeDescendants' : undefined}
           secureTextEntry={!visible}
           style={styles.passwordInput}
         />

@@ -139,6 +139,7 @@ import {
 } from './src/services/seedBackup';
 import { type Translator } from './src/i18n';
 import { nitoWalletCrypto } from './src/native/nitoWalletCrypto';
+import { normalizeBip39Passphrase } from './src/native/nitoWalletCryptoContract';
 import {
   clearWalletPublicData,
   clearWalletHistoryCache,
@@ -234,6 +235,7 @@ import {
 } from './src/services/walletNetworkController';
 import { applyOptimisticWalletBroadcast } from './src/wallet/optimisticConsolidation';
 import {
+  cryptoForWallet,
   deriveLegacyCompatibleWallet,
   restoreLegacyCompatibleWallet,
 } from './src/wallet/walletIdentity';
@@ -447,6 +449,7 @@ function WalletApp({ theme, onSelectTheme }: {
 }) {
   const styles = useStyles();
   const [importFieldError, setImportFieldError] = useState('');
+  const [creationPassphraseError, setCreationPassphraseError] = useState('');
   const [sendRecipientErrors, setSendRecipientErrors] = useState<SendRecipientFieldErrors>({});
   const [unlockPasswordError, setUnlockPasswordError] = useState('');
   const [persistPasswordError, setPersistPasswordError] = useState('');
@@ -455,6 +458,7 @@ function WalletApp({ theme, onSelectTheme }: {
   const [sensitivePasswordError, setSensitivePasswordError] = useState('');
   const clearFieldErrors = useCallback(() => {
     setImportFieldError('');
+    setCreationPassphraseError('');
     setUnlockPasswordError('');
     setPersistPasswordError('');
     setPersistConfirmPasswordError('');
@@ -553,6 +557,14 @@ function WalletApp({ theme, onSelectTheme }: {
     useState<ElectrumServerPreference>(getElectrumServerPreference);
   const [importText, setImportText] = useState('');
   const [showImportSeed, setShowImportSeed] = useState(false);
+  const [creationPassphraseOpen, setCreationPassphraseOpen] = useState(false);
+  const [creationPassphrase, setCreationPassphrase] = useState('');
+  const [creationConfirmPassphrase, setCreationConfirmPassphrase] = useState('');
+  const [showCreationPassphrase, setShowCreationPassphrase] = useState(false);
+  const [showCreationConfirmPassphrase, setShowCreationConfirmPassphrase] = useState(false);
+  const [importPassphraseOpen, setImportPassphraseOpen] = useState(false);
+  const [importPassphrase, setImportPassphrase] = useState('');
+  const [showImportPassphrase, setShowImportPassphrase] = useState(false);
   const [sendRecipients, setSendRecipients] = useState<SendRecipientDraft[]>(initialSendRecipients);
   const nextSendRecipientIdRef = useRef(2);
   const qrRecipientIdRef = useRef<number | null>(null);
@@ -642,6 +654,10 @@ function WalletApp({ theme, onSelectTheme }: {
         && seedBackupConfirmationStep < 0
       ),
       settingsPhraseVisible: showMnemonic,
+      passphraseEntryVisible: (
+        (screen === 'landing' && creationPassphraseOpen)
+        || (screen === 'import' && importPassphraseOpen)
+      ),
     }),
   });
 
@@ -701,12 +717,14 @@ function WalletApp({ theme, onSelectTheme }: {
 
     const snapshot = network.snapshot;
     const timer = setTimeout(() => {
-      void deriveHdAddress(wallet.mnemonic, changeAccount, 'internal', 0).then((previewChange) => (
+      const walletCrypto = cryptoForWallet(wallet);
+      void deriveHdAddress(wallet.mnemonic, changeAccount, 'internal', 0, walletCrypto).then((previewChange) => (
         estimateTransparentMultiSend({
           mnemonic: wallet.mnemonic,
           snapshot,
           outputs,
           changeAddress: previewChange.address,
+          crypto: walletCrypto,
         })
       )).then((estimate) => {
         if (cancelled) return;
@@ -1694,18 +1712,43 @@ function WalletApp({ theme, onSelectTheme }: {
     return undefined;
   }, [screen, syncTransparentNetwork, wallet]);
 
+  const readCreationPassphrase = (): string | null => {
+    if (!creationPassphraseOpen) return '';
+    const normalized = normalizeBip39Passphrase(creationPassphrase);
+    if (normalized !== normalizeBip39Passphrase(creationConfirmPassphrase)) {
+      setCreationPassphraseError(t('errors.passphraseMismatch'));
+      return null;
+    }
+    return normalized;
+  };
+
+  const clearCreationPassphrase = () => {
+    setCreationPassphraseOpen(false);
+    setCreationPassphrase('');
+    setCreationConfirmPassphrase('');
+    setShowCreationPassphrase(false);
+    setShowCreationConfirmPassphrase(false);
+    setCreationPassphraseError('');
+  };
+
+  const clearImportPassphrase = () => {
+    setImportPassphraseOpen(false);
+    setImportPassphrase('');
+    setShowImportPassphrase(false);
+  };
+
   const createWallet = async (additionalEntropyBase64?: string) => {
     await runExclusiveAction('create', async () => {
     resetFeedback();
     const secretGeneration = transientSecretGenerationRef.current;
+    const bip39Passphrase = readCreationPassphrase();
+    if (bip39Passphrase === null) return;
 
     try {
       const mnemonic = await generateMnemonic24(additionalEntropyBase64);
-      if (
-        additionalEntropyBase64 !== undefined
-        && secretGeneration !== transientSecretGenerationRef.current
-      ) return;
-      const nextWallet = await deriveLegacyCompatibleWallet(mnemonic);
+      if (secretGeneration !== transientSecretGenerationRef.current) return;
+      const nextWallet = await deriveLegacyCompatibleWallet(mnemonic, bip39Passphrase);
+      if (secretGeneration !== transientSecretGenerationRef.current) return;
       walletLockAppliedRef.current = false;
       setPendingWallet(nextWallet);
       setPendingWalletRequiresSeedBackup(true);
@@ -1717,6 +1760,7 @@ function WalletApp({ theme, onSelectTheme }: {
       setPersistPassword('');
       setPersistConfirmPassword('');
       setShowMnemonic(false);
+      clearCreationPassphrase();
       setScreen('persist');
       if (lockWalletIfAppStateBackground(
         appStateRef.current,
@@ -1749,7 +1793,10 @@ function WalletApp({ theme, onSelectTheme }: {
     }
 
     try {
-      const nextWallet = await deriveLegacyCompatibleWallet(mnemonic);
+      const bip39Passphrase = importPassphraseOpen
+        ? normalizeBip39Passphrase(importPassphrase)
+        : '';
+      const nextWallet = await deriveLegacyCompatibleWallet(mnemonic, bip39Passphrase);
       if (
         transientSecretGeneration !== transientSecretGenerationRef.current
         || screenRef.current !== 'import'
@@ -1769,6 +1816,7 @@ function WalletApp({ theme, onSelectTheme }: {
       setShowMnemonic(false);
       setImportText('');
       setShowImportSeed(false);
+      clearImportPassphrase();
       setScreen('persist');
       if (lockWalletIfAppStateBackground(
         appStateRef.current,
@@ -1996,6 +2044,7 @@ function WalletApp({ theme, onSelectTheme }: {
         {
           version: 1,
           mnemonic: walletToPersist.mnemonic,
+          bip39Passphrase: walletToPersist.bip39Passphrase,
           address: walletToPersist.walletId,
           derivationPath: walletToPersist.walletIdDerivationPath,
           createdAt: new Date().toISOString(),
@@ -2039,10 +2088,25 @@ function WalletApp({ theme, onSelectTheme }: {
     });
   };
 
-  const startSeedBackupConfirmation = () => {
+  const beginSeedBackupConfirmation = () => {
     seedBackupAnswerLockedRef.current = false;
     setSeedBackupConfirmationError('');
     setSeedBackupConfirmationStep(0);
+  };
+
+  const startSeedBackupConfirmation = () => {
+    if (!pendingWallet?.bip39Passphrase) {
+      beginSeedBackupConfirmation();
+      return;
+    }
+    Alert.alert(
+      t('passphrase.backupTitle'),
+      t('persist.passphraseBackupReminder'),
+      [
+        { text: t('actions.cancel'), style: 'cancel' },
+        { text: t('passphrase.backupConfirm'), onPress: beginSeedBackupConfirmation },
+      ],
+    );
   };
 
   const showSeedBackupAgain = () => {
@@ -2143,6 +2207,15 @@ function WalletApp({ theme, onSelectTheme }: {
     setImportText('');
     setShowImportSeed(false);
     setImportFieldError('');
+    setCreationPassphraseOpen(false);
+    setCreationPassphrase('');
+    setCreationConfirmPassphrase('');
+    setShowCreationPassphrase(false);
+    setShowCreationConfirmPassphrase(false);
+    setCreationPassphraseError('');
+    setImportPassphraseOpen(false);
+    setImportPassphrase('');
+    setShowImportPassphrase(false);
     setUnlockPassword('');
     setShowUnlockPassword(false);
     setUnlockPasswordError('');
@@ -2191,6 +2264,15 @@ function WalletApp({ theme, onSelectTheme }: {
     setHistoryPage(0);
     setImportText('');
     setShowImportSeed(false);
+    setCreationPassphraseOpen(false);
+    setCreationPassphrase('');
+    setCreationConfirmPassphrase('');
+    setShowCreationPassphrase(false);
+    setShowCreationConfirmPassphrase(false);
+    setCreationPassphraseError('');
+    setImportPassphraseOpen(false);
+    setImportPassphrase('');
+    setShowImportPassphrase(false);
     setUnlockPassword('');
     setShowUnlockPassword(false);
     setPersistPassword('');
@@ -2290,6 +2372,7 @@ function WalletApp({ theme, onSelectTheme }: {
       accountKey,
       'external',
       index,
+      cryptoForWallet(activeWallet),
     );
     if (
       receiveAddressOperationRef.current !== operation
@@ -2478,8 +2561,23 @@ function WalletApp({ theme, onSelectTheme }: {
     const original = await loadRbfOriginal({ reader: client, lifecycle, snapshot, height: client.blockHeight });
     const networkRate = rbfNetworkFeeRate(await client.request<unknown>('blockchain.estimatefee', [1]));
     const index = reserved?.addressIndex ?? 0;
-    const address = reserved?.address ?? (await deriveHdAddress(activeWallet.mnemonic, 'taproot', 'internal', index)).address;
-    return prepareRbfQuote({ mnemonic: activeWallet.mnemonic, original, mode, networkRate, returnAddress: address, returnIndex: index });
+    const walletCrypto = cryptoForWallet(activeWallet);
+    const address = reserved?.address ?? (await deriveHdAddress(
+      activeWallet.mnemonic,
+      'taproot',
+      'internal',
+      index,
+      walletCrypto,
+    )).address;
+    return prepareRbfQuote({
+      mnemonic: activeWallet.mnemonic,
+      original,
+      mode,
+      networkRate,
+      returnAddress: address,
+      returnIndex: index,
+      crypto: walletCrypto,
+    });
   };
 
   const showReplacementError = (caught: unknown) => {
@@ -2531,7 +2629,13 @@ function WalletApp({ theme, onSelectTheme }: {
             const range = internalReservationRange({ snapshot, highestIssuedIndex, count: 1 });
             const [reserved] = await reserveInternalTransactions({ walletId: session.walletId, purpose: 'send', count: 1, ...range });
             if (!reserved || reserved.addressIndex === null) throw new RbfError('inconsistent');
-            const derived = await deriveHdAddress(activeWallet.mnemonic, 'taproot', 'internal', reserved.addressIndex);
+            const derived = await deriveHdAddress(
+              activeWallet.mnemonic,
+              'taproot',
+              'internal',
+              reserved.addressIndex,
+              cryptoForWallet(activeWallet),
+            );
             await attachInternalTransactionAddresses(session.walletId, [{ lifecycleId: reserved.lifecycleId, address: derived.address }]);
             return { lifecycleId: reserved.lifecycleId, address: derived.address, addressIndex: reserved.addressIndex };
           },
@@ -2540,7 +2644,11 @@ function WalletApp({ theme, onSelectTheme }: {
             if (!client || !isCurrent()) throw new RbfError('unavailable');
             await assertRbfOriginalPending(client, quote.originalTxid, quote.transaction.walletInputs.map((input) => input.address));
             if (!isCurrent()) throw new RbfError('unavailable');
-            const signed = await signUnsignedTransparentTx({ mnemonic: activeWallet.mnemonic, transaction: quote.transaction });
+            const signed = await signUnsignedTransparentTx({
+              mnemonic: activeWallet.mnemonic,
+              transaction: quote.transaction,
+              crypto: cryptoForWallet(activeWallet),
+            });
             assertSignedRbfFee(quote, signed.hex, signed.txid);
             return signed;
           },
@@ -2599,12 +2707,14 @@ function WalletApp({ theme, onSelectTheme }: {
         changeAccountForRecipients(outputs.map(({ address }) => address)),
         'internal',
         0,
+        cryptoForWallet(wallet),
       );
       const estimate = await estimateTransparentMultiSend({
         mnemonic: wallet.mnemonic,
         snapshot: network.snapshot,
         outputs,
         changeAddress: previewChange.address,
+        crypto: cryptoForWallet(wallet),
       });
       const summary = summarizeRecipientSpend(
         outputs.map((output) => output.amountSats),
@@ -2617,6 +2727,7 @@ function WalletApp({ theme, onSelectTheme }: {
         snapshot: network.snapshot,
         outputs,
         changeAddress: previewChange.address,
+        crypto: cryptoForWallet(wallet),
       });
 
       setPreparedConsolidation(null);
@@ -2657,6 +2768,7 @@ function WalletApp({ theme, onSelectTheme }: {
           changeAccountForRecipients(sendRecipients.map(({ address }) => address)),
           'internal',
           0,
+          cryptoForWallet(wallet),
         );
         const outputs = sendRecipients.map((recipient, index) => ({
           address: recipient.address,
@@ -2668,6 +2780,7 @@ function WalletApp({ theme, onSelectTheme }: {
           outputs,
           targetIndex,
           changeAddress: previewChange.address,
+          crypto: cryptoForWallet(wallet),
         });
 
         setSendRecipients((current) => current.map((recipient) => (
@@ -2760,6 +2873,7 @@ function WalletApp({ theme, onSelectTheme }: {
         changeAccount,
         'internal',
         0,
+        cryptoForWallet(activeWallet),
       )).address;
       let lifecycle: Awaited<ReturnType<typeof reserveTransactionWithoutAddress>>;
       if (preview.changeUsed) {
@@ -2788,6 +2902,7 @@ function WalletApp({ theme, onSelectTheme }: {
           changeAccount,
           'internal',
           reserved.addressIndex,
+          cryptoForWallet(activeWallet),
         );
         await attachInternalTransactionAddresses(activeWallet.walletId, [{
           lifecycleId: reserved.lifecycleId,
@@ -2806,6 +2921,7 @@ function WalletApp({ theme, onSelectTheme }: {
         snapshot: rebuildSnapshot,
         outputs: preview.recipients,
         changeAddress,
+        crypto: cryptoForWallet(activeWallet),
       });
       try {
         assertTransparentSendPlanMatches(preview, rebuilt);
@@ -2830,6 +2946,7 @@ function WalletApp({ theme, onSelectTheme }: {
       const signed = await signUnsignedTransparentTx({
         mnemonic: activeWallet.mnemonic,
         transaction: rebuilt,
+        crypto: cryptoForWallet(activeWallet),
       });
       await markTransactionLifecycleSigned(
         activeWallet.walletId,
@@ -2901,11 +3018,13 @@ function WalletApp({ theme, onSelectTheme }: {
           'taproot',
           'internal',
           0,
+          cryptoForWallet(wallet),
         );
         const plan = await prepareUnsignedTransparentConsolidation({
           mnemonic: wallet.mnemonic,
           snapshot: network.snapshot,
           toAddresses: [previewAddress.address],
+          crypto: cryptoForWallet(wallet),
         });
         setPreparedTx(null);
         setPreparedConsolidation(plan);
@@ -2981,6 +3100,7 @@ function WalletApp({ theme, onSelectTheme }: {
             'taproot',
             'internal',
             reservation.addressIndex,
+            cryptoForWallet(activeWallet),
           );
           destinations.push(derived.address);
         }
@@ -3001,6 +3121,7 @@ function WalletApp({ theme, onSelectTheme }: {
           mnemonic: activeWallet.mnemonic,
           snapshot: rebuildSnapshot,
           toAddresses: destinations,
+          crypto: cryptoForWallet(activeWallet),
         });
         try {
           assertTransparentConsolidationPlanMatches(preparedConsolidation, rebuilt);
@@ -3041,6 +3162,7 @@ function WalletApp({ theme, onSelectTheme }: {
             return signUnsignedTransparentTx({
               mnemonic: activeWallet.mnemonic,
               transaction: unsigned,
+              crypto: cryptoForWallet(activeWallet),
             });
           },
           persistSigned: async ({ reservation, previousLifecycleId }, transaction) => {
@@ -3137,7 +3259,13 @@ function WalletApp({ theme, onSelectTheme }: {
 
     const payload = await decryptVault(vault, vaultSecret, t('errors.invalidPasswordOrVault'));
 
-    if (wallet && payload.mnemonic !== wallet.mnemonic) {
+    if (
+      wallet
+      && (
+        payload.mnemonic !== wallet.mnemonic
+        || (payload.bip39Passphrase ?? '') !== wallet.bip39Passphrase
+      )
+    ) {
       throw new Error(t('errors.passwordDoesNotMatchWallet'));
     }
 
@@ -3858,8 +3986,26 @@ function WalletApp({ theme, onSelectTheme }: {
           invalidWords={invalidImportWords}
           mnemonicStatus={importMnemonicStatus}
           mnemonicValid={importMnemonicValid}
+          passphraseOpen={importPassphraseOpen}
+          passphrase={importPassphrase}
+          showPassphrase={showImportPassphrase}
+          onTogglePassphraseOpen={() => {
+            if (importPassphraseOpen) {
+              clearImportPassphrase();
+            } else {
+              setImportPassphraseOpen(true);
+            }
+          }}
+          onChangePassphrase={setImportPassphrase}
+          onToggleShowPassphrase={() => setShowImportPassphrase((current) => !current)}
           onSubmit={importWallet}
-          onBack={() => { resetFeedback(); setImportText(''); setShowImportSeed(false); setScreen(seedSaved ? 'unlock' : 'landing'); }}
+          onBack={() => {
+            resetFeedback();
+            setImportText('');
+            setShowImportSeed(false);
+            clearImportPassphrase();
+            setScreen(seedSaved ? 'unlock' : 'landing');
+          }}
         />
       );
     }
@@ -3940,16 +4086,48 @@ function WalletApp({ theme, onSelectTheme }: {
         t={t}
         pendingAction={pendingAction}
         actionLocked={actionLocked}
+        passphraseOpen={creationPassphraseOpen}
+        passphrase={creationPassphrase}
+        confirmPassphrase={creationConfirmPassphrase}
+        passphraseError={creationPassphraseError}
+        showPassphrase={showCreationPassphrase}
+        showConfirmPassphrase={showCreationConfirmPassphrase}
+        onTogglePassphraseOpen={() => {
+          if (creationPassphraseOpen) {
+            clearCreationPassphrase();
+          } else {
+            setCreationPassphraseOpen(true);
+          }
+        }}
+        onChangePassphrase={(value) => {
+          setCreationPassphrase(value);
+          setCreationPassphraseError('');
+        }}
+        onChangeConfirmPassphrase={(value) => {
+          setCreationConfirmPassphrase(value);
+          setCreationPassphraseError('');
+        }}
+        onToggleShowPassphrase={() => setShowCreationPassphrase((current) => !current)}
+        onToggleShowConfirmPassphrase={() => (
+          setShowCreationConfirmPassphrase((current) => !current)
+        )}
         onCreate={() => {
           resetFeedback();
           void createWallet();
         }}
         onUsePhysicalDice={() => {
           resetFeedback();
+          if (readCreationPassphrase() === null) return;
           setDiceSessionKey((current) => current + 1);
           setScreen('dice');
         }}
-        onImport={() => { resetFeedback(); setShowImportSeed(false); setScreen('import'); }}
+        onImport={() => {
+          resetFeedback();
+          clearCreationPassphrase();
+          setShowImportSeed(false);
+          clearImportPassphrase();
+          setScreen('import');
+        }}
       />
     );
   };

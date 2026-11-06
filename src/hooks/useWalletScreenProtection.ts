@@ -15,7 +15,7 @@ export const setWalletScreenCaptureProtection = async (enabled: boolean): Promis
 };
 
 /**
- * Protects screens that expose recovery words or physical dice input. Both
+ * Protects screens that expose recovery words, passphrases, or physical dice input. Both
  * capture blocking and the iOS app-switcher overlay follow this narrow scope.
  */
 export const useWalletScreenProtection = ({

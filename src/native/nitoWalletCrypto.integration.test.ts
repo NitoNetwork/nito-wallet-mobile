@@ -9,8 +9,9 @@ import { readBiometricSecretForUnlock } from '../services/biometricUnlock';
 import { buildNativeCryptoTestBridge, createNativeCryptoTestBridge, invokeNativeCrypto } from '../test/nativeCryptoBridge';
 import fixture from '../test/fixtures/vault-1.3.1.json';
 import { createNitoWalletCryptoTestDouble } from '../test/nitoWalletCryptoTestDouble';
+import { bindBip39Passphrase } from './nitoWalletCryptoContract';
 import { deriveHdAddress, deriveHdPath, HD_ACCOUNT_TEMPLATES, type HdAccountKey } from '../wallet/hdAddress';
-import { restoreLegacyCompatibleWallet } from '../wallet/walletIdentity';
+import { deriveLegacyCompatibleWallet, restoreLegacyCompatibleWallet } from '../wallet/walletIdentity';
 import { NITO_SIGNER_NETWORK, RBF_SEQUENCE, changeAccountForRecipients, prepareUnsignedTransparentMultiSend, prepareUnsignedTransparentConsolidation, signUnsignedTransparentTx } from '../wallet/transparentSend';
 import { loadRbfOriginal, prepareRbfQuote, assertSignedRbfFee } from '../wallet/transparentRbf';
 import type { TransactionLifecycleRecord } from '../services/transactionLifecycle';
@@ -20,10 +21,14 @@ const mnemonic = fixture.payload.mnemonic;
 const crypto = createNativeCryptoTestBridge();
 const hex = (value: Uint8Array) => Buffer.from(value).toString('hex');
 
-const fundedWallet = async (family: HdAccountKey, outputCount = 1) => {
-  const input = await deriveHdAddress(mnemonic, family, 'external', 0, crypto);
-  const change = await deriveHdAddress(mnemonic, 'taproot', 'internal', 1, crypto);
-  const destination = await deriveHdAddress(mnemonic, 'bech32', 'external', 5, crypto);
+const fundedWallet = async (
+  family: HdAccountKey,
+  outputCount = 1,
+  walletCrypto = crypto,
+) => {
+  const input = await deriveHdAddress(mnemonic, family, 'external', 0, walletCrypto);
+  const change = await deriveHdAddress(mnemonic, 'taproot', 'internal', 1, walletCrypto);
+  const destination = await deriveHdAddress(mnemonic, 'bech32', 'external', 5, walletCrypto);
   const scanned = (derived: typeof input): ScannedAddress => ({
     ...derived, accountLabel: derived.accountKey,
     accountPath: derived.path.split('/').slice(0, 4).join('/'), spendable: true, used: true,
@@ -76,7 +81,7 @@ describe('mobile JavaScript contract against the real Rust C ABI', () => {
       : fixture.password;
     expect(secret).toBe(fixture.password);
     const payload = await decryptVault(vault, secret!, 'invalid', crypto);
-    expect(payload).toEqual(fixture.payload);
+    expect(payload).toEqual({ ...fixture.payload, bip39Passphrase: '' });
     const wallet = await restoreLegacyCompatibleWallet(payload, 'taproot', 0, crypto);
     expect(wallet.walletId).toBe(fixture.payload.address);
     expect(wallet.receiveDerivationPath).toBe("m/86'/0'/0'/0/0");
@@ -90,7 +95,151 @@ describe('mobile JavaScript contract against the real Rust C ABI', () => {
     expect(vault.rounds).toBe(600_000);
     expect(Buffer.from(vault.salt, 'base64')).toHaveLength(16);
     expect(Buffer.from(vault.nonce, 'base64')).toHaveLength(24);
-    expect(await decryptVault(vault, fixture.password, 'invalid', crypto)).toEqual(fixture.payload);
+    expect(await decryptVault(vault, fixture.password, 'invalid', crypto)).toEqual({
+      ...fixture.payload,
+      bip39Passphrase: '',
+    });
+  }, 60_000);
+
+  it('derives and signs with the same optional BIP39 passphrase in real Rust', async () => {
+    const walletCrypto = bindBip39Passphrase(crypto, 'Nito recovery secret');
+    const plain = await deriveHdAddress(mnemonic, 'taproot', 'external', 0, crypto);
+    const protectedAddress = await deriveHdAddress(
+      mnemonic,
+      'taproot',
+      'external',
+      0,
+      walletCrypto,
+    );
+    expect(protectedAddress.address).not.toBe(plain.address);
+
+    const identity = await deriveLegacyCompatibleWallet(
+      mnemonic,
+      'Nito recovery secret',
+      crypto,
+    );
+    const protectedVault = await encryptVault({
+      version: 1,
+      mnemonic,
+      bip39Passphrase: identity.bip39Passphrase,
+      address: identity.walletId,
+      derivationPath: identity.walletIdDerivationPath,
+      createdAt: '2026-11-06T00:00:00.000Z',
+    }, fixture.password, false, 'password', crypto);
+    const protectedPayload = await decryptVault(
+      protectedVault,
+      fixture.password,
+      'invalid',
+      crypto,
+    );
+    const restored = await restoreLegacyCompatibleWallet(
+      protectedPayload,
+      'taproot',
+      0,
+      crypto,
+    );
+    expect(restored.walletId).toBe(identity.walletId);
+    expect(restored.receiveAddress).toBe(identity.receiveAddress);
+
+    const funded = await fundedWallet('taproot', 1, walletCrypto);
+    const unsigned = await prepareUnsignedTransparentMultiSend({
+      mnemonic,
+      snapshot: funded.snapshot,
+      crypto: walletCrypto,
+      changeAddress: funded.change.address,
+      outputs: [{ address: funded.destination.address, amountSats: 50_000_000n }],
+    });
+    await expect(signUnsignedTransparentTx({
+      mnemonic,
+      transaction: unsigned,
+      crypto: walletCrypto,
+    })).resolves.toMatchObject({ inputCount: 1 });
+    await expect(signUnsignedTransparentTx({
+      mnemonic,
+      transaction: unsigned,
+      crypto,
+    })).rejects.toThrow();
+  }, 60_000);
+
+  it('keeps the optional BIP39 passphrase through consolidation and RBF cancellation', async () => {
+    const walletCrypto = bindBip39Passphrase(crypto, 'Nito recovery secret');
+    const consolidatedWallet = await fundedWallet('taproot', 32, walletCrypto);
+    const consolidation = await prepareUnsignedTransparentConsolidation({
+      mnemonic,
+      snapshot: consolidatedWallet.snapshot,
+      toAddresses: [consolidatedWallet.change.address],
+      crypto: walletCrypto,
+    });
+    const consolidated = await signUnsignedTransparentTx({
+      mnemonic,
+      transaction: consolidation.transactions[0]!,
+      crypto: walletCrypto,
+    });
+    expect(consolidated.inputCount).toBe(32);
+
+    const funded = await fundedWallet('taproot', 1, walletCrypto);
+    const unsigned = await prepareUnsignedTransparentMultiSend({
+      mnemonic,
+      snapshot: funded.snapshot,
+      changeAddress: funded.change.address,
+      outputs: [{ address: funded.destination.address, amountSats: 10_000_000n }],
+      crypto: walletCrypto,
+    });
+    const sent = await signUnsignedTransparentTx({
+      mnemonic,
+      transaction: unsigned,
+      crypto: walletCrypto,
+    });
+    const lifecycle: TransactionLifecycleRecord = {
+      lifecycleId: 'passphrase-rbf',
+      walletId: 'passphrase-wallet',
+      purpose: 'send',
+      state: 'published',
+      txid: sent.txid,
+      rawTxHex: sent.hex,
+      address: funded.change.address,
+      derivationPath: funded.change.path,
+      addressIndex: funded.change.index,
+      recoveryAttempts: 1,
+      broadcastInvocations: 1,
+      nextBroadcastAttemptAt: null,
+      lastBroadcastAttemptAt: 0,
+    };
+    const original = await loadRbfOriginal({
+      lifecycle,
+      snapshot: funded.snapshot,
+      height: 210,
+      reader: {
+        getTransactionHex: async (id) => id === sent.txid ? sent.hex : funded.rawParent,
+        getAddressHistory: async (address) => [
+          { txid: sent.txid, height: 0, address },
+          { txid: funded.parent.id, height: 10, address },
+        ],
+      },
+    });
+    const returnAddress = await deriveHdAddress(
+      mnemonic,
+      'taproot',
+      'internal',
+      2,
+      walletCrypto,
+    );
+    const quote = await prepareRbfQuote({
+      mnemonic,
+      original,
+      mode: 'cancel',
+      returnAddress: returnAddress.address,
+      returnIndex: returnAddress.index,
+      networkRate: 20n,
+      crypto: walletCrypto,
+    });
+    const cancelled = await signUnsignedTransparentTx({
+      mnemonic,
+      transaction: quote.transaction,
+      crypto: walletCrypto,
+    });
+    expect(() => assertSignedRbfFee(quote, cancelled.hex, cancelled.txid)).not.toThrow();
+    expect(cancelled.walletOutputs[0]?.address).toBe(returnAddress.address);
   }, 60_000);
 
   it('returns entropy, BIP39 and PBKDF2 JSON compatible with JavaScript without exposing extra fields', async () => {
@@ -108,16 +257,17 @@ describe('mobile JavaScript contract against the real Rust C ABI', () => {
     await expect(crypto.randomBytes(0)).rejects.toHaveProperty('code', 'INVALID_REQUEST');
   });
 
-  it.each(HD_ACCOUNT_TEMPLATES)('signs and finalizes a $key multi-recipient send, acceleration and cancellation through Rust', async ({ key }) => {
-    const f = await fundedWallet(key);
-    const sign = vi.spyOn(crypto, 'signPsbt');
-    const unsigned = await prepareUnsignedTransparentMultiSend({ mnemonic, snapshot: f.snapshot, crypto,
+  it.each(HD_ACCOUNT_TEMPLATES)('signs and finalizes a passphrase-protected $key multi-recipient send, acceleration and cancellation through Rust', async ({ key }) => {
+    const walletCrypto = bindBip39Passphrase(crypto, 'Nito recovery secret');
+    const f = await fundedWallet(key, 1, walletCrypto);
+    const sign = vi.spyOn(walletCrypto, 'signPsbt');
+    const unsigned = await prepareUnsignedTransparentMultiSend({ mnemonic, snapshot: f.snapshot, crypto: walletCrypto,
       changeAddress: f.change.address, outputs: [
         { address: f.destination.address, amountSats: 25_000_000n },
         { address: f.destination.address, amountSats: 5_000_000n },
       ] });
     expect(sign).not.toHaveBeenCalled();
-    const sent = await signUnsignedTransparentTx({ mnemonic, transaction: unsigned, crypto });
+    const sent = await signUnsignedTransparentTx({ mnemonic, transaction: unsigned, crypto: walletCrypto });
     expect(sign).toHaveBeenCalledOnce();
     expect(Object.keys(await sign.mock.results[0]!.value)).toEqual(['psbtBase64']);
     sign.mockRestore();
@@ -133,9 +283,9 @@ describe('mobile JavaScript contract against the real Rust C ABI', () => {
       getAddressHistory: async (address: string) => [{ txid: sent.txid, height: 0, address }, { txid: f.parent.id, height: 10, address }] };
     const original = await loadRbfOriginal({ lifecycle, reader, snapshot: f.snapshot, height: 210 });
     for (const [offset, mode] of (['accelerate', 'cancel'] as const).entries()) {
-      const next = await deriveHdAddress(mnemonic, 'taproot', 'internal', 2 + offset, crypto);
-      const quote = await prepareRbfQuote({ mnemonic, original, mode, returnAddress: next.address, returnIndex: next.index, networkRate: 20n, crypto });
-      const replacement = await signUnsignedTransparentTx({ mnemonic, transaction: quote.transaction, crypto });
+      const next = await deriveHdAddress(mnemonic, 'taproot', 'internal', 2 + offset, walletCrypto);
+      const quote = await prepareRbfQuote({ mnemonic, original, mode, returnAddress: next.address, returnIndex: next.index, networkRate: 20n, crypto: walletCrypto });
+      const replacement = await signUnsignedTransparentTx({ mnemonic, transaction: quote.transaction, crypto: walletCrypto });
       expect(() => assertSignedRbfFee(quote, replacement.hex, replacement.txid)).not.toThrow();
       expect(replacement.txid).not.toBe(sent.txid);
       expect(replacement.walletInputs).toEqual(sent.walletInputs);

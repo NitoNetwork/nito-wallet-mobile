@@ -168,6 +168,27 @@ describe('shouldLockWalletForAppState', () => {
     expect(clearTransientSecrets).toHaveBeenCalledOnce();
   });
 
+  it('clears an optional creation passphrase when landing leaves the foreground', () => {
+    const clearTransientSecrets = vi.fn();
+    const handler = createWalletAppStateChangeHandler({
+      appStateRef: { current: 'active' },
+      screenRef: { current: 'landing' },
+      systemPromptActiveRef: { current: false },
+      vaultBiometricsEnabledRef: { current: false },
+      biometricUnavailableReasonRef: { current: '' },
+      biometricInterruptedRef: { current: false },
+      biometricDismissedRef: { current: false },
+      lockedDuringSessionRef: { current: false },
+      lockWalletRef: { current: vi.fn() },
+      clearTransientSecretsRef: { current: clearTransientSecrets },
+      unlockSavedWalletRef: { current: vi.fn() },
+    });
+
+    handler('inactive');
+
+    expect(clearTransientSecrets).toHaveBeenCalledOnce();
+  });
+
   it('does not clear an unlock field while the biometric system prompt makes iOS inactive', () => {
     const clearTransientSecrets = vi.fn();
     const handler = createWalletAppStateChangeHandler({

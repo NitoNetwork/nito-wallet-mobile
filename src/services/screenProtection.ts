@@ -5,13 +5,16 @@ export const shouldProtectSensitiveContent = ({
   walletTab,
   createdPhraseVisible,
   settingsPhraseVisible,
+  passphraseEntryVisible,
 }: {
   screen: AppScreen;
   walletTab: WalletTab;
   createdPhraseVisible: boolean;
   settingsPhraseVisible: boolean;
+  passphraseEntryVisible: boolean;
 }): boolean => (
   screen === 'dice'
+  || passphraseEntryVisible
   || (screen === 'persist' && createdPhraseVisible)
   || (screen === 'wallet' && walletTab === 'security' && settingsPhraseVisible)
 );

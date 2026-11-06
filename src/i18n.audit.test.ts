@@ -30,6 +30,29 @@ describe('i18n coverage', () => {
     expect(makeTranslator(code)('backup.copyPhrase')).toContain('BIP39');
   });
 
+  it.each(LANGUAGES)('defines every optional BIP39 passphrase warning directly in $code', ({ code }) => {
+    const keys = [
+      'passphrase.optionTitle',
+      'passphrase.optionSummary',
+      'passphrase.importSummary',
+      'passphrase.warning',
+      'passphrase.importWarning',
+      'passphrase.placeholder',
+      'passphrase.confirmPlaceholder',
+      'passphrase.backupTitle',
+      'passphrase.backupConfirm',
+      'persist.passphraseBackupReminder',
+      'errors.passphraseMismatch',
+    ] as const;
+    for (const key of keys) {
+      const dictionary = TRANSLATIONS[code];
+      expect(Object.hasOwn(dictionary, key), `${code}:${key}`).toBe(true);
+      expect(dictionary[key].trim().length, `${code}:${key}`).toBeGreaterThan(0);
+      expect(makeTranslator(code)(key), `${code}:${key}`).toBe(dictionary[key]);
+      if (code !== 'en') expect(dictionary[key], `${code}:${key}`).not.toBe(TRANSLATIONS.en[key]);
+    }
+  });
+
   it.each(LANGUAGES)('defines every compact transaction popup message directly in the $code dictionary', ({ code }) => {
     const keys = [
       'tracking.acceptedHint', 'tracking.mempoolHint', 'tracking.confirmedHint',

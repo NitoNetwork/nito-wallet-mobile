@@ -8,6 +8,7 @@ import { decodeUtf8 } from '../security/utf8';
 export type VaultPayload = {
   version: 1;
   mnemonic: string;
+  bip39Passphrase?: string;
   address: string;
   derivationPath: string;
   createdAt: string;
@@ -71,7 +72,14 @@ export const encryptVault = async (
   ]);
   const key = await deriveKey(password, salt, PBKDF2_ROUNDS, crypto);
   const plaintext = new TextEncoder().encode(JSON.stringify(payload));
-  const ciphertext = nacl.secretbox(plaintext, nonce, key);
+  const ciphertext = (() => {
+    try {
+      return nacl.secretbox(plaintext, nonce, key);
+    } finally {
+      key.fill(0);
+      plaintext.fill(0);
+    }
+  })();
 
   return {
     version: VAULT_VERSION,
@@ -94,16 +102,35 @@ export const decryptVault = async (
   invalidMessage = 'Invalid password or corrupted vault.',
   crypto: NitoWalletCryptoApi = nitoWalletCrypto,
 ): Promise<VaultPayload> => {
-  const key = await deriveKey(password, base64ToUint8Array(vault.salt), vault.rounds || PBKDF2_ROUNDS, crypto);
-  const plaintext = nacl.secretbox.open(
-    base64ToUint8Array(vault.ciphertext),
-    base64ToUint8Array(vault.nonce),
-    key,
+  const key = await deriveKey(
+    password,
+    base64ToUint8Array(vault.salt),
+    vault.rounds || PBKDF2_ROUNDS,
+    crypto,
   );
+  const plaintext = (() => {
+    try {
+      return nacl.secretbox.open(
+        base64ToUint8Array(vault.ciphertext),
+        base64ToUint8Array(vault.nonce),
+        key,
+      );
+    } finally {
+      key.fill(0);
+    }
+  })();
 
   if (!plaintext) {
     throw new Error(invalidMessage);
   }
 
-  return JSON.parse(decodeUtf8(plaintext)) as VaultPayload;
+  try {
+    const payload = JSON.parse(decodeUtf8(plaintext)) as VaultPayload;
+    return {
+      ...payload,
+      bip39Passphrase: payload.bip39Passphrase ?? '',
+    };
+  } finally {
+    plaintext.fill(0);
+  }
 };

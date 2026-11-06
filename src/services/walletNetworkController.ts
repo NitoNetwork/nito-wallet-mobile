@@ -3,6 +3,7 @@ import {
   type NitoElectrumClient,
 } from '../network/electrum';
 import type { NetworkState, Wallet } from '../ui/types';
+import { cryptoForWallet } from '../wallet/walletIdentity';
 import {
   refreshKnownUsedAddresses,
   scanTransparentWallet,
@@ -189,6 +190,7 @@ export const prefetchWalletSnapshot = async (
   await client.connect();
   const snapshot = await scanTransparentWallet({
     mnemonic: wallet.mnemonic,
+    crypto: cryptoForWallet(wallet),
     electrum: client,
     gapLimit: 20,
     includeHistory: false,
@@ -302,6 +304,7 @@ export const scanWalletNetwork = async ({
       })
     : scanTransparentWallet({
         mnemonic: wallet.mnemonic,
+        crypto: cryptoForWallet(wallet),
         electrum: client,
         gapLimit: 20,
         includeHistory: (

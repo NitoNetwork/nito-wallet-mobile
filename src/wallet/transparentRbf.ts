@@ -1,7 +1,6 @@
 import * as btc from '@scure/btc-signer';
 import { MAX_MONEY_SATS } from '../constants/nito';
 import type { NitoWalletCryptoApi } from '../native/nitoWalletCryptoContract';
-import { nitoWalletCrypto } from '../native/nitoWalletCrypto';
 import type { ElectrumHistoryEntry } from '../network/electrum';
 import { mapWithConcurrency } from '../services/concurrency';
 import type { TransactionLifecycleRecord } from '../services/transactionLifecycle';
@@ -153,9 +152,9 @@ export const rbfNetworkFeeRate = (estimate: unknown): bigint => {
 const INPUT_VBYTES: Record<ScannedAddress['scriptType'], number> = {
   p2pkh: 149, 'p2sh-p2wpkh': 92, p2wpkh: 69, p2tr: 58,
 };
-export const prepareRbfQuote = async ({ mnemonic, original, mode, returnAddress, returnIndex, networkRate, crypto = nitoWalletCrypto }: {
+export const prepareRbfQuote = async ({ mnemonic, original, mode, returnAddress, returnIndex, networkRate, crypto }: {
   mnemonic: string; original: RbfOriginal; mode: ReplacementMode; returnAddress: string;
-  returnIndex: number; networkRate: bigint; crypto?: NitoWalletCryptoApi;
+  returnIndex: number; networkRate: bigint; crypto: NitoWalletCryptoApi;
 }): Promise<RbfQuote> => {
   if (networkRate <= 0n || networkRate > MAX_RBF_FEE_PER_VBYTE) throw new RbfError('feeUnavailable');
   const { transaction: old, lifecycle, snapshot } = original;
