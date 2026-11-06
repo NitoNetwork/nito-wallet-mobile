@@ -13,7 +13,8 @@
       },
       "android": {
         "buildFromSource": [
-          "expo-file-system"
+          "expo-file-system",
+          "expo-screen-capture"
         ]
       }
     }
@@ -31,6 +32,7 @@
     "doctor": "expo-doctor",
     "warnings:self-test": "node scripts/assert-warning-free.mjs --self-test",
     "warnings:ios-self-test": "node scripts/assert-ios-owned-warning-free.mjs --self-test",
+    "warnings:gradle-self-test": "node scripts/assert-gradle-sdk58-warning-policy.mjs --self-test",
     "warnings:source": "node scripts/assert-no-warning-suppressions.mjs",
     "audit:production": "node scripts/audit-production-dependencies.mjs",
     "start": "expo start",
@@ -59,44 +61,57 @@
     "@scure/bip39": "2.2.0",
     "@scure/btc-signer": "^2.2.0",
     "bech32": "^2.0.0",
-    "expo": "~57.0.20",
-    "expo-asset": "~57.0.16",
-    "expo-camera": "~57.0.4",
-    "expo-clipboard": "~57.0.1",
-    "expo-constants": "~57.0.17",
-    "expo-file-system": "~57.0.6",
-    "expo-local-authentication": "~57.0.2",
-    "expo-screen-capture": "~57.0.2",
-    "expo-secure-store": "~57.0.3",
-    "expo-sharing": "~57.0.18",
-    "expo-splash-screen": "~57.0.8",
-    "expo-sqlite": "~57.0.2",
-    "expo-system-ui": "~57.0.3",
-    "react": "19.2.3",
-    "react-native": "0.86.3",
+    "expo": "58.0.23",
+    "expo-asset": "~58.0.20",
+    "expo-camera": "~58.0.14",
+    "expo-clipboard": "~58.0.4",
+    "expo-constants": "~58.0.15",
+    "expo-file-system": "~58.0.13",
+    "expo-local-authentication": "~58.0.2",
+    "expo-screen-capture": "~58.0.6",
+    "expo-secure-store": "~58.0.2",
+    "expo-sharing": "~58.0.22",
+    "expo-splash-screen": "~58.0.13",
+    "expo-sqlite": "~58.0.15",
+    "expo-system-ui": "~58.0.7",
+    "react": "19.3.0",
+    "react-native": "0.88.1",
     "react-native-qrcode-svg": "file:vendor/react-native-qrcode-svg",
-    "react-native-safe-area-context": "~5.7.0",
+    "react-native-safe-area-context": "~5.11.1",
     "tweetnacl": "^1.0.3"
   },
   "devDependencies": {
     "@scure/bip32": "2.2.0",
     "@types/node": "26.1.1",
-    "@types/react": "~19.2.14",
-    "babel-preset-expo": "^57.0.3",
+    "@types/react": "~19.3.0",
+    "babel-preset-expo": "~58.0.24",
     "eslint": "9.39.5",
-    "eslint-config-expo": "~57.0.2",
+    "eslint-config-expo": "~58.0.4",
     "eslint-import-resolver-typescript": "4.4.5",
-    "expo-doctor": "1.20.1",
+    "expo-doctor": "^1.21.6",
     "globals": "^16.0.0",
     "patch-package": "^8.0.1",
     "typescript": "~6.0.3",
-    "vitest": "^4.1.10"
+    "vitest": "^4.1.12"
   },
   "overrides": {
-    "brace-expansion@^5": "5.0.9",
+    "@expo/cli": {
+      "glob": "14.0.4"
+    },
+    "@expo/fingerprint": {
+      "glob": "14.0.4",
+      "minimatch": "11.0.5"
+    },
+    "@typescript-eslint/typescript-estree": {
+      "minimatch": "11.0.5"
+    },
+    "brace-expansion@^1": "1.1.21",
+    "brace-expansion@^5": "5.0.12",
     "eslint-import-resolver-typescript": "4.4.5",
-    "postcss": "^8.5.23",
-    "shell-quote": "1.10.0",
-    "uuid": "^11.1.1"
+    "js-yaml": "4.3.2",
+    "postcss": "8.5.32",
+    "shell-quote": "1.12.0",
+    "source-map-js": "1.2.2",
+    "zod": "4.6.7"
   }
 }

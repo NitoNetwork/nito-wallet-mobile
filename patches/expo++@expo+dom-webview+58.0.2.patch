@@ -1,0 +1,17 @@
+diff --git a/node_modules/expo/node_modules/@expo/dom-webview/android/build.gradle b/node_modules/expo/node_modules/@expo/dom-webview/android/build.gradle
+index ef50add..b6f593b 100644
+--- a/node_modules/expo/node_modules/@expo/dom-webview/android/build.gradle
++++ b/node_modules/expo/node_modules/@expo/dom-webview/android/build.gradle
+@@ -7,9 +7,9 @@ group = 'expo.modules.webview'
+ version = '58.0.2'
+ 
+ android {
+-  namespace "expo.modules.webview"
++  namespace = "expo.modules.webview"
+   defaultConfig {
+-    versionCode 1
+-    versionName "58.0.2"
++    versionCode = 1
++    versionName = "58.0.2"
+   }
+ }

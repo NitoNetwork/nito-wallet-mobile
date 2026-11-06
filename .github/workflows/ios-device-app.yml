@@ -148,8 +148,10 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          npm run audit:production 2>&1 | tee npm-audit.log
-          node scripts/assert-warning-free.mjs npm-audit.log
+          npm audit 2>&1 | tee npm-audit-full.log
+          node scripts/assert-warning-free.mjs npm-audit-full.log
+          npm run audit:production 2>&1 | tee npm-audit-production.log
+          node scripts/assert-warning-free.mjs npm-audit-production.log
 
       - name: Build native Rust core for iOS device
         env:

@@ -12,6 +12,8 @@ transactions and new blocks, and to broadcast signed transactions.
 - Create a new 24-word recovery phrase.
 - Verify selected recovery words before protecting a newly created wallet.
 - Import a valid 12-word or 24-word BIP39 recovery phrase.
+- Optionally derive a separate BIP39 wallet with a passphrase that must be
+  backed up exactly and separately from the recovery phrase.
 - Protect wallet secrets with device-backed encrypted storage.
 - Unlock with a password and, when enabled, device biometrics.
 - Configure automatic locking after 1, 5 or 15 minutes of inactivity.
@@ -44,28 +46,36 @@ native implementation and network activation path are production-ready.
 
 The release version is defined in [`package.json`](package.json). The Android
 workflow produces a production-signed APK and rejects debug signing. The iOS
-workflow produces a direct unsigned device IPA for development sideloading;
+workflow produces a direct unsigned device IPA for development sideloading.
 App Store distribution requires Apple signing credentials.
 
 ## Development
 
 Requirements:
 
-- Node.js 24
+- Node.js 24.14.0
 - npm 11
-- Rust 1.97
+- Rust 1.97.1
 - Python 3 for the real SQLite integration tests
-- Android SDK and JDK 17 for Android builds
-- macOS and Xcode 26 for iOS device builds
+- JDK 17.0.19+10, Android SDK 37, Build Tools 37.0.0 and NDK 27.1.12297006
+  for Android builds
+- macOS and Xcode 26.6 for iOS device builds
+- Expo SDK 58
 
 Install and run the source checks:
 
 ```bash
 npm ci
+npm run release:check
+npx expo install --check
+npm run doctor
 npm run lint
 npm run typecheck
 npm test
-npm audit --omit=dev
+npm audit
+npm run audit:production
+npm run warnings:source
+npm run warnings:gradle-self-test
 cargo fmt --manifest-path native/nito-wallet-crypto/Cargo.toml --check
 cargo clippy --manifest-path native/nito-wallet-crypto/Cargo.toml --all-targets --all-features -- -D warnings
 cargo test --manifest-path native/nito-wallet-crypto/Cargo.toml --all-features

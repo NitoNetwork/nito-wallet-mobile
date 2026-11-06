@@ -1,5 +1,5 @@
 export interface AppStateLockContext {
-  nextState: string;
+  nextState: string | null | undefined;
   systemPromptActive: boolean;
   sensitiveWalletState: boolean;
 }
@@ -9,7 +9,7 @@ interface MutableValue<T> {
 }
 
 export interface WalletAppStateChangeRefs {
-  appStateRef: MutableValue<string>;
+  appStateRef: MutableValue<string | null | undefined>;
   screenRef: MutableValue<string>;
   systemPromptActiveRef: MutableValue<boolean>;
   vaultBiometricsEnabledRef: MutableValue<boolean>;
@@ -35,7 +35,7 @@ export const shouldLockWalletForAppState = ({
 );
 
 export const lockWalletIfAppStateBackground = (
-  appState: string,
+  appState: string | null | undefined,
   lockWallet: () => void,
 ): boolean => {
   if (!shouldLockWalletForAppState({

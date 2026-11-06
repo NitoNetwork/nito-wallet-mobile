@@ -1,0 +1,56 @@
+diff --git a/node_modules/expo-constants/android/build.gradle b/node_modules/expo-constants/android/build.gradle
+index 7b4c996..cf685de 100644
+--- a/node_modules/expo-constants/android/build.gradle
++++ b/node_modules/expo-constants/android/build.gradle
+@@ -10,11 +10,11 @@ version = '58.0.15'
+ 
+ expoModule {
+   // We can't prebuild the module because we need to apply `get-app-config-android.gradle` script.
+-  canBePublished false
++  canBePublished = false
+ }
+ 
+ android {
+-  namespace "expo.modules.constants"
++  namespace = "expo.modules.constants"
+   defaultConfig {
+     versionCode 33
+     versionName "58.0.15"
+diff --git a/node_modules/expo-constants/scripts/get-app-config-android.gradle b/node_modules/expo-constants/scripts/get-app-config-android.gradle
+index 7911284..08cc450 100644
+--- a/node_modules/expo-constants/scripts/get-app-config-android.gradle
++++ b/node_modules/expo-constants/scripts/get-app-config-android.gradle
+@@ -15,8 +15,9 @@ afterEvaluate {
+   def expoGradleExtension = gradle.extensions.findByName("expoGradle")
+   def customProjectRoot = expoGradleExtension?.projectRoot
+   def projectRoot = file("${customProjectRoot ?: rootProject.projectDir}")
++  def androidExtension = project.extensions.getByName("android")
+ 
+-  project.android.libraryVariants.all { variant ->
++  androidExtension.libraryVariants.all { variant ->
+     def assetsDir = file("$buildDir/generated/assets/expo-constants/${variant.name}")
+     def configMode = variant.buildType.name == "debug" || variant.buildType.name == "debugOptimized" ? "development" : "production"
+ 
+@@ -49,7 +50,7 @@ afterEvaluate {
+     variant.preBuildProvider.configure { it.dependsOn(createConfigTask) }
+ 
+     // Add generated assetsDir into assets.srcDirs
+-    project.android.sourceSets.maybeCreate(variant.name).assets.srcDirs += assetsDir
++    androidExtension.sourceSets.maybeCreate(variant.name).assets.srcDirs += assetsDir
+   }
+ 
+   def fingerprintAssetsDir = file("$buildDir/generated/assets/expo-constants-fingerprint")
+@@ -75,11 +76,11 @@ afterEvaluate {
+     }
+   }
+ 
+-  project.android.libraryVariants.all { variant ->
++  androidExtension.libraryVariants.all { variant ->
+     if (!variant.buildType.debuggable) {
+       return
+     }
+     variant.preBuildProvider.configure { it.dependsOn(createFingerprintTask) }
+-    project.android.sourceSets.maybeCreate(variant.buildType.name).assets.srcDirs += fingerprintAssetsDir
++    androidExtension.sourceSets.maybeCreate(variant.buildType.name).assets.srcDirs += fingerprintAssetsDir
+   }
+ }

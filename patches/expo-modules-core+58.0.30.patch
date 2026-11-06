@@ -1,0 +1,143 @@
+diff --git a/node_modules/expo-modules-core/android/ExpoModulesCorePlugin.gradle b/node_modules/expo-modules-core/android/ExpoModulesCorePlugin.gradle
+index 7910c77..9c4372c 100644
+--- a/node_modules/expo-modules-core/android/ExpoModulesCorePlugin.gradle
++++ b/node_modules/expo-modules-core/android/ExpoModulesCorePlugin.gradle
+@@ -62,15 +62,17 @@ ext.applyKspJvmToolchain = {
+ // Setup build options that are common for all modules
+ ext.useDefaultAndroidSdkVersions = {
+   project.android {
+-    compileSdkVersion project.ext.safeExtGet("compileSdkVersion", 36)
++    compileSdk = project.ext.safeExtGet("compileSdkVersion", 36)
+ 
+     defaultConfig {
+-      minSdkVersion project.ext.safeExtGet("minSdkVersion", 24)
+-      targetSdkVersion project.ext.safeExtGet("targetSdkVersion", 36)
++      minSdk = project.ext.safeExtGet("minSdkVersion", 24)
++      targetSdk = project.ext.safeExtGet("targetSdkVersion", 36)
+     }
+ 
+-    lintOptions {
+-      abortOnError false
++    lint {
++      abortOnError = true
++      checkReleaseBuilds = true
++      warningsAsErrors = true
+     }
+   }
+ }
+diff --git a/node_modules/expo-modules-core/android/build.gradle b/node_modules/expo-modules-core/android/build.gradle
+index 9a94630..4da9980 100644
+--- a/node_modules/expo-modules-core/android/build.gradle
++++ b/node_modules/expo-modules-core/android/build.gradle
+@@ -160,26 +160,26 @@ if (buildFromSourceRequested) {
+ def usePrebuiltNativeLibs = !isPrebuiltCachingRun && !buildFromSourceRequested && isPrebuiltUsable()
+ 
+ expoModule {
+-  canBePublished false
++  canBePublished = false
+ }
+ 
+ android {
+   if (rootProject.hasProperty("ndkPath")) {
+-    ndkPath rootProject.ext.ndkPath
++    ndkPath = rootProject.ext.ndkPath
+   }
+   if (rootProject.hasProperty("ndkVersion")) {
+-    ndkVersion rootProject.ext.ndkVersion
++    ndkVersion = rootProject.ext.ndkVersion
+   }
+ 
+-  namespace "expo.modules"
++  namespace = "expo.modules"
+   defaultConfig {
+     consumerProguardFiles 'proguard-rules.pro'
+-    versionCode 1
+-    versionName "58.0.30"
++    versionCode = 1
++    versionName = "58.0.30"
+     buildConfigField "String", "EXPO_MODULES_CORE_VERSION", "\"${versionName}\""
+     buildConfigField "boolean", "IS_NEW_ARCHITECTURE_ENABLED", "true"
+ 
+-    testInstrumentationRunner "expo.modules.TestRunner"
++    testInstrumentationRunner = "expo.modules.TestRunner"
+ 
+     externalNativeBuild {
+       cmake {
+@@ -209,14 +209,14 @@ android {
+ 
+   externalNativeBuild {
+     cmake {
+-      path "CMakeLists.txt"
++      path = file("CMakeLists.txt")
+     }
+   }
+ 
+   buildFeatures {
+-    buildConfig true
+-    prefab true
+-    compose shouldIncludeCompose
++    buildConfig = true
++    prefab = true
++    compose = shouldIncludeCompose
+   }
+ 
+   packagingOptions {
+@@ -606,7 +606,8 @@ abstract class PrebuiltSourceHashValueSource implements ValueSource<String, Preb
+   }
+ }
+ 
+-def stripBinary = PrebuiltNativeLibs.findLlvmStrip(android.ndkDirectory)
++def androidExtension = project.extensions.getByName("android")
++def stripBinary = PrebuiltNativeLibs.findLlvmStrip(androidExtension.ndkDirectory)
+ def cacheStagingDir = layout.buildDirectory.dir("tmp/cache-prebuilt-natives").get().asFile
+ def variantDescriptors = prebuiltVariants.collect { variant ->
+   def variantCap = variant.capitalize()
+diff --git a/node_modules/expo-modules-core/android/src/main/AndroidManifest.xml b/node_modules/expo-modules-core/android/src/main/AndroidManifest.xml
+index d00d6fb..bd64125 100644
+--- a/node_modules/expo-modules-core/android/src/main/AndroidManifest.xml
++++ b/node_modules/expo-modules-core/android/src/main/AndroidManifest.xml
+@@ -1,5 +1,4 @@
+-<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+-          xmlns:tools="http://schemas.android.com/tools">
++<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+ 
+     <application>
+         <meta-data
+@@ -7,8 +6,7 @@
+             android:value="expo.modules.adapters.react.apploader.RNHeadlessAppLoader" />
+         <meta-data
+             android:name="com.facebook.soloader.enabled"
+-            android:value="true"
+-            tools:replace="android:value" />
++            android:value="true" />
+     </application>
+ 
+ </manifest>
+diff --git a/node_modules/expo-modules-core/android/src/main/java/expo/modules/kotlin/types/ColorCompat.kt b/node_modules/expo-modules-core/android/src/main/java/expo/modules/kotlin/types/ColorCompat.kt
+index 0ba2a56..fab3cd4 100644
+--- a/node_modules/expo-modules-core/android/src/main/java/expo/modules/kotlin/types/ColorCompat.kt
++++ b/node_modules/expo-modules-core/android/src/main/java/expo/modules/kotlin/types/ColorCompat.kt
+@@ -112,7 +112,7 @@ class ColorCompat private constructor() {
+     val green: Float,
+     val blue: Float,
+     val alpha: Float,
+-    @ColorInt val argb: Int
++    @param:ColorInt val argb: Int
+   ) : Color()
+ 
+   @RequiresApi(Build.VERSION_CODES.O)
+diff --git a/node_modules/expo-modules-core/expo-module-gradle-plugin/src/main/kotlin/expo/modules/plugin/android/AndroidLibraryExtension.kt b/node_modules/expo-modules-core/expo-module-gradle-plugin/src/main/kotlin/expo/modules/plugin/android/AndroidLibraryExtension.kt
+index 0de0f0e..ba74d75 100644
+--- a/node_modules/expo-modules-core/expo-module-gradle-plugin/src/main/kotlin/expo/modules/plugin/android/AndroidLibraryExtension.kt
++++ b/node_modules/expo-modules-core/expo-module-gradle-plugin/src/main/kotlin/expo/modules/plugin/android/AndroidLibraryExtension.kt
+@@ -10,7 +10,9 @@ internal fun LibraryExtension.applySDKVersions(compileSdk: Int, minSdk: Int) {
+ }
+ 
+ internal fun LibraryExtension.applyLinterOptions() {
+-  lint.abortOnError = false
++  lint.abortOnError = true
++  lint.checkReleaseBuilds = true
++  lint.warningsAsErrors = true
+ }
+ 
+ internal fun LibraryExtension.applyPublishingVariant() {

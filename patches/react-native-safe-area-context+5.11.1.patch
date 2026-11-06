@@ -1,8 +1,8 @@
 diff --git a/node_modules/react-native-safe-area-context/android/build.gradle b/node_modules/react-native-safe-area-context/android/build.gradle
-index f324b9a..85938ed 100644
+index f7007a6..33187dd 100644
 --- a/node_modules/react-native-safe-area-context/android/build.gradle
 +++ b/node_modules/react-native-safe-area-context/android/build.gradle
-@@ -41,37 +41,38 @@ if (isNewArchitectureEnabled()) {
+@@ -57,28 +57,28 @@ if (isNewArchitectureEnabled()) {
  android {
      def agpVersion = com.android.Version.ANDROID_GRADLE_PLUGIN_VERSION
      if (agpVersion.tokenize('.')[0].toInteger() >= 7) {
@@ -13,10 +13,10 @@ index f324b9a..85938ed 100644
 +            buildConfig = true
          }
      }
-
--    compileSdkVersion getExtOrDefault('compileSdkVersion', 30)
-+    compileSdk = getExtOrDefault('compileSdkVersion', 30)
-
+ 
+-    compileSdkVersion getExtOrDefault('compileSdkVersion', 31)
++    compileSdk = getExtOrDefault('compileSdkVersion', 31)
+ 
      // Used to override the NDK path/version on internal CI or by allowing
      // users to customize the NDK path/version from their root project (e.g. for M1 support)
      if (rootProject.hasProperty("ndkPath")) {
@@ -27,7 +27,7 @@ index f324b9a..85938ed 100644
 -        ndkVersion rootProject.ext.ndkVersion
 +        ndkVersion = rootProject.ext.ndkVersion
      }
-
+ 
      defaultConfig {
 -        minSdkVersion getExtOrDefault('minSdkVersion', 16)
 -        targetSdkVersion getExtOrDefault('targetSdkVersion', 28)
@@ -38,22 +38,22 @@ index f324b9a..85938ed 100644
 +        versionCode = 1
 +        versionName = "1.0"
          buildConfigField "boolean", "IS_NEW_ARCHITECTURE_ENABLED", isNewArchitectureEnabled().toString()
-
+ 
          ndk {
-             abiFilters (*reactNativeArchitectures())
+@@ -86,8 +86,10 @@ android {
          }
      }
--
+ 
 -    lintOptions{
 -        abortOnError false
 +    lint {
 +        abortOnError = true
-+        warningsAsErrors = true
 +        checkReleaseBuilds = true
++        warningsAsErrors = true
      }
-
+ 
      packagingOptions {
-@@ -111,7 +112,7 @@ repositories {
+@@ -122,7 +124,7 @@ repositories {
      google()
      maven {
          // All of React Native (JS, Obj-C sources, Android binaries) is installed from npm
@@ -62,60 +62,51 @@ index f324b9a..85938ed 100644
      }
      mavenCentral()
  }
-@@ -119,6 +120,6 @@ repositories {
- def kotlin_version = getExtOrDefault('kotlinVersion', project.properties['RNSAC_kotlinVersion'])
-
- dependencies {
--    implementation 'com.facebook.react:react-native:+'
-+    implementation 'com.facebook.react:react-android'
-     implementation "org.jetbrains.kotlin:kotlin-stdlib:$kotlin_version"
- }
 diff --git a/node_modules/react-native-safe-area-context/android/src/main/AndroidManifest.xml b/node_modules/react-native-safe-area-context/android/src/main/AndroidManifest.xml
-index f5da598..4b624d1 100644
+index f5da598..f4b498e 100644
 --- a/node_modules/react-native-safe-area-context/android/src/main/AndroidManifest.xml
 +++ b/node_modules/react-native-safe-area-context/android/src/main/AndroidManifest.xml
-@@ -1,5 +1,4 @@
-
- <manifest
+@@ -1,5 +1,3 @@
+ 
+-<manifest
 -	xmlns:android="http://schemas.android.com/apk/res/android"
 -  package="com.th3rdwave.safeareacontext">
-+	xmlns:android="http://schemas.android.com/apk/res/android">
++<manifest xmlns:android="http://schemas.android.com/apk/res/android">
  </manifest>
 diff --git a/node_modules/react-native-safe-area-context/android/src/main/java/com/th3rdwave/safeareacontext/SafeAreaProviderManager.kt b/node_modules/react-native-safe-area-context/android/src/main/java/com/th3rdwave/safeareacontext/SafeAreaProviderManager.kt
-index de6f685..6f689f1 100644
+index d440bc4..e5623e6 100644
 --- a/node_modules/react-native-safe-area-context/android/src/main/java/com/th3rdwave/safeareacontext/SafeAreaProviderManager.kt
 +++ b/node_modules/react-native-safe-area-context/android/src/main/java/com/th3rdwave/safeareacontext/SafeAreaProviderManager.kt
-@@ -36,6 +36,6 @@ class SafeAreaProviderManager :
- private fun handleOnInsetsChange(view: SafeAreaProvider, insets: EdgeInsets, frame: Rect) {
+@@ -43,7 +43,7 @@ private fun handleOnInsetsChange(
+ ) {
    val reactContext = view.context as ReactContext
    val reactTag = view.id
 -  UIManagerHelper.getEventDispatcherForReactTag(reactContext, reactTag)
 +  UIManagerHelper.getEventDispatcher(reactContext)
-       ?.dispatchEvent(InsetsChangeEvent(getSurfaceId(reactContext), reactTag, insets, frame))
- }
+       ?.dispatchEvent(
+           InsetsChangeEvent(
+               getSurfaceId(reactContext),
 diff --git a/node_modules/react-native-safe-area-context/android/src/main/java/com/th3rdwave/safeareacontext/SafeAreaView.kt b/node_modules/react-native-safe-area-context/android/src/main/java/com/th3rdwave/safeareacontext/SafeAreaView.kt
-index b29e787..ce03b37 100644
+index e5c56eb..770daa9 100644
 --- a/node_modules/react-native-safe-area-context/android/src/main/java/com/th3rdwave/safeareacontext/SafeAreaView.kt
 +++ b/node_modules/react-native-safe-area-context/android/src/main/java/com/th3rdwave/safeareacontext/SafeAreaView.kt
-@@ -1,17 +1,11 @@
- package com.th3rdwave.safeareacontext
-
- import android.content.Context
--import android.util.Log
- import android.view.View
- import android.view.ViewTreeObserver
+@@ -9,7 +9,6 @@ import android.view.ViewTreeObserver
+ import android.view.WindowInsets
  import com.facebook.react.bridge.Arguments
  import com.facebook.react.uimanager.StateWrapper
 -import com.facebook.react.uimanager.UIManagerModule
  import com.facebook.react.views.view.ReactViewGroup
--import java.util.concurrent.locks.ReentrantLock
--import kotlin.concurrent.withLock
--
--private const val MAX_WAIT_TIME_NANO = 500000000L // 500ms
-
+ 
  class SafeAreaView(context: Context?) :
-     ReactViewGroup(context), ViewTreeObserver.OnPreDrawListener {
-@@ -44,60 +38,8 @@ class SafeAreaView(context: Context?) :
+@@ -31,6 +30,7 @@ class SafeAreaView(context: Context?) :
+ 
+   fun setStateWrapper(stateWrapper: StateWrapper?) {
+     mStateWrapper = stateWrapper
++    updateInsets()
+   }
+ 
+   private fun updateInsets() {
+@@ -49,13 +49,6 @@ class SafeAreaView(context: Context?) :
          val map = Arguments.createMap()
          map.putMap("insets", edgeInsetsToJsMap(insets))
          stateWrapper.updateState(map)
@@ -125,65 +116,18 @@ index b29e787..ce03b37 100644
 -        val uiManager = reactContext.getNativeModule(UIManagerModule::class.java)
 -        if (uiManager != null) {
 -          uiManager.setViewLocalData(id, localData)
--          // Sadly there doesn't seem to be a way to properly dirty a yoga node from java, so if we
--          // are in
--          // the middle of a layout, we need to recompute it. There is also no way to know whether
--          // we
--          // are in the middle of a layout so always do it.
--          reactContext.runOnNativeModulesQueueThread {
--            uiManager.uiImplementation.dispatchViewUpdates(-1)
--          }
--          waitForReactLayout()
 -        }
--      }
--    }
--  }
--
--  private fun waitForReactLayout() {
--    // Block the main thread until the native module thread is finished with
--    // its current tasks. To do this we use the done boolean as a lock and enqueue
--    // a task on the native modules thread. When the task runs we can unblock the
--    // main thread. This should be safe as long as the native modules thread
--    // does not block waiting on the main thread.
--    var done = false
--    val lock = ReentrantLock()
--    val condition = lock.newCondition()
--    val startTime = System.nanoTime()
--    var waitTime = 0L
--    getReactContext(this).runOnNativeModulesQueueThread {
--      lock.withLock {
--        if (!done) {
--          done = true
--          condition.signal()
--        }
--      }
--    }
--    lock.withLock {
--      while (!done && waitTime < MAX_WAIT_TIME_NANO) {
--        try {
--          condition.awaitNanos(MAX_WAIT_TIME_NANO)
--        } catch (ex: InterruptedException) {
--          // In case of an interrupt just give up waiting.
--          done = true
--        }
--        waitTime += System.nanoTime() - startTime
        }
      }
--    // Timed out waiting.
--    if (waitTime >= MAX_WAIT_TIME_NANO) {
--      Log.w("SafeAreaView", "Timed out waiting for layout.")
--    }
    }
-
-   fun setMode(mode: SafeAreaViewMode) {
 diff --git a/node_modules/react-native-safe-area-context/android/src/main/java/com/th3rdwave/safeareacontext/SafeAreaViewManager.kt b/node_modules/react-native-safe-area-context/android/src/main/java/com/th3rdwave/safeareacontext/SafeAreaViewManager.kt
-index 373c9dd..5f806cb 100644
+index 05f6287..cbfcc37 100644
 --- a/node_modules/react-native-safe-area-context/android/src/main/java/com/th3rdwave/safeareacontext/SafeAreaViewManager.kt
 +++ b/node_modules/react-native-safe-area-context/android/src/main/java/com/th3rdwave/safeareacontext/SafeAreaViewManager.kt
 @@ -15,10 +15,6 @@ class SafeAreaViewManager : ReactViewManager() {
-
+ 
    override fun createViewInstance(context: ThemedReactContext) = SafeAreaView(context)
-
+ 
 -  override fun createShadowNodeInstance() = SafeAreaViewShadowNode()
 -
 -  override fun getShadowNodeClass() = SafeAreaViewShadowNode::class.java
@@ -193,10 +137,10 @@ index 373c9dd..5f806cb 100644
      when (mode) {
 diff --git a/node_modules/react-native-safe-area-context/android/src/main/java/com/th3rdwave/safeareacontext/SafeAreaViewShadowNode.kt b/node_modules/react-native-safe-area-context/android/src/main/java/com/th3rdwave/safeareacontext/SafeAreaViewShadowNode.kt
 deleted file mode 100644
-index 939950a..0000000
+index 7f1d5ea..0000000
 --- a/node_modules/react-native-safe-area-context/android/src/main/java/com/th3rdwave/safeareacontext/SafeAreaViewShadowNode.kt
 +++ /dev/null
-@@ -1,170 +0,0 @@
+@@ -1,174 +0,0 @@
 -package com.th3rdwave.safeareacontext
 -
 -import com.facebook.react.bridge.Dynamic
@@ -280,7 +224,7 @@ index 939950a..0000000
 -  private fun getEdgeValue(
 -      edgeMode: SafeAreaViewEdgeModes,
 -      insetValue: Float,
--      edgeValue: Float
+-      edgeValue: Float,
 -  ): Float {
 -    if (edgeMode == SafeAreaViewEdgeModes.OFF) {
 -      return edgeValue
@@ -338,7 +282,9 @@ index 939950a..0000000
 -              ViewProps.PADDING_TOP,
 -              ViewProps.PADDING_BOTTOM,
 -              ViewProps.PADDING_LEFT,
--              ViewProps.PADDING_RIGHT])
+-              ViewProps.PADDING_RIGHT,
+-          ]
+-  )
 -  override fun setPaddings(index: Int, padding: Dynamic) {
 -    val spacingType = ViewProps.PADDING_MARGIN_SPACING_TYPES[index]
 -    mPaddings[spacingType] =
@@ -358,7 +304,9 @@ index 939950a..0000000
 -              ViewProps.MARGIN_TOP,
 -              ViewProps.MARGIN_BOTTOM,
 -              ViewProps.MARGIN_LEFT,
--              ViewProps.MARGIN_RIGHT])
+-              ViewProps.MARGIN_RIGHT,
+-          ]
+-  )
 -  override fun setMargins(index: Int, margin: Dynamic) {
 -    val spacingType = ViewProps.PADDING_MARGIN_SPACING_TYPES[index]
 -    mMargins[spacingType] =
@@ -367,29 +315,3 @@ index 939950a..0000000
 -    mNeedsUpdate = true
 -  }
 -}
-diff --git a/node_modules/react-native-safe-area-context/common/cpp/react/renderer/components/safeareacontext/RNCSafeAreaViewState.cpp b/node_modules/react-native-safe-area-context/common/cpp/react/renderer/components/safeareacontext/RNCSafeAreaViewState.cpp
-index ea9327f..d3c8c3e 100644
---- a/node_modules/react-native-safe-area-context/common/cpp/react/renderer/components/safeareacontext/RNCSafeAreaViewState.cpp
-+++ b/node_modules/react-native-safe-area-context/common/cpp/react/renderer/components/safeareacontext/RNCSafeAreaViewState.cpp
-@@ -21,3 +21,5 @@ folly::dynamic RNCSafeAreaViewState::getDynamic() const {
-
- } // namespace react
- } // namespace facebook
-+
-+__attribute__((used, visibility("default"))) unsigned char nito_safe_area_state_anchor = 0;
-diff --git a/node_modules/react-native-safe-area-context/ios/Fabric/RNCSafeAreaProviderComponentView.mm b/node_modules/react-native-safe-area-context/ios/Fabric/RNCSafeAreaProviderComponentView.mm
-index f315ccd..95e911d 100644
---- a/node_modules/react-native-safe-area-context/ios/Fabric/RNCSafeAreaProviderComponentView.mm
-+++ b/node_modules/react-native-safe-area-context/ios/Fabric/RNCSafeAreaProviderComponentView.mm
-@@ -106,9 +106,9 @@ using namespace facebook::react;
-         .insets =
-             {
-                 .top = safeAreaInsets.top,
--                .left = safeAreaInsets.left,
--                .bottom = safeAreaInsets.bottom,
-                 .right = safeAreaInsets.right,
-+                .bottom = safeAreaInsets.bottom,
-+                .left = safeAreaInsets.left,
-             },
-         .frame =
-             {
