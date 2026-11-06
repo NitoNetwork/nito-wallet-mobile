@@ -1,4 +1,3 @@
-import { nitoWalletCrypto } from '../native/nitoWalletCrypto';
 import type {
   NitoWalletCryptoApi,
   TransparentScriptType,
@@ -67,7 +66,7 @@ export const deriveHdAddress = async (
   accountKey: HdAccountKey,
   branch: HdBranch,
   index: number,
-  crypto: NitoWalletCryptoApi = nitoWalletCrypto,
+  crypto: NitoWalletCryptoApi,
 ): Promise<IssuedHdAddress> => {
   const template = hdAccountTemplate(accountKey);
   const path = deriveHdPath(accountKey, branch, index);

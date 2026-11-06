@@ -10,6 +10,7 @@ const protectionFor = (
   walletTab: 'home',
   createdPhraseVisible: false,
   settingsPhraseVisible: false,
+  passphraseEntryVisible: false,
   ...overrides,
 });
 
@@ -23,6 +24,11 @@ describe('sensitive content screen protection scope', () => {
 
   it('covers physical dice entry because its results contribute to the seed', () => {
     expect(protectionFor('dice')).toBe(true);
+  });
+
+  it('covers optional BIP39 passphrase entry on creation and import', () => {
+    expect(protectionFor('landing', { passphraseEntryVisible: true })).toBe(true);
+    expect(protectionFor('import', { passphraseEntryVisible: true })).toBe(true);
   });
 
   it('covers only the creation step that actually displays the phrase', () => {

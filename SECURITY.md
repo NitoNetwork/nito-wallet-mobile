@@ -28,6 +28,17 @@ Nito Wallet is non-custodial. Losing the recovery phrase can permanently remove
 access to funds, and publishing it gives anyone control of the wallet. Network
 transactions cannot be reversed by the maintainers.
 
+## Optional BIP39 passphrase
+
+New and imported wallets may use an optional BIP39 passphrase. It is not an
+extra recovery word. A different passphrase opens a different valid wallet, so
+the application cannot detect a typo or recover a forgotten value.
+
+Creation requires the passphrase twice and asks the user to confirm a separate
+backup. The normalized passphrase is encrypted inside the local vault with the
+recovery phrase. It is never displayed again by the application. Existing
+vaults remain compatible and use the standard empty BIP39 passphrase.
+
 ## Dependency security
 
 The production dependency audit must report zero known vulnerabilities. Release

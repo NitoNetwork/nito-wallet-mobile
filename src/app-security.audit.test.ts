@@ -39,6 +39,8 @@ import iosWorkflowSource from '../.github/workflows/ios-device-app.yml?raw';
 import packageJsonSource from '../package.json?raw';
 import diceSource from './ui/dice.tsx?raw';
 import diceEntropySource from './ui/diceEntropy.ts?raw';
+import walletIdentitySource from './wallet/walletIdentity.ts?raw';
+import nativeCryptoContractSource from './native/nitoWalletCryptoContract.ts?raw';
 
 describe('mobile wallet UX and security invariants', () => {
   it('keeps password encryption when biometric quick unlock is enabled', () => {
@@ -117,6 +119,37 @@ describe('mobile wallet UX and security invariants', () => {
       screensSource.indexOf('export function WalletShell'),
     );
     expect(persistScreenSource).not.toContain('<TextInput');
+  });
+
+  it('keeps an optional BIP39 passphrase consistent across creation, storage and native use', () => {
+    expect(appSource).toContain("t('errors.passphraseMismatch')");
+    expect(appSource).toContain("t('passphrase.backupConfirm')");
+    expect(appSource).toContain('bip39Passphrase: walletToPersist.bip39Passphrase');
+    expect(appSource).toContain('if (secretGeneration !== transientSecretGenerationRef.current) return;');
+    expect(appSource.match(/if \(secretGeneration !== transientSecretGenerationRef\.current\) return;/g))
+      .toHaveLength(2);
+    expect(appSource).toMatch(/onImport=\{\(\) => \{[\s\S]*?clearCreationPassphrase\(\);[\s\S]*?setScreen\('import'\);/);
+    expect(appStateSecuritySource).toContain("|| screenRef.current === 'landing'");
+    const landingPassphraseSource = screensSource.slice(
+      screensSource.indexOf('export function LandingScreen'),
+      screensSource.indexOf('export function ImportScreen'),
+    );
+    const importPassphraseSource = screensSource.slice(
+      screensSource.indexOf('export function ImportScreen'),
+      screensSource.indexOf('export function UnlockScreen'),
+    );
+    expect(landingPassphraseSource.match(/<PasswordField/g)).toHaveLength(2);
+    expect(landingPassphraseSource.match(/disableAutofill/g)).toHaveLength(2);
+    expect(landingPassphraseSource).toContain("t('passphrase.warning')");
+    expect(landingPassphraseSource).toContain('error={passphraseError}');
+    expect(importPassphraseSource.match(/<PasswordField/g)).toHaveLength(1);
+    expect(importPassphraseSource.match(/disableAutofill/g)).toHaveLength(1);
+    expect(importPassphraseSource).toContain("t('passphrase.importWarning')");
+    expect(screensSource).toContain("t('persist.passphraseBackupReminder')");
+    expect(settingsSource).toContain("t('persist.passphraseBackupReminder')");
+    expect(walletIdentitySource).toContain('cryptoForWallet');
+    expect(nativeCryptoContractSource).toContain('bindBip39Passphrase');
+    expect(nativeCryptoSource).toContain('bip39_passphrase');
   });
 
   it('never re-prompts biometrics automatically once the user dismissed it', () => {
@@ -632,7 +665,7 @@ describe('password policy is declared once', () => {
       /if \(screenRef\.current === 'dice'\) \{[\s\S]*?diceEntropyResetRef\.current\(\);[\s\S]*?setScreen\('landing'\);[\s\S]*?\}/,
     );
     expect(appSource).toMatch(
-      /const secretGeneration = transientSecretGenerationRef\.current;[\s\S]*?additionalEntropyBase64 !== undefined[\s\S]*?secretGeneration !== transientSecretGenerationRef\.current[\s\S]*?return;/,
+      /const secretGeneration = transientSecretGenerationRef\.current;[\s\S]*?if \(secretGeneration !== transientSecretGenerationRef\.current\) return;/,
     );
     expect(diceEntropySource).toContain('this.results.fill(0)');
     expect(diceSource).toContain('session.clear()');

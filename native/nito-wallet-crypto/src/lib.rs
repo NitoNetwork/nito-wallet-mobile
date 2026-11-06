@@ -17,6 +17,7 @@ compile_error!(
 use std::{
     collections::HashMap,
     ffi::{CStr, CString, c_char},
+    ops::Deref,
     panic::{AssertUnwindSafe, catch_unwind},
     ptr,
     str::FromStr,
@@ -48,6 +49,24 @@ const MAX_PBKDF2_ROUNDS: u32 = 2_000_000;
 const MIN_RANDOM_BYTES: usize = 16;
 const MAX_RANDOM_BYTES: usize = 1024;
 const SEED_ENTROPY_BYTES: usize = 32;
+
+#[derive(Default, Deserialize)]
+#[serde(transparent)]
+struct SensitiveString(String);
+
+impl Deref for SensitiveString {
+    type Target = str;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl Drop for SensitiveString {
+    fn drop(&mut self) {
+        self.0.zeroize();
+    }
+}
 
 #[derive(Debug, Error)]
 enum CryptoError {
@@ -133,7 +152,9 @@ struct Pbkdf2Response {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct DeriveAddressesRequest {
-    mnemonic: String,
+    mnemonic: SensitiveString,
+    #[serde(default)]
+    bip39_passphrase: SensitiveString,
     requests: Vec<DeriveAddressRequest>,
 }
 
@@ -161,7 +182,9 @@ struct DerivedAddressResponse {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct SignPsbtRequest {
-    mnemonic: String,
+    mnemonic: SensitiveString,
+    #[serde(default)]
+    bip39_passphrase: SensitiveString,
     psbt_base64: String,
     signers: Vec<SignerRequest>,
 }
@@ -266,14 +289,22 @@ fn generate_mnemonic(request: &str) -> Result<Value, CryptoError> {
     .map_err(|error| CryptoError::Crypto(error.to_string()))
 }
 
-fn master_xpriv(mnemonic: &str) -> Result<Xpriv, CryptoError> {
+fn master_xpriv_with_passphrase(
+    mnemonic: &str,
+    bip39_passphrase: &str,
+) -> Result<Xpriv, CryptoError> {
     let parsed = Mnemonic::parse_in_normalized(Language::English, mnemonic)
         .map_err(|_| CryptoError::InvalidMnemonic)?;
-    let mut seed = parsed.to_seed_normalized("");
+    let mut seed = parsed.to_seed(bip39_passphrase);
     let root = Xpriv::new_master(bitcoin::NetworkKind::Main, &seed)
         .map_err(|error| CryptoError::Crypto(error.to_string()));
     seed.zeroize();
     root
+}
+
+#[cfg(test)]
+fn master_xpriv(mnemonic: &str) -> Result<Xpriv, CryptoError> {
+    master_xpriv_with_passphrase(mnemonic, "")
 }
 
 fn derive_secret(root: &Xpriv, path: &str) -> Result<SecretKey, CryptoError> {
@@ -396,14 +427,13 @@ fn pbkdf2(request: &str) -> Result<Value, CryptoError> {
 }
 
 fn derive_addresses(request: &str) -> Result<Value, CryptoError> {
-    let mut request: DeriveAddressesRequest = parse_json(request)?;
+    let request: DeriveAddressesRequest = parse_json(request)?;
     if request.requests.is_empty() || request.requests.len() > 256 {
         return Err(CryptoError::InvalidRequest(
             "Address batch size out of range".into(),
         ));
     }
-    let root = master_xpriv(&request.mnemonic)?;
-    request.mnemonic.zeroize();
+    let root = master_xpriv_with_passphrase(&request.mnemonic, &request.bip39_passphrase)?;
     let addresses = request
         .requests
         .into_iter()
@@ -564,14 +594,13 @@ enum PendingSignature {
 }
 
 fn sign_psbt(request: &str) -> Result<Value, CryptoError> {
-    let mut request: SignPsbtRequest = parse_json(request)?;
+    let request: SignPsbtRequest = parse_json(request)?;
     let raw_psbt = BASE64
         .decode(&request.psbt_base64)
         .map_err(|error| CryptoError::InvalidPsbt(error.to_string()))?;
     let mut psbt = Psbt::deserialize(&raw_psbt)
         .map_err(|error| CryptoError::InvalidPsbt(error.to_string()))?;
-    let root = master_xpriv(&request.mnemonic)?;
-    request.mnemonic.zeroize();
+    let root = master_xpriv_with_passphrase(&request.mnemonic, &request.bip39_passphrase)?;
     let signers: HashMap<(String, u32), SignerRequest> = request
         .signers
         .into_iter()
@@ -861,6 +890,30 @@ mod tests {
         }
     }
 
+    #[test]
+    fn native_derivation_normalizes_the_bip39_passphrase() {
+        let derive = |bip39_passphrase: &str| {
+            derive_addresses(
+                &json!({
+                    "mnemonic": MNEMONIC,
+                    "bip39Passphrase": bip39_passphrase,
+                    "requests": [{
+                        "path": "m/86'/0'/0'/0/0",
+                        "scriptType": "p2tr"
+                    }]
+                })
+                .to_string(),
+            )
+            .unwrap()[0]["address"]
+                .as_str()
+                .unwrap()
+                .to_owned()
+        };
+
+        assert_eq!(derive("é"), derive("e\u{301}"));
+        assert_ne!(derive("é"), derive(""));
+    }
+
     fn unsigned_spend(outpoint: OutPoint, script_pubkey: ScriptBuf) -> Transaction {
         Transaction {
             version: Version::TWO,
@@ -916,6 +969,18 @@ mod tests {
             hex::encode(BASE64.decode(key).unwrap()),
             "120fb6cffcf8b32c43e7225256c4f837a86548c92ccc35480805987cb70be17b"
         );
+    }
+
+    #[test]
+    fn bip39_passphrase_matches_the_official_seed_vector() {
+        let parsed = Mnemonic::parse_in_normalized(Language::English, MNEMONIC).unwrap();
+        let mut seed = parsed.to_seed_normalized("TREZOR");
+        assert_eq!(
+            hex::encode(seed),
+            "c55257c360c07c72029aebc1b53c05ed0362ada38ead3e3e9efa3708e5349553\
+             1f09a6987599d18264c1e1c92f2cf141630c7a3c4ab7c81b2f001698e7463b04"
+        );
+        seed.zeroize();
     }
 
     #[test]

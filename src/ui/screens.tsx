@@ -190,6 +190,17 @@ export function LandingScreen({
   onCreate,
   onUsePhysicalDice,
   onImport,
+  passphraseOpen,
+  passphrase,
+  confirmPassphrase,
+  passphraseError,
+  showPassphrase,
+  showConfirmPassphrase,
+  onTogglePassphraseOpen,
+  onChangePassphrase,
+  onChangeConfirmPassphrase,
+  onToggleShowPassphrase,
+  onToggleShowConfirmPassphrase,
 }: {
   t: Translator;
   pendingAction: PendingAction | null;
@@ -197,6 +208,17 @@ export function LandingScreen({
   onCreate: () => void;
   onUsePhysicalDice: () => void;
   onImport: () => void;
+  passphraseOpen: boolean;
+  passphrase: string;
+  confirmPassphrase: string;
+  passphraseError: string;
+  showPassphrase: boolean;
+  showConfirmPassphrase: boolean;
+  onTogglePassphraseOpen: () => void;
+  onChangePassphrase: (value: string) => void;
+  onChangeConfirmPassphrase: (value: string) => void;
+  onToggleShowPassphrase: () => void;
+  onToggleShowConfirmPassphrase: () => void;
 }) {
   const styles = useStyles();
   const themeColor = useThemeColor();
@@ -205,6 +227,65 @@ export function LandingScreen({
     <View style={styles.card}>
       <Text style={styles.sectionTitle}>{t('start.title')}</Text>
       <Text style={styles.body}>{t('start.body')}</Text>
+      <TouchableOpacity
+        accessibilityRole="button"
+        accessibilityState={{ expanded: passphraseOpen, disabled: actionLocked }}
+        disabled={actionLocked}
+        onPress={onTogglePassphraseOpen}
+        style={[
+          LANDING_STYLES.diceOptionButton,
+          {
+            backgroundColor: themeColor('#071326'),
+            borderColor: themeColor('rgba(75, 157, 255, 0.32)'),
+          },
+        ]}
+      >
+        <View style={LANDING_STYLES.diceOptionText}>
+          <Text style={[LANDING_STYLES.diceOptionTitle, { color: themeColor('#dbeaff') }]}>
+            {t('passphrase.optionTitle')}
+          </Text>
+          <Text style={[LANDING_STYLES.diceOptionSummary, { color: themeColor('#9fb4d3') }]}>
+            {t('passphrase.optionSummary')}
+          </Text>
+        </View>
+        <Text
+          accessible={false}
+          style={[LANDING_STYLES.diceOptionChevron, { color: themeColor('#8cc6ff') }]}
+        >
+          {passphraseOpen ? '⌃' : '⌄'}
+        </Text>
+      </TouchableOpacity>
+      {passphraseOpen ? (
+        <View style={[
+          LANDING_STYLES.diceOptionPanel,
+          { backgroundColor: themeColor('rgba(2, 6, 17, 0.62)') },
+        ]}>
+          <Text style={[LANDING_STYLES.diceOptionBody, { color: themeColor('#bdc9df') }]}>
+            {t('passphrase.warning')}
+          </Text>
+          <PasswordField
+            value={passphrase}
+            onChangeText={onChangePassphrase}
+            placeholder={t('passphrase.placeholder')}
+            visible={showPassphrase}
+            onToggleVisible={onToggleShowPassphrase}
+            showLabel={t('actions.show')}
+            hideLabel={t('actions.hide')}
+            disableAutofill
+          />
+          <PasswordField
+            value={confirmPassphrase}
+            onChangeText={onChangeConfirmPassphrase}
+            placeholder={t('passphrase.confirmPlaceholder')}
+            visible={showConfirmPassphrase}
+            onToggleVisible={onToggleShowConfirmPassphrase}
+            showLabel={t('actions.show')}
+            hideLabel={t('actions.hide')}
+            error={passphraseError}
+            disableAutofill
+          />
+        </View>
+      ) : null}
       <ActionButton label={t('actions.createWallet')} loading={pendingAction === 'create'} disabled={actionLocked} onPress={onCreate} />
       <TouchableOpacity
         accessibilityRole="button"
@@ -287,6 +368,12 @@ export function ImportScreen({
   mnemonicValid,
   onSubmit,
   onBack,
+  passphraseOpen,
+  passphrase,
+  showPassphrase,
+  onTogglePassphraseOpen,
+  onChangePassphrase,
+  onToggleShowPassphrase,
 }: {
   t: Translator;
   pendingAction: PendingAction | null;
@@ -301,6 +388,12 @@ export function ImportScreen({
   mnemonicValid: boolean;
   onSubmit: () => void;
   onBack: () => void;
+  passphraseOpen: boolean;
+  passphrase: string;
+  showPassphrase: boolean;
+  onTogglePassphraseOpen: () => void;
+  onChangePassphrase: (value: string) => void;
+  onToggleShowPassphrase: () => void;
 }) {
   const styles = useStyles();
   const themeColor = useThemeColor();
@@ -350,6 +443,54 @@ export function ImportScreen({
         </View>
       ) : null}
       {mnemonicStatus ? <Text style={styles.helper}>{mnemonicStatus}</Text> : null}
+      <TouchableOpacity
+        accessibilityRole="button"
+        accessibilityState={{ expanded: passphraseOpen, disabled: actionLocked }}
+        disabled={actionLocked}
+        onPress={onTogglePassphraseOpen}
+        style={[
+          LANDING_STYLES.diceOptionButton,
+          {
+            backgroundColor: themeColor('#071326'),
+            borderColor: themeColor('rgba(75, 157, 255, 0.32)'),
+          },
+        ]}
+      >
+        <View style={LANDING_STYLES.diceOptionText}>
+          <Text style={[LANDING_STYLES.diceOptionTitle, { color: themeColor('#dbeaff') }]}>
+            {t('passphrase.optionTitle')}
+          </Text>
+          <Text style={[LANDING_STYLES.diceOptionSummary, { color: themeColor('#9fb4d3') }]}>
+            {t('passphrase.importSummary')}
+          </Text>
+        </View>
+        <Text
+          accessible={false}
+          style={[LANDING_STYLES.diceOptionChevron, { color: themeColor('#8cc6ff') }]}
+        >
+          {passphraseOpen ? '⌃' : '⌄'}
+        </Text>
+      </TouchableOpacity>
+      {passphraseOpen ? (
+        <View style={[
+          LANDING_STYLES.diceOptionPanel,
+          { backgroundColor: themeColor('rgba(2, 6, 17, 0.62)') },
+        ]}>
+          <Text style={[LANDING_STYLES.diceOptionBody, { color: themeColor('#bdc9df') }]}>
+            {t('passphrase.importWarning')}
+          </Text>
+          <PasswordField
+            value={passphrase}
+            onChangeText={onChangePassphrase}
+            placeholder={t('passphrase.placeholder')}
+            visible={showPassphrase}
+            onToggleVisible={onToggleShowPassphrase}
+            showLabel={t('actions.show')}
+            hideLabel={t('actions.hide')}
+            disableAutofill
+          />
+        </View>
+      ) : null}
       <ActionButton label={t('actions.continue')} loading={pendingAction === 'import'} disabled={actionLocked || !mnemonicValid} onPress={onSubmit} />
       <ActionButton label={t('actions.back')} variant="ghost" disabled={actionLocked} onPress={onBack} />
     </View>
@@ -489,6 +630,9 @@ export function PersistScreen({
           <Text style={styles.helper}>{t('persist.seedBackupInstruction')}</Text>
           <MnemonicGrid mnemonic={pendingWallet.mnemonic} />
           <RecoveryPhraseCopy mnemonic={pendingWallet.mnemonic} t={t} disabled={actionLocked} />
+          {pendingWallet.bip39Passphrase ? (
+            <Text style={styles.helper}>{t('persist.passphraseBackupReminder')}</Text>
+          ) : null}
           {seedBackupConfirmationError ? (
             <Text accessibilityLiveRegion="polite" style={styles.fieldError}>
               {seedBackupConfirmationError}

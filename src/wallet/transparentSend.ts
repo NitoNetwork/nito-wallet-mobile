@@ -7,7 +7,6 @@ import {
   MAX_MONEY_SATS,
   MAX_NITO_AMOUNT_INPUT_LENGTH,
 } from '../constants/nito';
-import { nitoWalletCrypto } from '../native/nitoWalletCrypto';
 import type {
   NativeDerivedAddress,
   NativePsbtSigner,
@@ -385,7 +384,7 @@ type CalculateMaxTransparentSendAmountArgs = {
   snapshot: TransparentWalletSnapshot;
   feePerVbyte?: bigint;
   changeAddress?: string;
-  crypto?: NitoWalletCryptoApi;
+  crypto: NitoWalletCryptoApi;
 } & (
   {
     toAddress: string;
@@ -433,7 +432,7 @@ export const calculateMaxTransparentSendAmount = (
     snapshot,
     feePerVbyte = DEFAULT_FEE_PER_VBYTE,
     changeAddress,
-    crypto = nitoWalletCrypto,
+    crypto,
   } = args;
   const { spendable, totalSats } = await prepareSpendableInputs(mnemonic, snapshot, crypto);
   const resolvedChangeAddress = resolveChangeAddress(snapshot, changeAddress);
@@ -500,14 +499,14 @@ export const estimateTransparentMultiSend = async ({
   outputs,
   feePerVbyte = DEFAULT_FEE_PER_VBYTE,
   changeAddress,
-  crypto = nitoWalletCrypto,
+  crypto,
 }: {
   mnemonic: string;
   snapshot: TransparentWalletSnapshot;
   outputs: TransparentSendOutput[];
   feePerVbyte?: bigint;
   changeAddress?: string;
-  crypto?: NitoWalletCryptoApi;
+  crypto: NitoWalletCryptoApi;
 }): Promise<TransparentSendEstimate> => {
   const normalizedOutputs = normalizeSendOutputs(outputs);
   const { spendable } = await prepareSpendableInputs(mnemonic, snapshot, crypto);
@@ -628,13 +627,13 @@ export const prepareUnsignedTransparentConsolidation = async ({
   snapshot,
   toAddresses,
   feePerVbyte = DEFAULT_FEE_PER_VBYTE,
-  crypto = nitoWalletCrypto,
+  crypto,
 }: {
   mnemonic: string;
   snapshot: TransparentWalletSnapshot;
   toAddresses: readonly string[];
   feePerVbyte?: bigint;
-  crypto?: NitoWalletCryptoApi;
+  crypto: NitoWalletCryptoApi;
 }): Promise<UnsignedTransparentConsolidation> => {
   if (toAddresses.length === 0 || toAddresses.some((address) => address.trim() === '')) {
     throw new TransparentSendError('change-address-unavailable');
@@ -735,7 +734,7 @@ const prepareUnsignedTransparentTx = ({
   feePerVbyte = DEFAULT_FEE_PER_VBYTE,
   changeAddress,
   ownedOutputAddresses = [],
-  crypto = nitoWalletCrypto,
+  crypto,
 }: {
   mnemonic: string;
   snapshot: TransparentWalletSnapshot;
@@ -743,7 +742,7 @@ const prepareUnsignedTransparentTx = ({
   feePerVbyte?: bigint;
   changeAddress?: string;
   ownedOutputAddresses?: readonly string[];
-  crypto?: NitoWalletCryptoApi;
+  crypto: NitoWalletCryptoApi;
 }): Promise<UnsignedTransparentTx> => {
   return (async () => {
   const { spendable } = await prepareSpendableInputs(mnemonic, snapshot, crypto);
@@ -844,11 +843,11 @@ const inputTxidCandidates = (txid: string | Uint8Array | undefined): string[] =>
 export const signUnsignedTransparentTx = async ({
   mnemonic,
   transaction,
-  crypto = nitoWalletCrypto,
+  crypto,
 }: {
   mnemonic: string;
   transaction: UnsignedTransparentTx;
-  crypto?: NitoWalletCryptoApi;
+  crypto: NitoWalletCryptoApi;
 }): Promise<PreparedTransparentTx> => {
   const signed = await crypto.signPsbt({
     mnemonic,
@@ -991,14 +990,14 @@ export const prepareUnsignedTransparentMultiSend = async ({
   outputs,
   feePerVbyte = DEFAULT_FEE_PER_VBYTE,
   changeAddress,
-  crypto = nitoWalletCrypto,
+  crypto,
 }: {
   mnemonic: string;
   snapshot: TransparentWalletSnapshot;
   outputs: TransparentSendOutput[];
   feePerVbyte?: bigint;
   changeAddress?: string;
-  crypto?: NitoWalletCryptoApi;
+  crypto: NitoWalletCryptoApi;
 }): Promise<UnsignedTransparentSend> => {
   const recipients = normalizeSendOutputs(outputs);
   const transaction = await prepareUnsignedTransparentTx({
@@ -1022,14 +1021,14 @@ export const buildTransparentMultiSend = async ({
   outputs,
   feePerVbyte = DEFAULT_FEE_PER_VBYTE,
   changeAddress,
-  crypto = nitoWalletCrypto,
+  crypto,
 }: {
   mnemonic: string;
   snapshot: TransparentWalletSnapshot;
   outputs: TransparentSendOutput[];
   feePerVbyte?: bigint;
   changeAddress?: string;
-  crypto?: NitoWalletCryptoApi;
+  crypto: NitoWalletCryptoApi;
 }): Promise<PreparedTransparentSend> => {
   const unsigned = await prepareUnsignedTransparentMultiSend({
     mnemonic,
@@ -1048,13 +1047,13 @@ export const buildTransparentConsolidation = async ({
   snapshot,
   toAddress,
   feePerVbyte = DEFAULT_FEE_PER_VBYTE,
-  crypto = nitoWalletCrypto,
+  crypto,
 }: {
   mnemonic: string;
   snapshot: TransparentWalletSnapshot;
   toAddress: string;
   feePerVbyte?: bigint;
-  crypto?: NitoWalletCryptoApi;
+  crypto: NitoWalletCryptoApi;
 }): Promise<PreparedTransparentConsolidation> => {
   const unsigned = await prepareUnsignedTransparentConsolidation({
     mnemonic,
@@ -1082,7 +1081,7 @@ export const buildTransparentSend = ({
   amountSats,
   feePerVbyte = DEFAULT_FEE_PER_VBYTE,
   changeAddress,
-  crypto = nitoWalletCrypto,
+  crypto,
 }: {
   mnemonic: string;
   snapshot: TransparentWalletSnapshot;
@@ -1090,7 +1089,7 @@ export const buildTransparentSend = ({
   amountSats: bigint;
   feePerVbyte?: bigint;
   changeAddress?: string;
-  crypto?: NitoWalletCryptoApi;
+  crypto: NitoWalletCryptoApi;
 }): Promise<PreparedTransparentSend> =>
   buildTransparentMultiSend({
     mnemonic,

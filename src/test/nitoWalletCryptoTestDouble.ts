@@ -23,8 +23,14 @@ const bytesToHex = (value: Uint8Array) => Array.from(value, (byte) => byte.toStr
 const bytesToBase64 = (value: Uint8Array) => btoa(String.fromCharCode(...value));
 const base64ToBytes = (value: string) => Uint8Array.from(atob(value), (character) => character.charCodeAt(0));
 
-const derive = (mnemonic: string, request: NativeAddressRequest): NativeDerivedAddress => {
-  const child = HDKey.fromMasterSeed(mnemonicToSeedSync(mnemonic)).derive(request.path);
+const derive = (
+  mnemonic: string,
+  request: NativeAddressRequest,
+  bip39Passphrase = '',
+): NativeDerivedAddress => {
+  const child = HDKey.fromMasterSeed(
+    mnemonicToSeedSync(mnemonic, bip39Passphrase.normalize('NFKD')),
+  ).derive(request.path);
   if (!child.publicKey || !child.privateKey) throw new Error('Test HD derivation failed.');
   let payment;
   let redeemScriptHex: string | undefined;
@@ -80,12 +86,14 @@ export const createNitoWalletCryptoTestDouble = (): NitoWalletCryptoApi => ({
     });
     return { keyBase64: bytesToBase64(key) };
   },
-  async deriveAddresses(mnemonic, requests) {
-    return requests.map((request) => derive(mnemonic, request));
+  async deriveAddresses(mnemonic, requests, bip39Passphrase = '') {
+    return requests.map((request) => derive(mnemonic, request, bip39Passphrase));
   },
-  async signPsbt({ mnemonic, psbtBase64, signers }) {
+  async signPsbt({ mnemonic, bip39Passphrase = '', psbtBase64, signers }) {
     const transaction = btc.Transaction.fromPSBT(base64ToBytes(psbtBase64));
-    const root = HDKey.fromMasterSeed(mnemonicToSeedSync(mnemonic));
+    const root = HDKey.fromMasterSeed(
+      mnemonicToSeedSync(mnemonic, bip39Passphrase.normalize('NFKD')),
+    );
     for (const path of new Set(signers.map((signer) => signer.path))) {
       const privateKey = root.derive(path).privateKey;
       if (!privateKey) throw new Error(`Test signing key unavailable for ${path}.`);

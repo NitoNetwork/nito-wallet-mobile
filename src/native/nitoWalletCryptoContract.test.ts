@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  bindBip39Passphrase,
   createNitoWalletCryptoBridge,
   NitoWalletCryptoUnavailableError,
 } from './nitoWalletCryptoContract';
@@ -11,6 +12,41 @@ describe('Nito Wallet Rust bridge contract', () => {
     await expect(
       bridge.deriveAddresses('abandon '.repeat(12).trim(), [{ path: "m/84'/0'/0'/0/0", scriptType: 'p2wpkh' }]),
     ).rejects.toBeInstanceOf(NitoWalletCryptoUnavailableError);
+  });
+
+  it('normalizes and forwards the optional BIP39 passphrase for derivation and signing', async () => {
+    const requests: { operation: string; request: unknown }[] = [];
+    const bridge = createNitoWalletCryptoBridge({
+      async invoke(operation, requestJson) {
+        requests.push({ operation, request: JSON.parse(requestJson) });
+        const result = operation === 'deriveAddresses' ? [] : { psbtBase64: 'AA==' };
+        return JSON.stringify({ ok: true, result });
+      },
+    });
+    const protectedBridge = bindBip39Passphrase(bridge, 'é');
+
+    await protectedBridge.deriveAddresses('test mnemonic', []);
+    await protectedBridge.signPsbt({
+      mnemonic: 'test mnemonic',
+      psbtBase64: 'AA==',
+      signers: [],
+    });
+
+    expect(requests).toEqual([
+      {
+        operation: 'deriveAddresses',
+        request: { mnemonic: 'test mnemonic', bip39Passphrase: 'e\u0301', requests: [] },
+      },
+      {
+        operation: 'signPsbt',
+        request: {
+          mnemonic: 'test mnemonic',
+          psbtBase64: 'AA==',
+          signers: [],
+          bip39Passphrase: 'e\u0301',
+        },
+      },
+    ]);
   });
 
   it('delegates operations through the single native ABI', async () => {

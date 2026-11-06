@@ -290,6 +290,9 @@ function SecuritySettingsSection({
         <>
           <MnemonicGrid mnemonic={settings.wallet.mnemonic} />
           <RecoveryPhraseCopy mnemonic={settings.wallet.mnemonic} t={t} disabled={actionLocked} />
+          {settings.wallet.bip39Passphrase ? (
+            <Text style={styles.helper}>{t('persist.passphraseBackupReminder')}</Text>
+          ) : null}
         </>
       ) : null}
       <SensitiveConfirmation

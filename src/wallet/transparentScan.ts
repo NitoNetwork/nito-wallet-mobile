@@ -1,6 +1,5 @@
 import type { ElectrumBalance, ElectrumHistoryEntry, ElectrumUtxo } from '../network/electrum';
 import { ElectrumSessionUnhealthyError } from '../network/electrum';
-import { nitoWalletCrypto } from '../native/nitoWalletCrypto';
 import { createConcurrencyLimiter, mapWithConcurrency } from '../services/concurrency';
 import type {
   NitoWalletCryptoApi,
@@ -292,7 +291,7 @@ export const deriveP2wpkhAddress = async (
   mnemonic: string,
   branch: HdBranch,
   index: number,
-  crypto: NitoWalletCryptoApi = nitoWalletCrypto,
+  crypto: NitoWalletCryptoApi,
 ): Promise<DerivedAddress> => {
   const bech32Template = ACCOUNT_TEMPLATES.find((template) => template.scriptType === 'p2wpkh');
 
@@ -547,7 +546,7 @@ export const scanTransparentWallet = async ({
   gapLimit = DEFAULT_GAP_LIMIT,
   includeHistory = false,
   previousSnapshot,
-  crypto = nitoWalletCrypto,
+  crypto,
   onProgress,
   maxConcurrentNetworkRequests = SCAN_NETWORK_CONCURRENCY,
   issuedAddresses = [],
@@ -557,7 +556,7 @@ export const scanTransparentWallet = async ({
   gapLimit?: number;
   includeHistory?: boolean;
   previousSnapshot?: TransparentWalletSnapshot | null;
-  crypto?: NitoWalletCryptoApi;
+  crypto: NitoWalletCryptoApi;
   onProgress?: TransparentScanProgress;
   maxConcurrentNetworkRequests?: number;
   issuedAddresses?: readonly HdScanRequirement[];

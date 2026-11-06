@@ -36,9 +36,25 @@ describe('vault encryption', () => {
     const vault = await encryptVault(payload, 'correct horse battery', false, 'password', crypto);
     const opened = await decryptVault(vault, 'correct horse battery', 'invalid', crypto);
 
-    expect(opened).toEqual(payload);
+    expect(opened).toEqual({ ...payload, bip39Passphrase: '' });
     expect(vault.rounds).toBe(PBKDF2_ROUNDS);
     expect(requestedPbkdf2Rounds).toEqual([PBKDF2_ROUNDS, PBKDF2_ROUNDS]);
+  });
+
+  it('keeps an optional BIP39 passphrase inside the encrypted payload', async () => {
+    const protectedPayload = { ...payload, bip39Passphrase: 'exact recovery secret' };
+    const vault = await encryptVault(
+      protectedPayload,
+      'correct horse battery',
+      false,
+      'password',
+      crypto,
+    );
+    const serialized = JSON.stringify(vault);
+    const opened = await decryptVault(vault, 'correct horse battery', 'invalid', crypto);
+
+    expect(serialized).not.toContain(protectedPayload.bip39Passphrase);
+    expect(opened).toEqual(protectedPayload);
   });
 
   it('never stores the mnemonic in clear text', async () => {

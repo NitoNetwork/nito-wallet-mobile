@@ -38,6 +38,9 @@ export class NitoWalletCryptoUnavailableError extends Error {
 
 export type NitoWalletCryptoApi = ReturnType<typeof createNitoWalletCryptoBridge>;
 
+export const normalizeBip39Passphrase = (passphrase: string): string =>
+  passphrase.normalize('NFKD');
+
 export const createNitoWalletCryptoBridge = (nativeModule?: NitoWalletCryptoNativeModule | null) => {
   const invoke = async <T>(operation: string, request: unknown): Promise<T> => {
     if (!nativeModule) {
@@ -71,12 +74,45 @@ export const createNitoWalletCryptoBridge = (nativeModule?: NitoWalletCryptoNati
       return invoke<{ keyBase64: string }>('pbkdf2', request);
     },
 
-    deriveAddresses(mnemonic: string, requests: NativeAddressRequest[]) {
-      return invoke<NativeDerivedAddress[]>('deriveAddresses', { mnemonic, requests });
+    deriveAddresses(
+      mnemonic: string,
+      requests: NativeAddressRequest[],
+      bip39Passphrase = '',
+    ) {
+      return invoke<NativeDerivedAddress[]>('deriveAddresses', {
+        mnemonic,
+        bip39Passphrase: normalizeBip39Passphrase(bip39Passphrase),
+        requests,
+      });
     },
 
-    signPsbt(request: { mnemonic: string; psbtBase64: string; signers: NativePsbtSigner[] }) {
-      return invoke<{ psbtBase64: string }>('signPsbt', request);
+    signPsbt(request: {
+      mnemonic: string;
+      bip39Passphrase?: string;
+      psbtBase64: string;
+      signers: NativePsbtSigner[];
+    }) {
+      return invoke<{ psbtBase64: string }>('signPsbt', {
+        ...request,
+        bip39Passphrase: normalizeBip39Passphrase(request.bip39Passphrase ?? ''),
+      });
     },
+  };
+};
+
+export const bindBip39Passphrase = (
+  crypto: NitoWalletCryptoApi,
+  passphrase: string,
+): NitoWalletCryptoApi => {
+  const normalized = normalizeBip39Passphrase(passphrase);
+  return {
+    ...crypto,
+    deriveAddresses: (mnemonic, requests) => (
+      crypto.deriveAddresses(mnemonic, requests, normalized)
+    ),
+    signPsbt: (request) => crypto.signPsbt({
+      ...request,
+      bip39Passphrase: normalized,
+    }),
   };
 };
