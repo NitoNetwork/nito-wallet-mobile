@@ -1,8 +1,8 @@
 # Privacy
 
 Nito Wallet does not require an account, email address or custodial service.
-The recovery phrase and private keys are encrypted and stored on the device.
-They are not sent to Nito network services.
+The recovery phrase, optional BIP39 passphrase and private keys are encrypted
+and stored on the device. They are not sent to Nito network services.
 
 ## Network data
 
@@ -33,6 +33,10 @@ and connect to their own trusted node.
 Wallet metadata, synchronization checkpoints and optional reconstructed history
 are stored locally. Removing the wallet from the application deletes its local
 vault and cached metadata but does not erase the public blockchain.
+
+An optional BIP39 passphrase creates a different wallet from the same recovery
+phrase. It is not an extra recovery word and cannot be recovered if forgotten.
+Back it up exactly and separately from the recovery phrase.
 
 Issued HD address indices, signed transactions awaiting broadcast and their
 tracking status are also stored locally so interrupted sends can resume. This

@@ -31,7 +31,11 @@ import observationSource from './services/transactionObservation.ts?raw';
 import exclusiveActionGateSource from './services/exclusiveActionGate.ts?raw';
 import vaultSessionMachineSource from './services/vaultSessionMachine.ts?raw';
 import expoConfig from '../app.config.js?raw';
+import androidBuildPolicySource from '../plugins/withNitoAndroidBuildPolicy.cjs?raw';
 import androidLintFixesSource from '../plugins/withNitoAndroidLintFixes.cjs?raw';
+import androidPermissionAuditSource from '../scripts/assert-android-permissions.mjs?raw';
+import expoFileSystemPatchSource from '../patches/expo-file-system+58.0.13.patch?raw';
+import expoScreenCapturePatchSource from '../patches/expo-screen-capture+58.0.6.patch?raw';
 import nativeCryptoSource from '../native/nito-wallet-crypto/src/lib.rs?raw';
 import cargoConfigSource from '../.cargo/config.toml?raw';
 import androidWorkflowSource from '../.github/workflows/android-apk.yml?raw';
@@ -204,19 +208,60 @@ describe('mobile wallet UX and security invariants', () => {
   });
 
   it('removes unused photo-library permissions without disabling screen protection', () => {
-    const blockedPermissions = expoConfig.match(
-      /blockedPermissions:\s*\[([\s\S]*?)\]/,
-    )?.[1];
-    expect(blockedPermissions).toContain('"android.permission.READ_MEDIA_IMAGES"');
+    expect(androidBuildPolicySource).toContain("const GRADLE_VERSION = '9.6.1';");
+    expect(androidBuildPolicySource).toContain(
+      'disable += ["AndroidGradlePluginVersion"]',
+    );
+    expect(androidLintFixesSource).not.toContain('GRADLE_VERSION');
+    expect(packageJsonSource).toMatch(
+      /"android":\s*\{\s*"buildFromSource":\s*\[[\s\S]*?"expo-screen-capture"/,
+    );
+    expect(expoConfig).not.toContain('blockedPermissions');
     expect(androidLintFixesSource).toContain("'android.permission.READ_MEDIA_IMAGES'");
     expect(androidLintFixesSource).toContain(
-      "const isRemovalMarker = permission.$?.['tools:node'] === 'remove';",
+      'return !blockedPermissions.has(permissionName);',
     );
     expect(androidLintFixesSource).toContain(
-      "permission.$['android:maxSdkVersion'] = '32';",
+      'removeGeneratedManifestPermissions(androidRoot);',
     );
+    expect(androidLintFixesSource).toContain('modernizeGeneratedDebugManifest(androidRoot);');
     expect(androidLintFixesSource).toContain(
-      'return isRemovalMarker || !blockedPermissions.has(permissionName);',
+      'contents.replace(\' tools:replace="android:usesCleartextTraffic"\', \'\')',
+    );
+    expect(expoFileSystemPatchSource).toContain(
+      '-    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE"',
+    );
+    expect(expoFileSystemPatchSource).toContain(
+      '-    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"',
+    );
+    expect(expoFileSystemPatchSource).toContain(
+      "-        'android.permission.WRITE_EXTERNAL_STORAGE',",
+    );
+    expect(expoFileSystemPatchSource).toContain(
+      "-        'android.permission.READ_EXTERNAL_STORAGE',",
+    );
+    expect(expoScreenCapturePatchSource).toContain(
+      '-  <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"',
+    );
+    expect(expoScreenCapturePatchSource).toContain(
+      '-  <uses-permission android:name="android.permission.READ_MEDIA_IMAGES"',
+    );
+    expect(expoScreenCapturePatchSource).not.toContain(
+      '-  <uses-permission android:name="android.permission.DETECT_SCREEN_CAPTURE"',
+    );
+    expect(expoScreenCapturePatchSource).toContain('+  namespace = "expo.modules.screencapture"');
+    expect(androidPermissionAuditSource).toContain(
+      "'android.permission.MANAGE_EXTERNAL_STORAGE'",
+    );
+    expect(androidPermissionAuditSource).toContain(
+      "'android.permission.READ_MEDIA_IMAGES'",
+    );
+    expect(androidWorkflowSource).toContain(
+      'node scripts/assert-android-permissions.mjs android/app/build/intermediates/merged_manifest/release/processReleaseMainManifest/AndroidManifest.xml',
+    );
+    expect(androidLintFixesSource).toContain('modernizeGeneratedMainActivity(androidRoot);');
+    expect(androidLintFixesSource).toContain(
+      'DefaultReactActivityDelegate(\n              this,\n              mainComponentName\n          )',
     );
     expect(screenProtectionSource).not.toContain('addScreenshotListener');
     expect(screenProtectionSource).not.toContain('useScreenshotListener');
@@ -534,7 +579,7 @@ describe('mobile wallet UX and security invariants', () => {
   });
 
   it('scrolls both prepared transaction reviews into view after layout', () => {
-    expect(appSource).toContain('const walletScrollRef = useRef<ScrollView | null>(null);');
+    expect(appSource).toContain('const walletScrollRef = useRef<ScrollViewInstance | null>(null);');
     expect(appSource).toContain('walletScrollRef.current?.scrollToEnd({ animated: true });');
     expect(appSource).toContain('onPreparedReviewLayout={scrollToPreparedReview}');
     expect(tabsSource.match(/onLayout=\{onPreparedReviewLayout\}/g)).toHaveLength(2);
@@ -624,7 +669,10 @@ describe('password policy is declared once', () => {
 
   it('runs the current zero-vulnerability audit in every device workflow', () => {
     for (const workflowSource of [androidWorkflowSource, iosWorkflowSource]) {
-      expect(workflowSource).toContain('npm run audit:production 2>&1 | tee npm-audit.log');
+      expect(workflowSource).toContain('npm audit 2>&1 | tee npm-audit-full.log');
+      expect(workflowSource).toContain(
+        'npm run audit:production 2>&1 | tee npm-audit-production.log',
+      );
       expect(workflowSource).not.toContain('audit:production:self-test');
       expect(workflowSource).not.toContain('npm-audit-self-test.log');
     }

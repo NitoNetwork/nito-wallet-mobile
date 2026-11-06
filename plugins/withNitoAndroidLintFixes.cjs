@@ -5,35 +5,26 @@ const {
   withDangerousMod,
 } = require('@expo/config-plugins');
 
-const GRADLE_VERSION = '8.14.5';
 const FRESCO_VERSION = '3.7.0';
+const BLOCKED_ANDROID_PERMISSIONS = [
+  'android.permission.MANAGE_EXTERNAL_STORAGE',
+  'android.permission.READ_EXTERNAL_STORAGE',
+  'android.permission.READ_MEDIA_AUDIO',
+  'android.permission.READ_MEDIA_IMAGES',
+  'android.permission.READ_MEDIA_VIDEO',
+  'android.permission.REQUEST_INSTALL_PACKAGES',
+  'android.permission.SYSTEM_ALERT_WINDOW',
+  'android.permission.WRITE_EXTERNAL_STORAGE',
+];
 
 function withCleanManifest(config) {
   return withAndroidManifest(config, (modConfig) => {
     const manifest = modConfig.modResults.manifest;
     const permissions = manifest['uses-permission'] || [];
-    const blockedPermissions = new Set([
-      'android.permission.READ_EXTERNAL_STORAGE',
-      'android.permission.READ_MEDIA_IMAGES',
-      'android.permission.SYSTEM_ALERT_WINDOW',
-      'android.permission.WRITE_EXTERNAL_STORAGE',
-    ]);
+    const blockedPermissions = new Set(BLOCKED_ANDROID_PERMISSIONS);
     manifest['uses-permission'] = permissions.filter((permission) => {
       const permissionName = permission.$?.['android:name'];
-      const isRemovalMarker = permission.$?.['tools:node'] === 'remove';
-      if (
-        isRemovalMarker &&
-        permissionName === 'android.permission.WRITE_EXTERNAL_STORAGE'
-      ) {
-        return false;
-      }
-      if (
-        isRemovalMarker &&
-        permissionName === 'android.permission.READ_EXTERNAL_STORAGE'
-      ) {
-        permission.$['android:maxSdkVersion'] = '32';
-      }
-      return isRemovalMarker || !blockedPermissions.has(permissionName);
+      return !blockedPermissions.has(permissionName);
     });
 
     const features = manifest['uses-feature'] || [];
@@ -93,6 +84,28 @@ function replaceText(filePath, transform) {
     throw new Error(`Expected native build update was not applied: ${filePath}`);
   }
   fs.writeFileSync(filePath, next, 'utf8');
+}
+
+function removeGeneratedManifestPermissions(androidRoot) {
+  const manifestPath = path.join(androidRoot, 'app', 'src', 'main', 'AndroidManifest.xml');
+  let contents = fs.readFileSync(manifestPath, 'utf8');
+  for (const permissionName of BLOCKED_ANDROID_PERMISSIONS) {
+    contents = contents.replace(
+      new RegExp(
+        `^\\s*<uses-permission android:name="${permissionName}"[^>]*/>\\r?\\n`,
+        'gm'
+      ),
+      ''
+    );
+  }
+  fs.writeFileSync(manifestPath, contents, 'utf8');
+}
+
+function modernizeGeneratedDebugManifest(androidRoot) {
+  const debugManifest = path.join(androidRoot, 'app', 'src', 'debug', 'AndroidManifest.xml');
+  replaceText(debugManifest, (contents) =>
+    contents.replace(' tools:replace="android:usesCleartextTraffic"', '')
+  );
 }
 
 function modernizeGeneratedResources(androidRoot) {
@@ -174,16 +187,43 @@ function modernizeGeneratedResources(androidRoot) {
   );
 }
 
+function modernizeGeneratedMainActivity(androidRoot) {
+  const mainActivity = path.join(
+    androidRoot,
+    'app',
+    'src',
+    'main',
+    'java',
+    'network',
+    'nito',
+    'wallet',
+    'MainActivity.kt'
+  );
+  replaceText(mainActivity, (contents) =>
+    contents
+      .replace(
+        /^import com\.facebook\.react\.defaults\.DefaultNewArchitectureEntryPoint\.fabricEnabled\r?\n/m,
+        ''
+      )
+      .replace(
+        '   * which allows you to enable New Architecture with a single boolean flags [fabricEnabled]',
+        '   * while the Expo wrapper supplies the New Architecture setting.'
+      )
+      .replace(
+        /DefaultReactActivityDelegate\(\s*this,\s*mainComponentName,\s*fabricEnabled\s*\)/,
+        `DefaultReactActivityDelegate(
+              this,
+              mainComponentName
+          )`
+      )
+  );
+}
+
 function withGeneratedAndroidFixes(config) {
   return withDangerousMod(config, [
     'android',
     async (modConfig) => {
       const androidRoot = modConfig.modRequest.platformProjectRoot;
-      const wrapper = path.join(androidRoot, 'gradle', 'wrapper', 'gradle-wrapper.properties');
-      replaceText(wrapper, (contents) =>
-        contents.replace(/gradle-[0-9.]+-bin\.zip/g, `gradle-${GRADLE_VERSION}-bin.zip`)
-      );
-
       const appGradle = path.join(androidRoot, 'app', 'build.gradle');
       replaceText(appGradle, (contents) =>
         contents
@@ -197,7 +237,10 @@ function withGeneratedAndroidFixes(config) {
           )
       );
 
+      removeGeneratedManifestPermissions(androidRoot);
+      modernizeGeneratedDebugManifest(androidRoot);
       modernizeGeneratedResources(androidRoot);
+      modernizeGeneratedMainActivity(androidRoot);
       return modConfig;
     },
   ]);

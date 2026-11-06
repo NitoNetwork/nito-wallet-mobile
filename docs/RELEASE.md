@@ -7,9 +7,13 @@ be built independently.
 
 1. Update the semantic version in application metadata and native build numbers.
 2. Update user-facing release notes and public documentation.
-3. Run the complete JavaScript, TypeScript and Rust quality gates.
-4. Confirm that dependency and credential scans are clean.
-5. Build each required platform once from the reviewed release commit.
+3. Run `npm run release:check`, `npx expo install --check` and `npm run doctor`.
+4. Run the complete JavaScript, TypeScript and Rust quality gates.
+5. Require both `npm audit` and `npm run audit:production` to return zero known
+   vulnerabilities without an exception.
+6. Run the Android warning-policy self-test and verify each Gradle build log.
+7. Confirm that credential scans are clean.
+8. Build each required platform once from the reviewed release commit.
 
 ## Android
 

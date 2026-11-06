@@ -1,8 +1,8 @@
 diff --git a/node_modules/expo-modules-jsi/apple/Package.swift b/node_modules/expo-modules-jsi/apple/Package.swift
-index 77b0525..16fcf71 100644
+index 8211ef0..7239fb4 100644
 --- a/node_modules/expo-modules-jsi/apple/Package.swift
 +++ b/node_modules/expo-modules-jsi/apple/Package.swift
-@@ -71,7 +71,7 @@ let package = Package(
+@@ -78,7 +78,7 @@ let package = Package(
    products: [
      .library(
        name: "ExpoModulesJSI",
@@ -11,7 +11,7 @@ index 77b0525..16fcf71 100644
        targets: ["ExpoModulesJSI"],
      )
    ],
-@@ -110,14 +110,6 @@ let package = Package(
+@@ -124,14 +124,6 @@ let package = Package(
  
          .unsafeFlags(swiftIncludeFlags),
        ],
@@ -27,10 +27,10 @@ index 77b0525..16fcf71 100644
  
      // C++ target (internal)
 diff --git a/node_modules/expo-modules-jsi/apple/scripts/build-xcframework.sh b/node_modules/expo-modules-jsi/apple/scripts/build-xcframework.sh
-index 4c50653..ffd5c41 100644
+index e38a4d2..169f30a 100644
 --- a/node_modules/expo-modules-jsi/apple/scripts/build-xcframework.sh
 +++ b/node_modules/expo-modules-jsi/apple/scripts/build-xcframework.sh
-@@ -243,6 +243,7 @@ build_slice() {
+@@ -271,6 +271,7 @@ build_slice() {
  
    local product_path="${BUILD_PRODUCTS_PATH}/${build_dir_name}"
    local framework_src="${product_path}/PackageFrameworks/${PACKAGE_NAME}.framework"
@@ -38,7 +38,7 @@ index 4c50653..ffd5c41 100644
    local swiftmodule_src="${product_path}/${PACKAGE_NAME}.swiftmodule"
    # GeneratedModuleMaps follows the same $EFFECTIVE_PLATFORM_NAME convention as
    # build products: no suffix for macOS, "-${platform}" for everything else.
-@@ -253,8 +254,22 @@ build_slice() {
+@@ -281,8 +282,22 @@ build_slice() {
      generated_maps="${DERIVED_DATA_PATH}/Build/Intermediates.noindex/GeneratedModuleMaps-${platform}"
    fi
  
@@ -50,7 +50,7 @@ index 4c50653..ffd5c41 100644
 +      object_files+=("$object_file")
 +    done < <(find "${DERIVED_DATA_PATH}/Build/Intermediates.noindex" \
 +      -type f \
-+      -path "*${PACKAGE_NAME}*.build/Objects-normal/*/*.o" \
++      -path "*/${build_dir_name}/*${PACKAGE_NAME}*.build/Objects-normal/*/*.o" \
 +      -print0)
 +
 +    if (( ${#object_files[@]} )); then
@@ -63,7 +63,7 @@ index 4c50653..ffd5c41 100644
      exit 1
    fi
  
-@@ -268,9 +283,17 @@ build_slice() {
+@@ -296,9 +311,17 @@ build_slice() {
    # `cp -a` preserves symlinks, attributes, and timestamps. `cp -r` resolves
    # symlinks into real files, which breaks the macOS versioned-framework bundle
    # layout (top-level `Foo`, `Resources`, etc. must be symlinks into Versions/Current).
@@ -84,7 +84,7 @@ index 4c50653..ffd5c41 100644
    fi
  
    # Modules and Headers live at the framework root on flat (iOS/tvOS) bundles
-@@ -283,6 +306,34 @@ build_slice() {
+@@ -311,6 +334,34 @@ build_slice() {
      content_root="${framework_root}"
    fi
  
@@ -119,19 +119,3 @@ index 4c50653..ffd5c41 100644
    # Copy Swift module interfaces and generated headers into the staged framework.
    local modules_dir="${content_root}/Modules"
    mkdir -p "$modules_dir"
-diff --git a/node_modules/expo-modules-jsi/apple/scripts/generate-modulemap.sh b/node_modules/expo-modules-jsi/apple/scripts/generate-modulemap.sh
-index 22cc0c4..58a3d99 100644
---- a/node_modules/expo-modules-jsi/apple/scripts/generate-modulemap.sh
-+++ b/node_modules/expo-modules-jsi/apple/scripts/generate-modulemap.sh
-@@ -58,10 +58,9 @@ fi
- # Avoid touching the file when contents would be identical, so the xcframework
- # hash cache and Xcode don't see a spurious change when inputs are unchanged.
- NEW_CONTENT="module jsi {
--  umbrella header \"${JSI_UMBRELLA}\"${JSI_EXTRA_HEADERS}
-+  header \"${JSI_UMBRELLA}\"${JSI_EXTRA_HEADERS}
- 
-   export *
--  module * { export * }
- }"
- if [[ ! -f "$GENERATED_MODULE_MAP" ]] || [[ "$(cat "$GENERATED_MODULE_MAP")" != "$NEW_CONTENT" ]]; then
-   printf '%s\n' "$NEW_CONTENT" > "$GENERATED_MODULE_MAP"

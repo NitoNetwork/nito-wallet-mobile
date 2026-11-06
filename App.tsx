@@ -32,6 +32,7 @@ import {
   Modal,
   Platform,
   ScrollView,
+  type ScrollViewInstance,
   StatusBar,
   Text,
   TouchableOpacity,
@@ -52,7 +53,6 @@ import {
   type SendRecipientFieldErrors,
 } from './src/ui/sendRecipients';
 import { ThemeProvider, useStyles } from './src/ui/themeContext';
-import { STATUS_BAR_BACKGROUND } from './src/ui/theme';
 import type { ThemeName } from './src/ui/theme';
 import { useThemePreference } from './src/hooks/useThemePreference';
 import {
@@ -534,7 +534,7 @@ function WalletApp({ theme, onSelectTheme }: {
   const systemPromptActiveRef = useRef(false);
   const autoLockRef = useRef<AutoLock | null>(null);
   const pendingActionRef = useRef<PendingAction | null>(null);
-  const walletScrollRef = useRef<ScrollView | null>(null);
+  const walletScrollRef = useRef<ScrollViewInstance | null>(null);
   const [loadingSpin] = useState(() => new Animated.Value(0));
   const [network, setNetwork] = useState<NetworkState>(createEmptyNetworkState);
   const publishNetworkState = useCallback((
@@ -4136,7 +4136,6 @@ function WalletApp({ theme, onSelectTheme }: {
     <SafeAreaProvider>
       <StatusBar
         barStyle={theme === 'dark' ? 'light-content' : 'dark-content'}
-        backgroundColor={STATUS_BAR_BACKGROUND[theme]}
       />
       <SafeAreaView
         style={styles.safeArea}

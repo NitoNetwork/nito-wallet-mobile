@@ -7,7 +7,7 @@ const {
   withProjectBuildGradle,
 } = require('@expo/config-plugins');
 
-const GRADLE_VERSION = '8.14.5';
+const GRADLE_VERSION = '9.6.1';
 
 function replaceRequired(contents, pattern, replacement, label) {
   if (!pattern.test(contents)) {
@@ -26,23 +26,6 @@ function configureProjectGradle(contents) {
     /maven\s*\{\s*url\s+(['"][^'"]+['"])\s*\}/g,
     'maven { url = uri($1) }',
   );
-
-  if (!next.includes('// NITO_STRICT_NATIVE_BUILD')) {
-    next += `
-
-// NITO_STRICT_NATIVE_BUILD
-subprojects {
-  tasks.withType(JavaCompile).configureEach {
-          options.compilerArgs.add("-Werror")
-  }
-  plugins.withId("org.jetbrains.kotlin.android") {
-    tasks.withType(org.jetbrains.kotlin.gradle.tasks.KotlinCompile).configureEach {
-      compilerOptions.allWarningsAsErrors.set(true)
-    }
-  }
-}
-`;
-  }
 
   return next;
 }
@@ -79,7 +62,23 @@ android {
     abortOnError = true
     warningsAsErrors = true
     checkReleaseBuilds = true
+    // Gradle 9.7 and newer embed Kotlin 2.4 metadata that Expo SDK 58 and
+    // React Native 0.88 build plugins compiled with Kotlin 2.2 cannot read.
+    // The dated SDK 58 warning policy forces this pin to be reviewed.
+    disable += ["AndroidGradlePluginVersion"]
   }
+}
+`;
+  }
+  if (!next.includes('// NITO_STRICT_APP_COMPILATION')) {
+    next += `
+
+// NITO_STRICT_APP_COMPILATION
+tasks.withType(JavaCompile).configureEach {
+  options.compilerArgs.add("-Werror")
+}
+tasks.withType(org.jetbrains.kotlin.gradle.tasks.KotlinCompile).configureEach {
+  compilerOptions.allWarningsAsErrors.set(true)
 }
 `;
   }
