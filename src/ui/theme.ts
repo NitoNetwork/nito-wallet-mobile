@@ -135,6 +135,26 @@ export const LIGHT_COLOR_MAP: Readonly<Record<string, string>> = {
   '#6d7892': '#9a9287',
 };
 
+/** Shared A3 palette tokens. Every token is present in LIGHT_COLOR_MAP. */
+export const A3_COLORS = {
+  panel: 'rgba(2, 6, 17, 0.82)',
+  panelSoft: 'rgba(2, 6, 17, 0.72)',
+  border: 'rgba(75, 157, 255, 0.42)',
+  borderSoft: 'rgba(75, 157, 255, 0.38)',
+  primaryText: '#f6f8ff',
+  secondaryText: '#9fb4d3',
+  bodyText: '#bdc9df',
+  blueText: '#8cc6ff',
+  blueTextStrong: '#dbeaff',
+  amber: '#f5bd31',
+  amberText: '#ffc52f',
+  amberBorder: 'rgba(246, 196, 79, 0.58)',
+  buttonText: '#0b101d',
+  success: '#55d99a',
+  busy: '#ffc66d',
+  danger: '#ff7f92',
+} as const;
+
 /**
  * The QR code cannot go through LIGHT_COLOR_MAP: its foreground shares a literal
  * with a card surface, and surfaces invert between themes. A code whose modules

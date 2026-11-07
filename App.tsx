@@ -72,6 +72,7 @@ import {
 import { HistoryTab, HomeTab, ReceiveTab, SendTab } from './src/ui/tabs';
 import { SecurityTab } from './src/ui/settings';
 import { TransactionTrackingWindow } from './src/ui/TransactionTrackingWindow';
+import { WalletBackground } from './src/ui/WalletBackground';
 import { TransactionTrackingController } from './src/services/transactionTracking';
 import { submitRbfReplacement } from './src/services/transactionReplacement';
 import { observePublishedTransactions } from './src/services/transactionObservation';
@@ -3935,6 +3936,8 @@ function WalletApp({ theme, onSelectTheme }: {
         balanceRefreshing={balanceRefreshing}
         preparedConsolidation={preparedConsolidation}
         onRefreshBalance={() => { void refreshBalance(); }}
+        onReceive={() => setWalletTab('receive')}
+        onSend={() => setWalletTab('send')}
         onConfirmConsolidation={confirmTransparentConsolidation}
       />
     );
@@ -4124,18 +4127,6 @@ function WalletApp({ theme, onSelectTheme }: {
       );
     }
 
-    if (screen === 'wallet') {
-      return (
-        <WalletShell
-          tabs={walletTabs}
-          activeTab={walletTab}
-          onSelectTab={(key) => setWalletTab(key as WalletTab)}
-        >
-          {renderWalletTab()}
-        </WalletShell>
-      );
-    }
-
     return (
       <LandingScreen
         t={t}
@@ -4156,6 +4147,14 @@ function WalletApp({ theme, onSelectTheme }: {
     );
   };
 
+  const networkStatusLabel = network.status === 'connected'
+    ? t('settings.networkConnected')
+    : network.status === 'syncing'
+      ? t('settings.networkSyncing')
+      : network.status === 'error'
+        ? t('settings.networkError')
+        : t('settings.networkIdle');
+
   return (
     <SafeAreaProvider>
       <StatusBar
@@ -4165,27 +4164,60 @@ function WalletApp({ theme, onSelectTheme }: {
         style={styles.safeArea}
         onStartShouldSetResponderCapture={() => { registerActivity(); return false; }}
       >
-        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={styles.keyboard}>
-          <ScrollView
-            ref={walletScrollRef}
-            keyboardShouldPersistTaps="handled"
-            contentContainerStyle={styles.screen}
+        <WalletBackground
+          variant={screen === 'wallet' ? 'wallet' : 'auth'}
+          theme={theme}
+        >
+          <KeyboardAvoidingView
+            behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+            style={styles.keyboard}
           >
-            {screen !== 'loading' ? <Hero t={t} /> : null}
-            <Feedback error={error} status={status} />
-            {screen === 'wallet' && transactionTracking.storageError ? (
-              <Feedback error={t('errors.walletStorageUnavailable')} status="" />
+            {screen === 'wallet' ? (
+              <View style={styles.walletRoot}>
+                <Hero
+                  t={t}
+                  compact
+                  connectionLabel={networkStatusLabel}
+                  connectionState={network.status}
+                />
+                <Feedback error={error} status={status} />
+                {transactionTracking.storageError ? (
+                  <Feedback error={t('errors.walletStorageUnavailable')} status="" />
+                ) : null}
+                <WalletShell
+                  tabs={walletTabs}
+                  activeTab={walletTab}
+                  onSelectTab={(key) => setWalletTab(key as WalletTab)}
+                >
+                  <ScrollView
+                    ref={walletScrollRef}
+                    style={styles.walletScroll}
+                    keyboardShouldPersistTaps="handled"
+                    contentContainerStyle={styles.walletContent}
+                  >
+                    {renderWalletTab()}
+                  </ScrollView>
+                </WalletShell>
+              </View>
+            ) : (
+              <ScrollView
+                keyboardShouldPersistTaps="handled"
+                contentContainerStyle={[styles.screen, styles.authScreen]}
+              >
+                {screen !== 'loading' ? <Hero t={t} /> : null}
+                <Feedback error={error} status={status} />
+                {activeScreen()}
+              </ScrollView>
+            )}
+            {shouldShowBlockingLoadingOverlay(pendingAction) ? (
+              <LoadingOverlay
+                title={t('brand.wallet')}
+                message={loadingMessage}
+                rotation={loadingRotation}
+              />
             ) : null}
-            {activeScreen()}
-          </ScrollView>
-          {shouldShowBlockingLoadingOverlay(pendingAction) ? (
-            <LoadingOverlay
-              title={t('brand.wallet')}
-              message={loadingMessage}
-              rotation={loadingRotation}
-            />
-          ) : null}
-        </KeyboardAvoidingView>
+          </KeyboardAvoidingView>
+        </WalletBackground>
       </SafeAreaView>
       <TransactionTrackingWindow
         language={language}
