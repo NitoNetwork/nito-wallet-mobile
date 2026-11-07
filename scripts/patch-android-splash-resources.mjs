@@ -12,6 +12,12 @@ const behaviorItem =
 const stringsPath = 'android/app/src/main/res/values/strings.xml';
 const unusedLauncherBackground =
   'android/app/src/main/res/drawable/ic_launcher_background.xml';
+const unusedRoundLauncherIcons = [
+  'android/app/src/main/res/mipmap-anydpi-v26/ic_launcher_round.xml',
+  ...['mdpi', 'hdpi', 'xhdpi', 'xxhdpi', 'xxxhdpi'].map(
+    (density) => `android/app/src/main/res/mipmap-${density}/ic_launcher_round.png`,
+  ),
+];
 
 let baseStyles = await readFile(basePath, 'utf8');
 baseStyles = baseStyles.replace(
@@ -59,5 +65,6 @@ strings = strings.replace(
 await writeFile(stringsPath, strings, 'utf8');
 
 await rm(unusedLauncherBackground, { force: true });
+await Promise.all(unusedRoundLauncherIcons.map((iconPath) => rm(iconPath, { force: true })));
 
-console.log('Android splash resources are normalized and lint-clean.');
+console.log('Generated Android resources are normalized and lint-clean.');

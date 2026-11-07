@@ -234,7 +234,7 @@ jobs:
           npm run warnings:source
           chmod +x android/gradlew
 
-      - name: Isolate Android 13 splash resources
+      - name: Normalize generated Android resources
         run: node scripts/patch-android-splash-resources.mjs
 
       - name: Verify Gradle configuration

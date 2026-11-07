@@ -42,6 +42,9 @@ function withCleanManifest(config) {
     if (!application) {
       throw new Error('Generated Android manifest has no application element');
     }
+    // Expo derives the optional legacy round icon from the transparent brand mark.
+    // Keep the adaptive launcher icon as the single source Android launchers mask.
+    delete application.$['android:roundIcon'];
     delete application.$['android:enableOnBackInvokedCallback'];
 
     const metadata = (application['meta-data'] || []).filter(
