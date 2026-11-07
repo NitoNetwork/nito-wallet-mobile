@@ -34,5 +34,11 @@ disables only its newer-wrapper recommendation until that dated review.
 This policy does not apply to dependency security audits, which require a raw
 zero result.
 
+Expo SDK 58 currently emits one iOS autolinking diagnostic while CocoaPods
+scans the internal `CoreModule` that Expo Modules Core creates directly. The
+iOS pod log gate accepts exactly that class, package path and message once. It
+rejects every other diagnostic, fails when the upstream message disappears and
+expires on 6 February 2027 so the exception must be reviewed or removed.
+
 A release is acceptable only when the workflow for its platform is green and
 the resulting artifact has completed physical-device testing.

@@ -32,6 +32,7 @@
     "doctor": "expo-doctor",
     "warnings:self-test": "node scripts/assert-warning-free.mjs --self-test",
     "warnings:ios-self-test": "node scripts/assert-ios-owned-warning-free.mjs --self-test",
+    "warnings:ios-pods-self-test": "node scripts/assert-ios-pod-sdk58-warning-policy.mjs --self-test",
     "warnings:gradle-self-test": "node scripts/assert-gradle-sdk58-warning-policy.mjs --self-test",
     "warnings:source": "node scripts/assert-no-warning-suppressions.mjs",
     "audit:production": "node scripts/audit-production-dependencies.mjs",
