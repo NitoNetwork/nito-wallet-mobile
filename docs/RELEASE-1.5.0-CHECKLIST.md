@@ -21,7 +21,8 @@ Do not create a release tag before successful physical-device validation.
 
 ## Dependency and build controls
 
-- `npm ci` must reproduce all nine SDK 58 patches from the lockfile.
+- `npm ci` must reproduce all ten dependency patches required by the SDK 58
+  build from the lockfile.
 - `npx expo install --check` and Expo Doctor must pass.
 - Raw full and production npm audits must both return zero known
   vulnerabilities. An unavailable audit is unverified, never zero.
@@ -31,6 +32,8 @@ Do not create a release tag before successful physical-device validation.
   SDK 58 and Android Gradle Plugin diagnostics and reject any additional one.
 - The generated Android wrapper must remain Gradle 9.6.1 until Expo and React
   Native build plugins support the Kotlin metadata embedded by newer Gradle.
+- The Android workflow must install platform 37.0, Build Tools 37.0.0 and NDK
+  27.1.12297006 through the pinned Android CLI and verify their package metadata.
 - Rust formatting, Clippy with warnings denied and all Rust tests must pass.
 - The merged Android manifest must contain no storage, media, overlay or package
   installation permission.

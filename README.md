@@ -12,8 +12,12 @@ transactions and new blocks, and to broadcast signed transactions.
 - Create a new 24-word recovery phrase.
 - Verify selected recovery words before protecting a newly created wallet.
 - Import a valid 12-word or 24-word BIP39 recovery phrase.
-- Optionally derive a separate BIP39 wallet with a passphrase that must be
-  backed up exactly and separately from the recovery phrase.
+- Optionally use a BIP39 passphrase when creating or importing a wallet.
+  Creation requires two matching entries. Import requests the exact existing
+  passphrase once.
+- Back up the passphrase exactly and separately. It is not a thirteenth or
+  twenty-fifth recovery word, cannot be recovered if forgotten, and any
+  different value opens a different valid wallet without an error.
 - Protect wallet secrets with device-backed encrypted storage.
 - Unlock with a password and, when enabled, device biometrics.
 - Configure automatic locking after 1, 5 or 15 minutes of inactivity.
@@ -48,6 +52,8 @@ The release version is defined in [`package.json`](package.json). The Android
 workflow produces a production-signed APK and rejects debug signing. The iOS
 workflow produces a direct unsigned device IPA for development sideloading.
 App Store distribution requires Apple signing credentials.
+Existing vaults remain compatible and continue to use the standard empty BIP39
+passphrase without migration or rewriting.
 
 ## Development
 
@@ -57,10 +63,10 @@ Requirements:
 - npm 11
 - Rust 1.97.1
 - Python 3 for the real SQLite integration tests
-- JDK 17.0.19+10, Android SDK 37, Build Tools 37.0.0 and NDK 27.1.12297006
+- JDK 17.0.19+10, Android platform 37.0, Build Tools 37.0.0 and NDK 27.1.12297006
   for Android builds
 - macOS and Xcode 26.6 for iOS device builds
-- Expo SDK 58
+- Expo SDK 58.0.23 and React Native 0.88.1
 
 Install and run the source checks:
 
@@ -74,11 +80,14 @@ npm run typecheck
 npm test
 npm audit
 npm run audit:production
-npm run warnings:source
+npm run warnings:self-test
+npm run warnings:ios-self-test
+npm run warnings:ios-pods-self-test
 npm run warnings:gradle-self-test
-cargo fmt --manifest-path native/nito-wallet-crypto/Cargo.toml --check
-cargo clippy --manifest-path native/nito-wallet-crypto/Cargo.toml --all-targets --all-features -- -D warnings
-cargo test --manifest-path native/nito-wallet-crypto/Cargo.toml --all-features
+npm run warnings:source
+npm run rust:fmt
+npm run rust:clippy
+npm run rust:test
 ```
 
 Update every public and native version source with one command:
