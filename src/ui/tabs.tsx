@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import {
   ActivityIndicator,
+  StyleSheet,
   Text,
   TextInput,
   TouchableOpacity,
@@ -44,9 +45,208 @@ import {
   type SendRecipientDraft,
   type SendRecipientFieldErrors,
 } from './sendRecipients';
-import { QR_COLORS } from './theme';
+import { A3_COLORS, mapStyleColors, QR_COLORS, type ThemeName } from './theme';
 import { useStyles, useThemeColor, useThemeName } from './themeContext';
+import { TYPOGRAPHY } from './typography';
 import type { NetworkState, PendingAction, Wallet } from './types';
+
+const HOME_A3_DEFINITIONS = {
+  root: {
+    gap: 14,
+  },
+  glassPanel: {
+    borderRadius: 22,
+    padding: 16,
+    gap: 10,
+    backgroundColor: A3_COLORS.panel,
+    borderWidth: 1,
+    borderColor: A3_COLORS.border,
+  },
+  balanceHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 12,
+  },
+  eyebrow: {
+    flex: 1,
+    color: A3_COLORS.blueText,
+    fontFamily: TYPOGRAPHY.semibold,
+    fontSize: 11,
+    lineHeight: 16,
+    letterSpacing: 1.25,
+    textTransform: 'uppercase',
+  },
+  balance: {
+    color: A3_COLORS.primaryText,
+    fontFamily: TYPOGRAPHY.bold,
+    fontSize: 32,
+    lineHeight: 38,
+  },
+  unit: {
+    color: A3_COLORS.amberText,
+    fontFamily: TYPOGRAPHY.bold,
+    fontSize: 12,
+    lineHeight: 18,
+  },
+  balanceLine: {
+    flexDirection: 'row',
+    alignItems: 'baseline',
+    gap: 6,
+    minWidth: 0,
+  },
+  balanceValue: {
+    flexShrink: 1,
+  },
+  metrics: {
+    flexDirection: 'row',
+    gap: 10,
+  },
+  metric: {
+    flex: 1,
+    minHeight: 82,
+    borderRadius: 18,
+    padding: 13,
+    justifyContent: 'space-between',
+    gap: 8,
+    backgroundColor: A3_COLORS.panelSoft,
+    borderWidth: 1,
+    borderColor: A3_COLORS.borderSoft,
+  },
+  metricLabel: {
+    color: A3_COLORS.secondaryText,
+    fontFamily: TYPOGRAPHY.medium,
+    fontSize: 11,
+    lineHeight: 16,
+  },
+  metricValue: {
+    color: A3_COLORS.primaryText,
+    fontFamily: TYPOGRAPHY.semibold,
+    fontSize: 14,
+    lineHeight: 20,
+  },
+  actions: {
+    flexDirection: 'row',
+    gap: 9,
+  },
+  action: {
+    flex: 1,
+    minHeight: 76,
+    borderRadius: 18,
+    paddingHorizontal: 8,
+    paddingVertical: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    backgroundColor: A3_COLORS.panel,
+    borderWidth: 1,
+    borderColor: A3_COLORS.border,
+  },
+  actionPrimary: {
+    backgroundColor: A3_COLORS.amber,
+    borderColor: A3_COLORS.amberBorder,
+  },
+  actionDisabled: {
+    opacity: 0.42,
+  },
+  actionIcon: {
+    color: A3_COLORS.blueTextStrong,
+    fontSize: 18,
+    lineHeight: 22,
+  },
+  actionIconPrimary: {
+    color: A3_COLORS.buttonText,
+  },
+  actionLabel: {
+    color: A3_COLORS.primaryText,
+    fontFamily: TYPOGRAPHY.semibold,
+    fontSize: 11,
+    lineHeight: 15,
+    textAlign: 'center',
+  },
+  actionLabelPrimary: {
+    color: A3_COLORS.buttonText,
+  },
+  networkStrip: {
+    minHeight: 48,
+    borderRadius: 18,
+    paddingHorizontal: 14,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 10,
+    backgroundColor: A3_COLORS.panelSoft,
+    borderWidth: 1,
+    borderColor: A3_COLORS.borderSoft,
+  },
+  networkState: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  networkDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: A3_COLORS.success,
+  },
+  networkDotBusy: {
+    backgroundColor: A3_COLORS.busy,
+  },
+  networkDotError: {
+    backgroundColor: A3_COLORS.danger,
+  },
+  networkText: {
+    color: A3_COLORS.secondaryText,
+    fontFamily: TYPOGRAPHY.medium,
+    fontSize: 11,
+    lineHeight: 16,
+  },
+  recentTitle: {
+    color: A3_COLORS.blueText,
+    fontFamily: TYPOGRAPHY.semibold,
+    fontSize: 11,
+    lineHeight: 16,
+    letterSpacing: 1.25,
+    textTransform: 'uppercase',
+  },
+  recentRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 12,
+  },
+  recentDetails: {
+    flex: 1,
+    gap: 4,
+  },
+  recentTxid: {
+    color: A3_COLORS.primaryText,
+    fontFamily: TYPOGRAPHY.semibold,
+    fontSize: 14,
+    lineHeight: 20,
+  },
+  recentMeta: {
+    color: A3_COLORS.bodyText,
+    fontFamily: TYPOGRAPHY.regular,
+    fontSize: 11,
+    lineHeight: 16,
+  },
+  recentAmount: {
+    maxWidth: '44%',
+    color: A3_COLORS.success,
+    fontFamily: TYPOGRAPHY.semibold,
+    fontSize: 13,
+    lineHeight: 18,
+    textAlign: 'right',
+  },
+} as const;
+
+const HOME_A3_STYLES: Readonly<Record<ThemeName, ReturnType<typeof StyleSheet.create>>> = {
+  dark: StyleSheet.create(HOME_A3_DEFINITIONS),
+  light: StyleSheet.create(mapStyleColors(HOME_A3_DEFINITIONS, 'light')),
+};
 
 export function ReceiveTab({
   wallet,
@@ -633,6 +833,8 @@ export function HomeTab({
   preparedConsolidation,
   onRefreshBalance,
   onConfirmConsolidation,
+  onReceive,
+  onSend,
 }: {
   t: Translator;
   language: LanguageCode;
@@ -644,8 +846,12 @@ export function HomeTab({
   preparedConsolidation: UnsignedTransparentConsolidation | null;
   onRefreshBalance: () => void;
   onConfirmConsolidation: () => void;
+  onReceive?: () => void;
+  onSend?: () => void;
 }) {
   const styles = useStyles();
+  const homeStyles = HOME_A3_STYLES[useThemeName()];
+  const themeColor = useThemeColor();
   const spendableAddressSet = new Set(
     (network.snapshot?.spendableAddresses ?? []).map((address) => address.address),
   );
@@ -656,34 +862,64 @@ export function HomeTab({
   const balanceDisplay = network.snapshot
     ? formatHomeBalance(network.snapshot.spendableSats, language)
     : { text: '--' };
+  const confirmedBalance = network.snapshot
+    ? satoshisToNito(network.snapshot.confirmedSats, language)
+    : '--';
+  const pendingBalance = network.snapshot
+    ? satoshisToNito(network.snapshot.unconfirmedSats, language)
+    : '--';
+  const canConsolidate = Boolean(
+    !preparedConsolidation
+    && network.snapshot
+    && eligibleUtxos.length >= CONSOLIDATION_MIN_UTXOS,
+  );
+  const latestHistory = network.snapshot?.history[0] ?? null;
+  const latestAmount = latestHistory?.direction
+    ? signedHistoryAmountLines(
+      latestHistory.direction,
+      latestHistory.amountSats === undefined
+        ? []
+        : [satoshisToNito(latestHistory.amountSats, language)],
+      latestHistory.direction === 'self' && latestHistory.feeSats !== undefined
+        ? satoshisToNito(latestHistory.feeSats, language)
+        : null,
+    )[0] ?? ''
+    : '';
+  const networkLabel = network.status === 'connected'
+    ? t('home.networkSynchronized')
+    : network.status === 'syncing'
+      ? t('settings.networkSyncing')
+      : network.status === 'error'
+        ? t('settings.networkError')
+        : t('settings.networkIdle');
 
   return (
-    <View style={styles.card}>
-      <View style={styles.sectionTitleRow}>
-        <Text style={styles.sectionTitle}>{t('home.title')}</Text>
-        <TouchableOpacity
-          accessibilityLabel={t('actions.refreshBalance')}
-          disabled={refreshDisabled}
-          onPress={onRefreshBalance}
-          style={[styles.refreshButton, refreshDisabled && styles.refreshButtonDisabled]}
-        >
-          <Text style={styles.refreshButtonText}>{'↻'}</Text>
-        </TouchableOpacity>
-      </View>
-      <View style={styles.balanceCard}>
-        <Text
-          style={styles.balance}
-          numberOfLines={1}
-          adjustsFontSizeToFit
-          minimumFontScale={0.65}
-        >
-          {balanceDisplay.text}
-        </Text>
-        {network.snapshot && network.snapshot.unconfirmedSats > 0 ? (
-          <Text style={styles.pendingBalance}>
-            {t('home.pendingBalance', { amount: satoshisToNito(network.snapshot.unconfirmedSats, language) })}
+    <View style={homeStyles.root}>
+      <View style={homeStyles.glassPanel}>
+        <View style={homeStyles.balanceHeader}>
+          <Text style={homeStyles.eyebrow}>{t('home.availableBalance')}</Text>
+          <TouchableOpacity
+            accessibilityLabel={t('actions.refreshBalance')}
+            accessibilityRole="button"
+            accessibilityState={{ disabled: refreshDisabled, busy: balanceRefreshing }}
+            disabled={refreshDisabled}
+            onPress={onRefreshBalance}
+            style={[styles.refreshButton, refreshDisabled && styles.refreshButtonDisabled]}
+          >
+            <Text style={styles.refreshButtonText}>{'↻'}</Text>
+          </TouchableOpacity>
+        </View>
+        <View style={homeStyles.balanceLine}>
+          <Text
+            style={[homeStyles.balance, homeStyles.balanceValue]}
+            numberOfLines={1}
+            adjustsFontSizeToFit
+            minimumFontScale={0.54}
+          >
+            {balanceDisplay.text}
           </Text>
-        ) : null}
+          <Text style={homeStyles.unit}>NITO</Text>
+        </View>
         {network.snapshot && (network.snapshot.immatureCoinbaseSats ?? 0) > 0 ? (
           <Text style={styles.immatureCoinbaseBalance}>
             {t('home.immatureMiningRewards', {
@@ -702,14 +938,130 @@ export function HomeTab({
           </View>
         ) : null}
       </View>
-      {!preparedConsolidation && network.snapshot && eligibleUtxos.length >= CONSOLIDATION_MIN_UTXOS ? (
-        <ActionButton
-          label={makeConsolidationTranslator(language)('action')}
-          onPress={onConfirmConsolidation}
-          variant="secondary"
-          disabled={actionLocked || network.status === 'syncing'}
-          loading={pendingAction === 'consolidate'}
-        />
+
+      <View style={homeStyles.metrics}>
+        <View style={homeStyles.metric}>
+          <Text style={homeStyles.metricLabel}>{t('home.confirmedBalance')}</Text>
+          <Text
+            adjustsFontSizeToFit
+            minimumFontScale={0.7}
+            numberOfLines={1}
+            style={homeStyles.metricValue}
+          >
+            {confirmedBalance}
+          </Text>
+        </View>
+        <View style={homeStyles.metric}>
+          <Text style={homeStyles.metricLabel}>{t('home.pendingBalanceLabel')}</Text>
+          <Text
+            adjustsFontSizeToFit
+            minimumFontScale={0.7}
+            numberOfLines={1}
+            style={homeStyles.metricValue}
+          >
+            {pendingBalance}
+          </Text>
+        </View>
+      </View>
+
+      {(onReceive || onSend || canConsolidate) ? (
+        <View style={homeStyles.actions}>
+          {onReceive ? (
+            <TouchableOpacity
+              accessibilityRole="button"
+              accessibilityState={{ disabled: actionLocked }}
+              disabled={actionLocked}
+              onPress={onReceive}
+              style={[
+                homeStyles.action,
+                homeStyles.actionPrimary,
+                actionLocked && homeStyles.actionDisabled,
+              ]}
+            >
+              <Text style={[homeStyles.actionIcon, homeStyles.actionIconPrimary]}>{'↓'}</Text>
+              <Text style={[homeStyles.actionLabel, homeStyles.actionLabelPrimary]}>
+                {t('tabs.receive')}
+              </Text>
+            </TouchableOpacity>
+          ) : null}
+          {onSend ? (
+            <TouchableOpacity
+              accessibilityRole="button"
+              accessibilityState={{ disabled: actionLocked }}
+              disabled={actionLocked}
+              onPress={onSend}
+              style={[homeStyles.action, actionLocked && homeStyles.actionDisabled]}
+            >
+              <Text style={homeStyles.actionIcon}>{'↗'}</Text>
+              <Text style={homeStyles.actionLabel}>{t('tabs.send')}</Text>
+            </TouchableOpacity>
+          ) : null}
+          {canConsolidate ? (
+            <TouchableOpacity
+              accessibilityRole="button"
+              accessibilityState={{
+                disabled: actionLocked || network.status === 'syncing',
+                busy: pendingAction === 'consolidate',
+              }}
+              disabled={actionLocked || network.status === 'syncing'}
+              onPress={onConfirmConsolidation}
+              style={[
+                homeStyles.action,
+                (actionLocked || network.status === 'syncing') && homeStyles.actionDisabled,
+              ]}
+            >
+              {pendingAction === 'consolidate' ? (
+                <ActivityIndicator color={themeColor('#dbeaff')} />
+              ) : (
+                <Text style={homeStyles.actionIcon}>{'≋'}</Text>
+              )}
+              <Text style={homeStyles.actionLabel}>
+                {makeConsolidationTranslator(language)('action')}
+              </Text>
+            </TouchableOpacity>
+          ) : null}
+        </View>
+      ) : null}
+
+      <View style={homeStyles.networkStrip}>
+        <View style={homeStyles.networkState}>
+          <View style={[
+            homeStyles.networkDot,
+            (network.status === 'idle' || network.status === 'syncing')
+              && homeStyles.networkDotBusy,
+            network.status === 'error' && homeStyles.networkDotError,
+          ]} />
+          <Text style={homeStyles.networkText}>{networkLabel}</Text>
+        </View>
+        {network.height > 0 ? (
+          <Text style={homeStyles.networkText}>
+            {t('settings.blockHeight')} {network.height}
+          </Text>
+        ) : null}
+      </View>
+
+      {latestHistory ? (
+        <View style={homeStyles.glassPanel}>
+          <Text style={homeStyles.recentTitle}>{t('home.latestActivity')}</Text>
+          <View style={homeStyles.recentRow}>
+            <View style={homeStyles.recentDetails}>
+              <Text style={homeStyles.recentTxid}>{shortAddress(latestHistory.txid)}</Text>
+              <Text style={homeStyles.recentMeta}>
+                {formatHistoryDetails(latestHistory, language, t)}
+              </Text>
+            </View>
+            {latestAmount ? (
+              <Text
+                adjustsFontSizeToFit
+                minimumFontScale={0.72}
+                numberOfLines={1}
+                style={homeStyles.recentAmount}
+              >
+                {latestAmount} NITO
+              </Text>
+            ) : null}
+          </View>
+        </View>
       ) : null}
     </View>
   );

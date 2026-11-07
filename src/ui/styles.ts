@@ -1,8 +1,37 @@
-import { Platform, StyleSheet } from 'react-native';
+import { Platform, StyleSheet, type TextStyle } from 'react-native';
 
 import { mapStyleColors, type ThemeName } from './theme';
+import { TYPOGRAPHY } from './typography';
 
-const RAW_STYLES = StyleSheet.create({
+const SYSTEM_SYMBOL_FONT = Platform.select({
+  ios: 'System',
+  android: 'sans-serif',
+  default: 'sans-serif',
+});
+
+const applySpaceGrotesk = <T extends Record<string, object>>(definitions: T): T => (
+  Object.fromEntries(Object.entries(definitions).map(([key, definition]) => {
+    const textStyle = definition as TextStyle;
+    if (textStyle.fontSize === undefined || textStyle.fontFamily) return [key, definition];
+
+    const numericWeight = Number(textStyle.fontWeight ?? 400);
+    const fontFamily = numericWeight >= 700
+      ? TYPOGRAPHY.bold
+      : numericWeight >= 600
+        ? TYPOGRAPHY.semibold
+        : numericWeight >= 500
+          ? TYPOGRAPHY.medium
+          : TYPOGRAPHY.regular;
+
+    return [key, {
+      ...definition,
+      fontFamily,
+      fontWeight: 'normal',
+    }];
+  })) as T
+);
+
+const RAW_STYLES = StyleSheet.create(applySpaceGrotesk({
   trackingOverlay: { flex: 1, justifyContent: 'center', padding: 20, backgroundColor: 'rgba(2, 6, 17, 0.94)' },
   trackingCard: { maxHeight: '90%' },
   trackingContent: { gap: 10 },
@@ -24,6 +53,32 @@ const RAW_STYLES = StyleSheet.create({
     gap: 18,
     backgroundColor: '#020611',
     overflow: 'hidden',
+  },
+  authScreen: {
+    width: '100%',
+    maxWidth: 760,
+    alignSelf: 'center',
+    backgroundColor: 'transparent',
+  },
+  walletRoot: {
+    flex: 1,
+    width: '100%',
+    maxWidth: 760,
+    alignSelf: 'center',
+    paddingHorizontal: 14,
+    paddingTop: 10,
+    gap: 12,
+  },
+  walletContent: {
+    flexGrow: 1,
+    width: '100%',
+    maxWidth: 760,
+    alignSelf: 'center',
+    gap: 12,
+    paddingBottom: 18,
+  },
+  walletScroll: {
+    flex: 1,
   },
   languageSettings: {
     marginTop: 8,
@@ -53,6 +108,7 @@ const RAW_STYLES = StyleSheet.create({
     color: '#7fb9ff',
     fontSize: 22,
     fontWeight: '900',
+    fontFamily: SYSTEM_SYMBOL_FONT,
   },
   languageMenu: {
     borderRadius: 18,
@@ -135,7 +191,7 @@ const RAW_STYLES = StyleSheet.create({
   hero: {
     borderRadius: 34,
     padding: 22,
-    backgroundColor: 'rgba(8, 18, 38, 0.92)',
+    backgroundColor: 'rgba(3, 9, 20, 0.82)',
     borderWidth: 1,
     borderColor: 'rgba(91, 166, 255, 0.28)',
     shadowColor: '#0b62c7',
@@ -143,6 +199,60 @@ const RAW_STYLES = StyleSheet.create({
     shadowOffset: { width: 0, height: 16 },
     shadowRadius: 28,
     elevation: 10,
+  },
+  heroCompact: {
+    borderRadius: 24,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    backgroundColor: 'rgba(3, 9, 20, 0.82)',
+    shadowOpacity: 0.14,
+    shadowRadius: 18,
+    elevation: 5,
+  },
+  heroStatus: {
+    marginLeft: 'auto',
+    maxWidth: '42%',
+    minHeight: 34,
+    paddingHorizontal: 12,
+    borderRadius: 17,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 7,
+    backgroundColor: 'rgba(2, 6, 17, 0.62)',
+    borderWidth: 1,
+    borderColor: 'rgba(75, 157, 255, 0.42)',
+  },
+  heroStatusDot: {
+    width: 7,
+    height: 7,
+    borderRadius: 4,
+    backgroundColor: '#55d99a',
+  },
+  heroStatusDotBusy: {
+    backgroundColor: '#ffc66d',
+  },
+  heroStatusDotError: {
+    backgroundColor: '#ff7f92',
+  },
+  heroStatusText: {
+    color: '#dbeaff',
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  heroCompactLogo: {
+    width: 48,
+    height: 48,
+  },
+  heroCompactTitle: {
+    fontSize: 20,
+    lineHeight: 24,
+    letterSpacing: 0.6,
+  },
+  heroSubtitle: {
+    color: '#8cc6ff',
+    fontSize: 11,
+    lineHeight: 15,
+    fontWeight: '500',
   },
   brandRow: {
     flexDirection: 'row',
@@ -168,7 +278,7 @@ const RAW_STYLES = StyleSheet.create({
     borderRadius: 28,
     padding: 20,
     gap: 14,
-    backgroundColor: 'rgba(9, 18, 33, 0.94)',
+    backgroundColor: 'rgba(3, 9, 20, 0.82)',
     borderWidth: 1,
     borderColor: 'rgba(155, 180, 217, 0.18)',
   },
@@ -181,7 +291,13 @@ const RAW_STYLES = StyleSheet.create({
   sectionTitleRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12 },
   refreshButton: { width: 42, height: 42, borderRadius: 21, alignItems: 'center', justifyContent: 'center', backgroundColor: '#0b203a', borderWidth: 1, borderColor: 'rgba(91, 166, 255, 0.54)' },
   refreshButtonDisabled: { opacity: 0.38 },
-  refreshButtonText: { color: '#8cc6ff', fontSize: 25, lineHeight: 28, fontWeight: '800' },
+  refreshButtonText: {
+    color: '#8cc6ff',
+    fontSize: 25,
+    lineHeight: 28,
+    fontWeight: '800',
+    fontFamily: SYSTEM_SYMBOL_FONT,
+  },
   body: {
     color: '#bdc9df',
     fontSize: 15,
@@ -500,48 +616,61 @@ const RAW_STYLES = StyleSheet.create({
     lineHeight: 19,
   },
   walletShell: {
-    gap: 14,
+    flex: 1,
+    gap: 10,
   },
   tabs: {
     flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 6,
-    padding: 6,
-    borderRadius: 22,
+    gap: 3,
+    padding: 5,
+    borderRadius: 24,
     backgroundColor: '#061020',
     borderWidth: 1,
     borderColor: 'rgba(155, 180, 217, 0.16)',
   },
   tab: {
-    minHeight: 46,
-    flexBasis: '30%',
-    flexGrow: 1,
-    borderRadius: 16,
-    paddingHorizontal: 6,
+    minHeight: 58,
+    flex: 1,
+    minWidth: 0,
+    borderRadius: 18,
+    paddingHorizontal: 2,
     alignItems: 'center',
     justifyContent: 'center',
+    gap: 3,
     backgroundColor: 'transparent',
     borderWidth: 1,
     borderColor: 'transparent',
   },
   tabWide: {
-    flexBasis: '46%',
+    flex: 1,
   },
   tabActive: {
-    backgroundColor: '#1f75d6',
-    borderColor: '#6ab0ff',
+    backgroundColor: 'rgba(245, 189, 49, 0.16)',
+    borderColor: 'rgba(245, 189, 49, 0.52)',
+  },
+  tabIcon: {
+    color: '#8cc6ff',
+    fontSize: 18,
+    lineHeight: 20,
+    fontWeight: '600',
+    fontFamily: SYSTEM_SYMBOL_FONT,
+  },
+  tabIconActive: {
+    color: '#f6c44f',
   },
   tabText: {
     color: '#aebbd0',
     fontWeight: '900',
-    fontSize: 13,
+    fontSize: 10,
+    lineHeight: 12,
     textAlign: 'center',
     textAlignVertical: 'center',
     backgroundColor: 'transparent',
     includeFontPadding: false,
+    width: '100%',
   },
   tabTextActive: {
-    color: '#ffffff',
+    color: '#f6c44f',
   },
   balanceCard: {
     borderRadius: 24,
@@ -572,7 +701,7 @@ const RAW_STYLES = StyleSheet.create({
     marginTop: 10,
   },
   balanceUpdating: { flexDirection: 'row', alignItems: 'center', gap: 7, marginTop: 6 },
-  balanceHourglass: { color: '#8cc6ff', fontSize: 15 },
+  balanceHourglass: { color: '#8cc6ff', fontSize: 15, fontFamily: SYSTEM_SYMBOL_FONT },
   balanceUpdatingText: { color: '#8ea0bd', fontSize: 12, fontWeight: '700' },
   preview: {
     borderRadius: 20,
@@ -811,6 +940,7 @@ const RAW_STYLES = StyleSheet.create({
     lineHeight: 36,
     fontWeight: '700',
     includeFontPadding: false,
+    fontFamily: SYSTEM_SYMBOL_FONT,
   },
   settingsHeaderTitle: {
     flex: 1,
@@ -855,12 +985,14 @@ const RAW_STYLES = StyleSheet.create({
     fontSize: 26,
     lineHeight: 28,
     fontWeight: '700',
+    fontFamily: SYSTEM_SYMBOL_FONT,
   },
   settingsExternalLink: {
     color: '#7fb9ff',
     fontSize: 20,
     lineHeight: 24,
     fontWeight: '900',
+    fontFamily: SYSTEM_SYMBOL_FONT,
   },
   settingsValue: {
     borderRadius: 18,
@@ -976,7 +1108,7 @@ const RAW_STYLES = StyleSheet.create({
   scannerError: { color: '#ff9baa', textAlign: 'center', fontSize: 14, fontWeight: '800' },
   scannerCloseButton: { minHeight: 54, borderRadius: 18, alignItems: 'center', justifyContent: 'center', backgroundColor: '#0b203a', borderWidth: 1, borderColor: 'rgba(91, 166, 255, 0.54)' },
   scannerCloseButtonText: { color: '#dbeaff', fontSize: 15, fontWeight: '900' },
-});
+}));
 
 const STYLE_SHEETS = new Map<ThemeName, typeof RAW_STYLES>();
 

@@ -6,6 +6,7 @@ import type { SeedBackupChallenge } from '../services/seedBackup';
 import { ActionButton, MnemonicGrid, PasswordField } from './components';
 import { RecoveryPhraseCopy } from './RecoveryPhraseCopy';
 import { useStyles, useThemeColor } from './themeContext';
+import { TYPOGRAPHY } from './typography';
 import type { BiometricMethod, PendingAction, Wallet } from './types';
 
 const NITO_LOGO = require('../../assets/nito-logo.png');
@@ -30,15 +31,15 @@ const LANDING_STYLES = StyleSheet.create({
   diceOptionTitle: {
     fontSize: 14,
     lineHeight: 20,
-    fontWeight: '900',
+    fontFamily: TYPOGRAPHY.bold,
   },
   diceOptionSummary: {
     fontSize: 12,
     lineHeight: 17,
+    fontFamily: TYPOGRAPHY.regular,
   },
   diceOptionChevron: {
     fontSize: 18,
-    fontWeight: '900',
   },
   diceOptionPanel: {
     borderRadius: 18,
@@ -48,18 +49,63 @@ const LANDING_STYLES = StyleSheet.create({
   diceOptionBody: {
     fontSize: 13,
     lineHeight: 19,
+    fontFamily: TYPOGRAPHY.regular,
   },
 });
 
-export function Hero({ t }: { t: Translator }) {
+export function Hero({
+  t,
+  compact = false,
+  connectionLabel = '',
+  connectionState = 'idle',
+}: {
+  t: Translator;
+  compact?: boolean;
+  connectionLabel?: string;
+  connectionState?: 'idle' | 'syncing' | 'connected' | 'error';
+}) {
   const styles = useStyles();
   return (
-    <View style={styles.hero}>
+    <View style={[styles.hero, compact && styles.heroCompact]}>
       <View style={styles.brandRow}>
-        <Image source={NITO_LOGO} style={styles.logo} resizeMode="contain" />
+        <Image
+          source={NITO_LOGO}
+          style={[styles.logo, compact && styles.heroCompactLogo]}
+          resizeMode="contain"
+        />
         <View style={styles.brandText}>
-          <Text style={styles.title}>{t('brand.wallet')}</Text>
+          <Text
+            adjustsFontSizeToFit={compact}
+            minimumFontScale={0.78}
+            numberOfLines={1}
+            style={[styles.title, compact && styles.heroCompactTitle]}
+          >
+            {t('brand.wallet')}
+          </Text>
+          {compact ? (
+            <Text numberOfLines={1} style={styles.heroSubtitle}>
+              {t('brand.nonCustodial')}
+            </Text>
+          ) : null}
         </View>
+        {compact && connectionLabel ? (
+          <View style={styles.heroStatus} accessibilityRole="text">
+            <View style={[
+              styles.heroStatusDot,
+              (connectionState === 'idle' || connectionState === 'syncing')
+                && styles.heroStatusDotBusy,
+              connectionState === 'error' && styles.heroStatusDotError,
+            ]} />
+            <Text
+              adjustsFontSizeToFit
+              minimumFontScale={0.75}
+              numberOfLines={1}
+              style={styles.heroStatusText}
+            >
+              {connectionLabel}
+            </Text>
+          </View>
+        ) : null}
       </View>
     </View>
   );
@@ -764,22 +810,43 @@ export function WalletShell({
   children: ReactNode;
 }) {
   const styles = useStyles();
+  const icons: Record<string, string> = {
+    home: '⌂',
+    receive: '↓',
+    send: '↗',
+    history: '◷',
+    security: '⚙',
+  };
   return (
     <View style={styles.walletShell}>
+      {children}
       <View style={styles.tabs}>
-        {tabs.map((tab, index) => (
+        {tabs.map((tab) => (
           <TouchableOpacity
             accessibilityRole="tab"
+            accessibilityLabel={tab.label}
             accessibilityState={{ selected: activeTab === tab.key }}
             key={tab.key}
-            style={[styles.tab, index >= 3 && styles.tabWide, activeTab === tab.key && styles.tabActive]}
+            style={[styles.tab, activeTab === tab.key && styles.tabActive]}
             onPress={() => onSelectTab(tab.key)}
           >
-            <Text style={[styles.tabText, activeTab === tab.key && styles.tabTextActive]}>{tab.label}</Text>
+            <Text
+              accessible={false}
+              style={[styles.tabIcon, activeTab === tab.key && styles.tabIconActive]}
+            >
+              {icons[tab.key] ?? '•'}
+            </Text>
+            <Text
+              adjustsFontSizeToFit
+              minimumFontScale={0.85}
+              numberOfLines={2}
+              style={[styles.tabText, activeTab === tab.key && styles.tabTextActive]}
+            >
+              {tab.label}
+            </Text>
           </TouchableOpacity>
         ))}
       </View>
-      {children}
     </View>
   );
 }

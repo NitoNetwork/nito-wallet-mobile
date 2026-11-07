@@ -11,6 +11,7 @@ import {
   PhysicalDiceEntropySession,
 } from './diceEntropy';
 import { useStyles, useThemeColor } from './themeContext';
+import { TYPOGRAPHY } from './typography';
 
 const PHYSICAL_DICE_STYLES = StyleSheet.create({
   detailsButton: {
@@ -27,11 +28,10 @@ const PHYSICAL_DICE_STYLES = StyleSheet.create({
     flex: 1,
     fontSize: 14,
     lineHeight: 20,
-    fontWeight: '800',
+    fontFamily: TYPOGRAPHY.semibold,
   },
   detailsChevron: {
     fontSize: 18,
-    fontWeight: '900',
   },
   detailsPanel: {
     borderRadius: 16,
@@ -41,6 +41,7 @@ const PHYSICAL_DICE_STYLES = StyleSheet.create({
   detailsBody: {
     fontSize: 13,
     lineHeight: 19,
+    fontFamily: TYPOGRAPHY.regular,
   },
   progressHeader: {
     flexDirection: 'row',
@@ -52,7 +53,7 @@ const PHYSICAL_DICE_STYLES = StyleSheet.create({
     flexShrink: 1,
     fontSize: 14,
     lineHeight: 20,
-    fontWeight: '900',
+    fontFamily: TYPOGRAPHY.bold,
   },
   progressTrack: {
     height: 8,
@@ -78,7 +79,7 @@ const PHYSICAL_DICE_STYLES = StyleSheet.create({
   },
   seriesSlotText: {
     fontSize: 18,
-    fontWeight: '900',
+    fontFamily: TYPOGRAPHY.bold,
   },
   diceGrid: {
     flexDirection: 'row',
@@ -96,12 +97,12 @@ const PHYSICAL_DICE_STYLES = StyleSheet.create({
   },
   dieButtonText: {
     fontSize: 20,
-    fontWeight: '900',
+    fontFamily: TYPOGRAPHY.bold,
   },
   warning: {
     fontSize: 13,
     lineHeight: 19,
-    fontWeight: '700',
+    fontFamily: TYPOGRAPHY.semibold,
   },
   secondaryActions: {
     flexDirection: 'row',
@@ -119,7 +120,7 @@ const PHYSICAL_DICE_STYLES = StyleSheet.create({
   secondaryActionText: {
     fontSize: 13,
     lineHeight: 18,
-    fontWeight: '800',
+    fontFamily: TYPOGRAPHY.semibold,
     textAlign: 'center',
   },
 });
