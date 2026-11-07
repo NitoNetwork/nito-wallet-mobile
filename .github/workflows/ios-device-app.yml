@@ -90,6 +90,7 @@ jobs:
         run: |
           npm run warnings:self-test
           npm run warnings:ios-self-test
+          npm run warnings:ios-pods-self-test
           npm run warnings:source
 
       - name: ESLint
@@ -185,7 +186,7 @@ jobs:
         run: |
           set -euo pipefail
           bundle exec pod install --project-directory=ios 2>&1 | tee pod-install.log
-          node scripts/assert-warning-free.mjs pod-install.log
+          node scripts/assert-ios-pod-sdk58-warning-policy.mjs pod-install.log
           CORE_SPEC="ios/Pods/Local Podspecs/ExpoModulesCore.podspec.json"
           test -f "$CORE_SPEC"
           node --input-type=module - "$CORE_SPEC" <<'NODE'
