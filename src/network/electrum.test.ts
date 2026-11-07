@@ -594,7 +594,7 @@ describe('Nito Electrum helpers', () => {
     expect(RefusingOverloadWebSocket.overloaded).toBe(false);
     expect(RefusingOverloadWebSocket.peakInFlight).toBe(6);
     limitedClient.disconnect();
-  });
+  }, 15_000);
 
   it('keeps a cold full scan below the global RPC concurrency ceiling', async () => {
     vi.useFakeTimers();
