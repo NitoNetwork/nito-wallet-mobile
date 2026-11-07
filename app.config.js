@@ -32,6 +32,47 @@ export default {
     },
     plugins: [
       "expo-asset",
+      [
+        "expo-font",
+        {
+          android: {
+            fonts: [
+              {
+                fontFamily: "SpaceGrotesk-Regular",
+                fontDefinitions: [
+                  { path: "./assets/fonts/SpaceGrotesk-Regular.ttf", weight: 400 },
+                ],
+              },
+              {
+                fontFamily: "SpaceGrotesk-Medium",
+                fontDefinitions: [
+                  { path: "./assets/fonts/SpaceGrotesk-Medium.ttf", weight: 500 },
+                ],
+              },
+              {
+                fontFamily: "SpaceGrotesk-SemiBold",
+                fontDefinitions: [
+                  { path: "./assets/fonts/SpaceGrotesk-SemiBold.ttf", weight: 600 },
+                ],
+              },
+              {
+                fontFamily: "SpaceGrotesk-Bold",
+                fontDefinitions: [
+                  { path: "./assets/fonts/SpaceGrotesk-Bold.ttf", weight: 700 },
+                ],
+              },
+            ],
+          },
+          ios: {
+            fonts: [
+              "./assets/fonts/SpaceGrotesk-Regular.ttf",
+              "./assets/fonts/SpaceGrotesk-Medium.ttf",
+              "./assets/fonts/SpaceGrotesk-SemiBold.ttf",
+              "./assets/fonts/SpaceGrotesk-Bold.ttf",
+            ],
+          },
+        },
+      ],
       "./plugins/withNitoWalletCrypto.cjs",
       "./plugins/withNitoAndroidBuildPolicy.cjs",
       [
