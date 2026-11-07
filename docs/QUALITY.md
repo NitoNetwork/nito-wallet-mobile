@@ -34,11 +34,21 @@ disables only its newer-wrapper recommendation until that dated review.
 This policy does not apply to dependency security audits, which require a raw
 zero result.
 
+The Android workflow downloads a pinned official Android CLI binary, verifies
+its SHA-256 checksum, installs the exact platform 37.0, Build Tools 37.0.0 and
+NDK 27.1.12297006 packages, and verifies their installed metadata before any
+project dependency is installed.
+
 Expo SDK 58 currently emits one iOS autolinking diagnostic while CocoaPods
 scans the internal `CoreModule` that Expo Modules Core creates directly. The
 iOS pod log gate accepts exactly that class, package path and message once. It
 rejects every other diagnostic, fails when the upstream message disappears and
 expires on 6 February 2027 so the exception must be reviewed or removed.
+
+The Xcode 26.6 dependency patches remove unsupported Swift warning groups,
+keep React bridge conformance in a private Expo header and restate the Clipboard
+exception sendability contract. The iOS build log gate treats any return of
+those corrected diagnostics as a failing regression.
 
 A release is acceptable only when the workflow for its platform is green and
 the resulting artifact has completed physical-device testing.

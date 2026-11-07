@@ -11,7 +11,8 @@ be built independently.
 4. Run the complete JavaScript, TypeScript and Rust quality gates.
 5. Require both `npm audit` and `npm run audit:production` to return zero known
    vulnerabilities without an exception.
-6. Run the Android warning-policy self-test and verify each Gradle build log.
+6. Run the Android and iOS warning-policy self-tests and verify each platform
+   build log.
 7. Confirm that credential scans are clean.
 8. Build each required platform once from the reviewed release commit.
 
