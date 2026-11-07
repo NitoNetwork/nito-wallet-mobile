@@ -19,6 +19,7 @@ describe('sensitive content screen protection scope', () => {
     expect(protectionFor('loading')).toBe(false);
     expect(protectionFor('initializationError')).toBe(false);
     expect(protectionFor('landing')).toBe(false);
+    expect(protectionFor('create')).toBe(false);
     expect(protectionFor('unlock')).toBe(false);
   });
 
@@ -27,7 +28,7 @@ describe('sensitive content screen protection scope', () => {
   });
 
   it('covers optional BIP39 passphrase entry on creation and import', () => {
-    expect(protectionFor('landing', { passphraseEntryVisible: true })).toBe(true);
+    expect(protectionFor('create', { passphraseEntryVisible: true })).toBe(true);
     expect(protectionFor('import', { passphraseEntryVisible: true })).toBe(true);
   });
 

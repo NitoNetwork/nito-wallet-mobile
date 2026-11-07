@@ -72,6 +72,7 @@ export const createWalletAppStateChangeHandler = ({
         screenRef.current === 'unlock'
         || screenRef.current === 'import'
         || screenRef.current === 'landing'
+        || screenRef.current === 'create'
       )
       && (
         nextState === 'background'

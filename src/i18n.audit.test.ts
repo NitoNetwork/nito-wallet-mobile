@@ -53,6 +53,20 @@ describe('i18n coverage', () => {
     }
   });
 
+  it.each(LANGUAGES)('uses the same two-line passphrase explanation for creation and import in $code', ({ code }) => {
+    const warning = TRANSLATIONS[code]['passphrase.warning'];
+    expect(warning).toBe(TRANSLATIONS[code]['passphrase.importWarning']);
+    expect(warning.split('\n')).toHaveLength(2);
+    expect(warning).not.toMatch(/^\s|\s$/);
+  });
+
+  it('keeps the approved French passphrase explanation verbatim', () => {
+    expect(TRANSLATIONS.fr['passphrase.warning']).toBe(
+      'Cette passphrase est un secret supplémentaire associé à votre phrase de récupération.\n'
+      + 'Saisissez-la exactement : une valeur différente ouvre un wallet différent.',
+    );
+  });
+
   it.each(LANGUAGES)('defines every compact transaction popup message directly in the $code dictionary', ({ code }) => {
     const keys = [
       'tracking.acceptedHint', 'tracking.mempoolHint', 'tracking.confirmedHint',

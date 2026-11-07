@@ -168,11 +168,11 @@ describe('shouldLockWalletForAppState', () => {
     expect(clearTransientSecrets).toHaveBeenCalledOnce();
   });
 
-  it('clears an optional creation passphrase when landing leaves the foreground', () => {
+  it('clears an optional creation passphrase when the creation screen leaves the foreground', () => {
     const clearTransientSecrets = vi.fn();
     const handler = createWalletAppStateChangeHandler({
       appStateRef: { current: 'active' },
-      screenRef: { current: 'landing' },
+      screenRef: { current: 'create' },
       systemPromptActiveRef: { current: false },
       vaultBiometricsEnabledRef: { current: false },
       biometricUnavailableReasonRef: { current: '' },
