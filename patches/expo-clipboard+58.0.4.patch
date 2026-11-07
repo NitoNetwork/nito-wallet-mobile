@@ -1,0 +1,20 @@
+diff --git a/node_modules/expo-clipboard/ios/ClipboardExceptions.swift b/node_modules/expo-clipboard/ios/ClipboardExceptions.swift
+index 71ed9c8..95ca93c 100644
+--- a/node_modules/expo-clipboard/ios/ClipboardExceptions.swift
++++ b/node_modules/expo-clipboard/ios/ClipboardExceptions.swift
+@@ -2,13 +2,13 @@
+ 
+ import ExpoModulesCore
+ 
+-internal final class InvalidImageException: GenericException<String> {
++internal final class InvalidImageException: GenericException<String>, @unchecked Sendable {
+   override var reason: String {
+     "Invalid base64 image: \(param.prefix(32))\(param.count > 32 ? "..." : "")"
+   }
+ }
+ 
+-internal final class PasteFailureException: Exception {
++internal final class PasteFailureException: Exception, @unchecked Sendable {
+   override var reason: String {
+     "Failed to get item from clipboard"
+   }

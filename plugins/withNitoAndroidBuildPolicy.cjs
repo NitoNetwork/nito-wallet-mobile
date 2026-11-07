@@ -82,6 +82,23 @@ tasks.withType(org.jetbrains.kotlin.gradle.tasks.KotlinCompile).configureEach {
 }
 `;
   }
+  if (!next.includes('// NITO_WINDOWS_CMAKE_PATHS')) {
+    next += `
+
+// NITO_WINDOWS_CMAKE_PATHS
+if (System.getProperty("os.name", "").toLowerCase(java.util.Locale.ROOT).contains("windows")) {
+  android {
+    defaultConfig {
+      externalNativeBuild {
+        cmake {
+          arguments "-DCMAKE_OBJECT_PATH_MAX=240"
+        }
+      }
+    }
+  }
+}
+`;
+  }
   if (!next.includes('// NITO_RELEASE_SIGNING')) {
     next += `
 

@@ -267,6 +267,17 @@ describe('mobile wallet UX and security invariants', () => {
     expect(screenProtectionSource).not.toContain('useScreenshotListener');
   });
 
+  it('keeps native Android object paths below the Windows toolchain limit', () => {
+    expect(androidBuildPolicySource).toContain('// NITO_WINDOWS_CMAKE_PATHS');
+    expect(androidBuildPolicySource).toContain(
+      'System.getProperty("os.name", "").toLowerCase(java.util.Locale.ROOT).contains("windows")',
+    );
+    expect(androidBuildPolicySource).toContain(
+      'arguments "-DCMAKE_OBJECT_PATH_MAX=240"',
+    );
+    expect(androidBuildPolicySource.match(/CMAKE_OBJECT_PATH_MAX/g)).toHaveLength(1);
+  });
+
   it('lets the user turn biometric unlock off again without losing the vault', () => {
     expect(appSource).toContain('const disableBiometricUnlock = async ()');
     expect(appSource).toContain('await deleteBiometricSecret();');
