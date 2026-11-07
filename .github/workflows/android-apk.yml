@@ -36,8 +36,13 @@ jobs:
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
           node-version: "24.14.0"
-          cache: npm
-          cache-dependency-path: package-lock.json
+
+      - name: Restore npm cache
+        id: npm-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.npm
+          key: npm-${{ runner.os }}-${{ runner.arch }}-node-24.14.0-${{ hashFiles('package-lock.json') }}
 
       - name: Setup Java
         uses: actions/setup-java@0f481fcb613427c0f801b606911222b5b6f3083a # v5
@@ -115,6 +120,13 @@ jobs:
           set -euo pipefail
           npm ci --include=dev --fund=false --audit=false 2>&1 | tee npm-install.log
           node scripts/assert-warning-free.mjs npm-install.log
+
+      - name: Save npm cache
+        if: steps.npm-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.npm
+          key: ${{ steps.npm-cache.outputs.cache-primary-key }}
 
       - name: Verify dependency alignment
         shell: bash
