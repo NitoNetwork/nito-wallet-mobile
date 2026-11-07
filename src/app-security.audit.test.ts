@@ -34,6 +34,7 @@ import expoConfig from '../app.config.js?raw';
 import androidBuildPolicySource from '../plugins/withNitoAndroidBuildPolicy.cjs?raw';
 import androidLintFixesSource from '../plugins/withNitoAndroidLintFixes.cjs?raw';
 import androidPermissionAuditSource from '../scripts/assert-android-permissions.mjs?raw';
+import androidResourcePatchSource from '../scripts/patch-android-splash-resources.mjs?raw';
 import expoFileSystemPatchSource from '../patches/expo-file-system+58.0.13.patch?raw';
 import expoScreenCapturePatchSource from '../patches/expo-screen-capture+58.0.6.patch?raw';
 import nativeCryptoSource from '../native/nito-wallet-crypto/src/lib.rs?raw';
@@ -228,6 +229,15 @@ describe('mobile wallet UX and security invariants', () => {
     expect(androidLintFixesSource).toContain("'android.permission.READ_MEDIA_IMAGES'");
     expect(androidLintFixesSource).toContain(
       'return !blockedPermissions.has(permissionName);',
+    );
+    expect(androidLintFixesSource).toContain(
+      "delete application.$['android:roundIcon'];",
+    );
+    expect(androidResourcePatchSource).toContain(
+      "'android/app/src/main/res/mipmap-anydpi-v26/ic_launcher_round.xml'",
+    );
+    expect(androidResourcePatchSource).toContain(
+      "`android/app/src/main/res/mipmap-${density}/ic_launcher_round.png`",
     );
     expect(androidLintFixesSource).toContain(
       'removeGeneratedManifestPermissions(androidRoot);',
