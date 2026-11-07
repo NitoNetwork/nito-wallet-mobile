@@ -134,18 +134,26 @@ describe('mobile wallet UX and security invariants', () => {
       .toHaveLength(2);
     expect(appSource).toMatch(/onImport=\{\(\) => \{[\s\S]*?clearCreationPassphrase\(\);[\s\S]*?setScreen\('import'\);/);
     expect(appStateSecuritySource).toContain("|| screenRef.current === 'landing'");
-    const landingPassphraseSource = screensSource.slice(
+    expect(appStateSecuritySource).toContain("|| screenRef.current === 'create'");
+    const landingSource = screensSource.slice(
       screensSource.indexOf('export function LandingScreen'),
+      screensSource.indexOf('export function CreateScreen'),
+    );
+    const creationPassphraseSource = screensSource.slice(
+      screensSource.indexOf('export function CreateScreen'),
       screensSource.indexOf('export function ImportScreen'),
     );
     const importPassphraseSource = screensSource.slice(
       screensSource.indexOf('export function ImportScreen'),
       screensSource.indexOf('export function UnlockScreen'),
     );
-    expect(landingPassphraseSource.match(/<PasswordField/g)).toHaveLength(2);
-    expect(landingPassphraseSource.match(/disableAutofill/g)).toHaveLength(2);
-    expect(landingPassphraseSource).toContain("t('passphrase.warning')");
-    expect(landingPassphraseSource).toContain('error={passphraseError}');
+    expect(landingSource).not.toContain('<PasswordField');
+    expect(landingSource).not.toContain("t('dice.optionTitle')");
+    expect(creationPassphraseSource.match(/<PasswordField/g)).toHaveLength(2);
+    expect(creationPassphraseSource.match(/disableAutofill/g)).toHaveLength(2);
+    expect(creationPassphraseSource).toContain("t('passphrase.warning')");
+    expect(creationPassphraseSource).toContain("t('dice.optionTitle')");
+    expect(creationPassphraseSource).toContain('error={passphraseError}');
     expect(importPassphraseSource.match(/<PasswordField/g)).toHaveLength(1);
     expect(importPassphraseSource.match(/disableAutofill/g)).toHaveLength(1);
     expect(importPassphraseSource).toContain("t('passphrase.importWarning')");
@@ -706,9 +714,12 @@ describe('password policy is declared once', () => {
   });
 
   it('keeps physical dice optional and requires 100 ordered results before seed generation', () => {
+    expect(appSource).toMatch(/<LandingScreen[\s\S]*?setScreen\('create'\);/);
+    expect(appSource).toMatch(/if \(screen === 'create'\) \{[\s\S]*?<CreateScreen/);
     expect(appSource).toMatch(/onCreate=\{\(\) => \{[\s\S]*?void createWallet\(\);/);
     expect(appSource).toMatch(/onUsePhysicalDice=\{\(\) => \{[\s\S]*?setScreen\('dice'\);/);
     expect(appSource).toMatch(/if \(screen === 'dice'\) \{[\s\S]*?<DiceEntropyScreen/);
+    expect(appSource).toMatch(/<DiceEntropyScreen[\s\S]*?onBack=\{\(\) => \{ resetFeedback\(\); setScreen\('create'\); \}\}/);
     expect(appSource).toContain('void createWallet(additionalEntropyBase64);');
     expect(diceSource).toContain('session.entropyDigestBase64()');
     expect(diceSource).not.toContain('MnemonicGrid');

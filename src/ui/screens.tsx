@@ -185,11 +185,42 @@ export function LanguageSettings({
 
 export function LandingScreen({
   t,
+  actionLocked,
+  onCreate,
+  onImport,
+}: {
+  t: Translator;
+  actionLocked: boolean;
+  onCreate: () => void;
+  onImport: () => void;
+}) {
+  const styles = useStyles();
+  return (
+    <View style={styles.card}>
+      <Text style={styles.sectionTitle}>{t('start.title')}</Text>
+      <Text style={styles.body}>{t('start.body')}</Text>
+      <ActionButton
+        label={t('actions.createWallet')}
+        disabled={actionLocked}
+        onPress={onCreate}
+      />
+      <ActionButton
+        label={t('actions.importSeed')}
+        variant="secondary"
+        disabled={actionLocked}
+        onPress={onImport}
+      />
+    </View>
+  );
+}
+
+export function CreateScreen({
+  t,
   pendingAction,
   actionLocked,
   onCreate,
   onUsePhysicalDice,
-  onImport,
+  onBack,
   passphraseOpen,
   passphrase,
   confirmPassphrase,
@@ -207,7 +238,7 @@ export function LandingScreen({
   actionLocked: boolean;
   onCreate: () => void;
   onUsePhysicalDice: () => void;
-  onImport: () => void;
+  onBack: () => void;
   passphraseOpen: boolean;
   passphrase: string;
   confirmPassphrase: string;
@@ -225,8 +256,8 @@ export function LandingScreen({
   const [diceOptionOpen, setDiceOptionOpen] = useState(false);
   return (
     <View style={styles.card}>
-      <Text style={styles.sectionTitle}>{t('start.title')}</Text>
-      <Text style={styles.body}>{t('start.body')}</Text>
+      <Text style={styles.sectionTitle}>{t('actions.createWallet')}</Text>
+      <Text style={styles.body}>{t('start.createOptionsBody')}</Text>
       <TouchableOpacity
         accessibilityRole="button"
         accessibilityState={{ expanded: passphraseOpen, disabled: actionLocked }}
@@ -286,7 +317,6 @@ export function LandingScreen({
           />
         </View>
       ) : null}
-      <ActionButton label={t('actions.createWallet')} loading={pendingAction === 'create'} disabled={actionLocked} onPress={onCreate} />
       <TouchableOpacity
         accessibilityRole="button"
         accessibilityState={{ expanded: diceOptionOpen, disabled: actionLocked }}
@@ -349,7 +379,18 @@ export function LandingScreen({
           />
         </View>
       ) : null}
-      <ActionButton label={t('actions.importSeed')} variant="secondary" disabled={actionLocked} onPress={onImport} />
+      <ActionButton
+        label={t('actions.createWallet')}
+        loading={pendingAction === 'create'}
+        disabled={actionLocked}
+        onPress={onCreate}
+      />
+      <ActionButton
+        label={t('actions.back')}
+        variant="ghost"
+        disabled={actionLocked}
+        onPress={onBack}
+      />
     </View>
   );
 }

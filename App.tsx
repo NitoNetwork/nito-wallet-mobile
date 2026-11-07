@@ -56,6 +56,7 @@ import { ThemeProvider, useStyles } from './src/ui/themeContext';
 import type { ThemeName } from './src/ui/theme';
 import { useThemePreference } from './src/hooks/useThemePreference';
 import {
+  CreateScreen,
   Feedback,
   Hero,
   ImportScreen,
@@ -655,7 +656,7 @@ function WalletApp({ theme, onSelectTheme }: {
       ),
       settingsPhraseVisible: showMnemonic,
       passphraseEntryVisible: (
-        (screen === 'landing' && creationPassphraseOpen)
+        (screen === 'create' && creationPassphraseOpen)
         || (screen === 'import' && importPassphraseOpen)
       ),
     }),
@@ -2230,6 +2231,10 @@ function WalletApp({ theme, onSelectTheme }: {
 
     if (screenRef.current === 'import') {
       setScreen(vaultSessionStateRef.current.status !== 'absent' ? 'unlock' : 'landing');
+    }
+
+    if (screenRef.current === 'create') {
+      setScreen('landing');
     }
   }, [setScreen]);
   useLayoutEffect(() => {
@@ -3953,6 +3958,56 @@ function WalletApp({ theme, onSelectTheme }: {
       );
     }
 
+    if (screen === 'create') {
+      return (
+        <CreateScreen
+          t={t}
+          pendingAction={pendingAction}
+          actionLocked={actionLocked}
+          passphraseOpen={creationPassphraseOpen}
+          passphrase={creationPassphrase}
+          confirmPassphrase={creationConfirmPassphrase}
+          passphraseError={creationPassphraseError}
+          showPassphrase={showCreationPassphrase}
+          showConfirmPassphrase={showCreationConfirmPassphrase}
+          onTogglePassphraseOpen={() => {
+            if (creationPassphraseOpen) {
+              clearCreationPassphrase();
+            } else {
+              setCreationPassphraseOpen(true);
+            }
+          }}
+          onChangePassphrase={(value) => {
+            setCreationPassphrase(value);
+            setCreationPassphraseError('');
+          }}
+          onChangeConfirmPassphrase={(value) => {
+            setCreationConfirmPassphrase(value);
+            setCreationPassphraseError('');
+          }}
+          onToggleShowPassphrase={() => setShowCreationPassphrase((current) => !current)}
+          onToggleShowConfirmPassphrase={() => (
+            setShowCreationConfirmPassphrase((current) => !current)
+          )}
+          onCreate={() => {
+            resetFeedback();
+            void createWallet();
+          }}
+          onUsePhysicalDice={() => {
+            resetFeedback();
+            if (readCreationPassphrase() === null) return;
+            setDiceSessionKey((current) => current + 1);
+            setScreen('dice');
+          }}
+          onBack={() => {
+            resetFeedback();
+            clearCreationPassphrase();
+            setScreen('landing');
+          }}
+        />
+      );
+    }
+
     if (screen === 'dice') {
       return (
         <DiceEntropyScreen
@@ -3964,7 +4019,7 @@ function WalletApp({ theme, onSelectTheme }: {
           onContinue={(additionalEntropyBase64) => {
             void createWallet(additionalEntropyBase64);
           }}
-          onBack={() => { resetFeedback(); setScreen('landing'); }}
+          onBack={() => { resetFeedback(); setScreen('create'); }}
         />
       );
     }
@@ -4084,42 +4139,11 @@ function WalletApp({ theme, onSelectTheme }: {
     return (
       <LandingScreen
         t={t}
-        pendingAction={pendingAction}
         actionLocked={actionLocked}
-        passphraseOpen={creationPassphraseOpen}
-        passphrase={creationPassphrase}
-        confirmPassphrase={creationConfirmPassphrase}
-        passphraseError={creationPassphraseError}
-        showPassphrase={showCreationPassphrase}
-        showConfirmPassphrase={showCreationConfirmPassphrase}
-        onTogglePassphraseOpen={() => {
-          if (creationPassphraseOpen) {
-            clearCreationPassphrase();
-          } else {
-            setCreationPassphraseOpen(true);
-          }
-        }}
-        onChangePassphrase={(value) => {
-          setCreationPassphrase(value);
-          setCreationPassphraseError('');
-        }}
-        onChangeConfirmPassphrase={(value) => {
-          setCreationConfirmPassphrase(value);
-          setCreationPassphraseError('');
-        }}
-        onToggleShowPassphrase={() => setShowCreationPassphrase((current) => !current)}
-        onToggleShowConfirmPassphrase={() => (
-          setShowCreationConfirmPassphrase((current) => !current)
-        )}
         onCreate={() => {
           resetFeedback();
-          void createWallet();
-        }}
-        onUsePhysicalDice={() => {
-          resetFeedback();
-          if (readCreationPassphrase() === null) return;
-          setDiceSessionKey((current) => current + 1);
-          setScreen('dice');
+          clearCreationPassphrase();
+          setScreen('create');
         }}
         onImport={() => {
           resetFeedback();
