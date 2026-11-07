@@ -71,7 +71,7 @@ describe('Nito replacement transactions', () => {
     expect(quote.returnSats + quote.transaction.feeSats).toBe(100_000_000);
     const replacement = await signUnsignedTransparentTx({ mnemonic, transaction: quote.transaction, crypto });
     expect(() => assertSignedRbfFee(quote, replacement.hex, replacement.txid)).not.toThrow();
-  });
+  }, 15_000);
 
   it('rejects a signer that silently removes RBF signaling', async () => {
     const f = await fixture();

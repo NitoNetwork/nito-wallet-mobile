@@ -597,6 +597,8 @@ describe('Nito Electrum helpers', () => {
   });
 
   it('keeps a cold full scan below the global RPC concurrency ceiling', async () => {
+    vi.useFakeTimers();
+
     class ThrottledFakeWebSocket {
       static inFlight = 0;
       static peakInFlight = 0;
@@ -642,13 +644,17 @@ describe('Nito Electrum helpers', () => {
       1_000,
     );
     const startedAt = performance.now();
-    await client.connect();
-    const snapshot = await scanTransparentWallet({
+    const connection = client.connect();
+    await vi.runAllTimersAsync();
+    await connection;
+    const scan = scanTransparentWallet({
       mnemonic: 'abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about',
       electrum: client,
       gapLimit: 20,
       crypto: createNitoWalletCryptoTestDouble(),
     });
+    await vi.runAllTimersAsync();
+    const snapshot = await scan;
     const durationMs = performance.now() - startedAt;
     const metrics = client.getRequestMetrics();
     console.info(`NITO_SYNTHETIC_BENCHMARK ${JSON.stringify({

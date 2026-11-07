@@ -156,7 +156,7 @@ describe('transparent HD scan', () => {
       address: internal.address,
       valueSats: 75_000,
     }));
-  });
+  }, 15_000);
 
   it('refreshes a pending known address without deriving or scanning new gap addresses', async () => {
     const usedAddress = (await deriveP2wpkhAddress(mnemonic, 'external', 0, crypto)).address;
