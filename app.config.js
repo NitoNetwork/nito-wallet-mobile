@@ -23,12 +23,12 @@ export default {
       versionCode: releaseBuildCode,
       adaptiveIcon: {
         foregroundImage: "./assets/adaptive-icon.png",
-        backgroundColor: "#020611",
+        backgroundColor: "#ffffff",
       },
     },
     web: {
       bundler: "metro",
-      favicon: "./assets/icon.png",
+      favicon: "./assets/favicon.png",
     },
     plugins: [
       "expo-asset",

@@ -108,7 +108,7 @@ const RAW_STYLES = StyleSheet.create({
     borderRadius: 36,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: '#020611',
+    backgroundColor: 'transparent',
     borderWidth: 1,
     borderColor: 'rgba(91, 166, 255, 0.34)',
     shadowColor: '#0b62c7',
@@ -152,8 +152,6 @@ const RAW_STYLES = StyleSheet.create({
   logo: {
     width: 72,
     height: 72,
-    borderRadius: 22,
-    backgroundColor: '#01040b',
   },
   brandText: {
     flex: 1,
