@@ -3,6 +3,11 @@ import { basename } from 'node:path';
 
 const logPath = process.argv[2];
 const warningPattern = /\bwarning:/i;
+const correctedDependencyDiagnostics = [
+  /unknown warning group: '(?:ImplicitStrongCapture|NoUsage)'/i,
+  /cannot find protocol (?:declaration|definition) for 'RCTBridgeModule'/i,
+  /class '(?:InvalidImageException|PasteFailureException)' must restate inherited '@unchecked Sendable' conformance/i,
+];
 const categories = [
   {
     name: 'dependency source',
@@ -32,6 +37,9 @@ const categories = [
 
 function classifyWarning(line) {
   if (!warningPattern.test(line)) return null;
+  if (correctedDependencyDiagnostics.some((pattern) => pattern.test(line))) {
+    return 'corrected dependency regression';
+  }
   return categories.find(({ pattern }) => pattern.test(line))?.name ?? 'Nito project or unknown';
 }
 
@@ -65,6 +73,11 @@ function runSelfTest() {
     ["warning: Run script build phase '[CP-User] Hermes' will be run during every build (in target 'hermes-engine' from project 'Pods')", 'dependency build phase'],
     ["warning: cannot find protocol definition for 'RCTHostDelegate'", 'known dependency continuation'],
     ["warning: implicit conversion loses integer precision: 'i64' (aka 'long long') to 'int'", 'known dependency continuation'],
+    ["<unknown>:0: warning: unknown warning group: 'ImplicitStrongCapture'", 'corrected dependency regression'],
+    ["<unknown>:0: warning: unknown warning group: 'NoUsage' [#UnknownWarningGroup]", 'corrected dependency regression'],
+    ["/repo/node_modules/expo-modules-core/ios/Legacy/ModuleRegistryAdapter/EXModuleRegistryHolderReactModule.h:8:59: warning: cannot find protocol definition for 'RCTBridgeModule'", 'corrected dependency regression'],
+    ["/repo/ios/Pods/ExpoClipboard/ClipboardExceptions.swift:5:22: warning: class 'InvalidImageException' must restate inherited '@unchecked Sendable' conformance", 'corrected dependency regression'],
+    ["/repo/node_modules/expo-clipboard/ios/ClipboardExceptions.swift:11:22: warning: class 'PasteFailureException' must restate inherited '@unchecked Sendable' conformance", 'corrected dependency regression'],
     ["/repo/ios/NitoWallet.xcodeproj: warning: search path '/var/run/com.apple.security.cryptexd/mnt/com.apple.MobileAsset.MetalToolchain-v1/Metal.xctoolchain/usr/lib/swift/iphoneos' not found", 'Apple toolchain'],
     ['/repo/src/wallet.ts:12: warning: unsafe operation', 'Nito project or unknown'],
     ["/repo/ios/NitoWallet.xcodeproj: warning: ignoring duplicate libraries: '-lc++'", 'Nito project or unknown'],
@@ -104,7 +117,10 @@ if (!logPath) {
 const lines = normalizeLogLines(readFileSync(logPath, 'utf8').split(/\r?\n/));
 const warnings = lines.filter((line) => warningPattern.test(line));
 const classified = warnings.map((line) => ({ line, category: classifyWarning(line) }));
-const ownedWarnings = classified.filter(({ category }) => category === 'Nito project or unknown');
+const ownedWarnings = classified.filter(
+  ({ category }) =>
+    category === 'Nito project or unknown' || category === 'corrected dependency regression',
+);
 
 if (ownedWarnings.length > 0) {
   console.error(`Project warning gate failed for ${basename(logPath)} (${ownedWarnings.length} owned or unknown warning(s)):`);
