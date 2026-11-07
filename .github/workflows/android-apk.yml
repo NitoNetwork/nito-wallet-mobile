@@ -286,7 +286,7 @@ jobs:
           VERSION="$(node -p "require('./package.json').version")"
           DESTINATION="artifacts/android/Nito-Wallet-Android-${VERSION}.apk"
           mkdir -p artifacts/android
-          cp "$APK_PATH" "$DESTINATION"
+          mv "$APK_PATH" "$DESTINATION"
           sha256sum "$DESTINATION" > "${DESTINATION}.sha256"
           cat "${DESTINATION}.sha256"
 
