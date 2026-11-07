@@ -62,7 +62,6 @@ describe('Android workflow toolchain contract', () => {
       'jarsigner -verify "$AAB_PATH"',
       'keytool -exportcert',
       'keytool -printcert',
-      'cmp --silent "$EXPECTED_CERTIFICATE" "$BUNDLE_CERTIFICATE"',
       'Nito-Wallet-Android-${VERSION}.aab',
       'Nito-Wallet-Android-Play-AAB',
     ]) {
@@ -75,6 +74,16 @@ describe('Android workflow toolchain contract', () => {
     expect(androidAabWorkflowSource).toContain('NITO_ANDROID_KEYSTORE_PASSWORD_SECRET');
     expect(androidAabWorkflowSource).toContain('NITO_ANDROID_KEY_ALIAS_SECRET');
     expect(androidAabWorkflowSource).toContain('NITO_ANDROID_KEY_PASSWORD_SECRET');
+    expect(androidAabWorkflowSource).toContain("grep -Fq 'jar verified.'");
+    expect(androidAabWorkflowSource).toContain('BUNDLE_CERTIFICATE_REPORT=');
+    expect(androidAabWorkflowSource).toContain('/-----BEGIN CERTIFICATE-----/');
+    expect(androidAabWorkflowSource).toContain('/-----END CERTIFICATE-----/');
+    expect(androidAabWorkflowSource).toContain(
+      'cmp --silent "$EXPECTED_CERTIFICATE" "$BUNDLE_CERTIFICATE"',
+    );
+    expect(androidAabWorkflowSource).toContain(
+      'The AAB signer does not match the configured Android upload certificate.',
+    );
     expect(androidAabWorkflowSource).not.toContain(':app:assembleRelease');
     expect(androidAabWorkflowSource).not.toContain(
       'Refusing to publish an APK signed with an Android Debug certificate.',

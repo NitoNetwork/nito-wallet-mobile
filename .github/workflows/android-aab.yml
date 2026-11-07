@@ -282,19 +282,33 @@ jobs:
           set -euo pipefail
           AAB_PATH="$(find android/app/build/outputs/bundle/release -maxdepth 1 -name '*.aab' -type f -print -quit)"
           test -s "$AAB_PATH"
-          LC_ALL=C jarsigner -verify "$AAB_PATH"
+          VERIFICATION_LOG="$RUNNER_TEMP/nito-aab-jarsigner.log"
+          if ! LC_ALL=C jarsigner -verify "$AAB_PATH" > "$VERIFICATION_LOG" 2>&1; then
+            cat "$VERIFICATION_LOG" >&2
+            exit 1
+          fi
+          grep -Fq 'jar verified.' "$VERIFICATION_LOG"
           EXPECTED_CERTIFICATE="$RUNNER_TEMP/nito-expected-upload-certificate.pem"
+          BUNDLE_CERTIFICATE_REPORT="$RUNNER_TEMP/nito-aab-certificate-report.txt"
           BUNDLE_CERTIFICATE="$RUNNER_TEMP/nito-aab-certificate.pem"
-          keytool -exportcert \
+          LC_ALL=C keytool -exportcert \
             -rfc \
             -keystore "$NITO_ANDROID_KEYSTORE_PATH" \
             -storepass "$NITO_ANDROID_KEYSTORE_PASSWORD" \
             -alias "$NITO_ANDROID_KEY_ALIAS" > "$EXPECTED_CERTIFICATE"
-          LC_ALL=C keytool -printcert \
-            -rfc \
-            -jarfile "$AAB_PATH" > "$BUNDLE_CERTIFICATE"
-          cmp --silent "$EXPECTED_CERTIFICATE" "$BUNDLE_CERTIFICATE"
-          if LC_ALL=C keytool -printcert -jarfile "$AAB_PATH" | grep -Fq 'CN=Android Debug'; then
+          LC_ALL=C keytool -printcert -rfc -jarfile "$AAB_PATH" > "$BUNDLE_CERTIFICATE_REPORT"
+          awk '
+            /-----BEGIN CERTIFICATE-----/ { capture = 1 }
+            capture { print }
+            /-----END CERTIFICATE-----/ { exit }
+          ' "$BUNDLE_CERTIFICATE_REPORT" > "$BUNDLE_CERTIFICATE"
+          test -s "$EXPECTED_CERTIFICATE"
+          test -s "$BUNDLE_CERTIFICATE"
+          if ! cmp --silent "$EXPECTED_CERTIFICATE" "$BUNDLE_CERTIFICATE"; then
+            echo 'The AAB signer does not match the configured Android upload certificate.' >&2
+            exit 1
+          fi
+          if grep -Fq 'CN=Android Debug' "$BUNDLE_CERTIFICATE_REPORT"; then
             echo 'Refusing to publish an AAB signed with an Android Debug certificate.' >&2
             exit 1
           fi
