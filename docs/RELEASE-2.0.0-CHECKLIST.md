@@ -1,4 +1,4 @@
-# 1.5.0 candidate checklist
+# 2.0.0 candidate checklist
 
 This is a development candidate, not approval for public distribution. Build
 Android and iOS from the same reviewed commit and record both artifact hashes.
@@ -6,6 +6,12 @@ Do not create a release tag before successful physical-device validation.
 
 ## Main changes to exercise
 
+- The redesigned mobile-first interface introduces the new Nito visual identity,
+  Space Grotesk typography and compact navigation without changing wallet
+  storage, derivation or transaction behavior.
+- Creation and import remain distinct entry paths. Optional dice entropy and
+  the BIP39 passphrase are presented only after the corresponding path is
+  selected.
 - Expo SDK 58, React Native 0.88 and their native dependencies are aligned to
   the current stable versions selected by Expo.
 - A BIP39 passphrase is optional during wallet creation and import. It is not a
@@ -67,6 +73,12 @@ Do not create a release tag before successful physical-device validation.
 
 ## Regression campaign
 
+- [ ] Exercise the welcome, creation, import, unlock, Home, Receive, Send,
+      History and Settings screens. Confirm every existing action remains
+      reachable with no clipped controls or hidden security information.
+- [ ] Check the redesigned layout on representative small and large Android and iOS
+      screens. Confirm the fixed backgrounds, transparent Nito assets, compact
+      navigation and Space Grotesk typography render consistently.
 - [ ] Verify password and biometric unlock before and after application restart.
 - [ ] Exercise receive-address reuse, new empty HD addresses and the recovery
       gap boundary in all four address families.
