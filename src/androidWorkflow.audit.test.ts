@@ -2,6 +2,7 @@
 
 import { describe, expect, it } from 'vitest';
 
+import androidAabWorkflowSource from '../.github/workflows/android-aab.yml?raw';
 import androidWorkflowSource from '../.github/workflows/android-apk.yml?raw';
 
 describe('Android workflow toolchain contract', () => {
@@ -43,5 +44,43 @@ describe('Android workflow toolchain contract', () => {
     expect(androidWorkflowSource).toContain('ANDROID_HOME=$ANDROID_HOME');
     expect(androidWorkflowSource).toContain('ANDROID_SDK_ROOT=$ANDROID_SDK_ROOT');
     expect(androidWorkflowSource).toContain('ANDROID_NDK_HOME=$NDK_DIRECTORY');
+  });
+
+  it('builds the Play AAB independently with the same pinned quality and signing gates', () => {
+    for (const expected of [
+      'ANDROID_COMPILE_SDK: "37"',
+      'ANDROID_PLATFORM_PACKAGE: "platforms/android-37.0"',
+      'ANDROID_BUILD_TOOLS_VERSION: "37.0.0"',
+      'ANDROID_NDK_VERSION: "27.1.12297006"',
+      'ANDROID_CLI_VERSION: "1.1.16717390"',
+      'npm audit 2>&1 | tee npm-audit-full.log',
+      'npm run audit:production 2>&1 | tee npm-audit-production.log',
+      'npm run test 2>&1 | tee vitest.log',
+      ':app:lintRelease',
+      ':app:testDebugUnitTest',
+      ':app:bundleRelease',
+      'jarsigner -verify "$AAB_PATH"',
+      'keytool -exportcert',
+      'keytool -printcert',
+      'cmp --silent "$EXPECTED_CERTIFICATE" "$BUNDLE_CERTIFICATE"',
+      'Nito-Wallet-Android-${VERSION}.aab',
+      'Nito-Wallet-Android-Play-AAB',
+    ]) {
+      expect(androidAabWorkflowSource).toContain(expected);
+    }
+
+    expect(androidAabWorkflowSource).toContain('group: android-aab-${{ inputs.source_ref }}');
+    expect(androidAabWorkflowSource).toContain('ref: ${{ inputs.source_ref }}');
+    expect(androidAabWorkflowSource).toContain('NITO_ANDROID_KEYSTORE_BASE64');
+    expect(androidAabWorkflowSource).toContain('NITO_ANDROID_KEYSTORE_PASSWORD_SECRET');
+    expect(androidAabWorkflowSource).toContain('NITO_ANDROID_KEY_ALIAS_SECRET');
+    expect(androidAabWorkflowSource).toContain('NITO_ANDROID_KEY_PASSWORD_SECRET');
+    expect(androidAabWorkflowSource).not.toContain(':app:assembleRelease');
+    expect(androidAabWorkflowSource).not.toContain(
+      'Refusing to publish an APK signed with an Android Debug certificate.',
+    );
+    expect(androidAabWorkflowSource).toContain(
+      'Refusing to publish an AAB signed with an Android Debug certificate.',
+    );
   });
 });

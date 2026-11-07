@@ -1,7 +1,7 @@
 # Release process
 
-Nito Wallet uses separate manually triggered workflows so Android and iOS can
-be built independently.
+Nito Wallet uses separate manually triggered workflows so the Android APK,
+Google Play AAB and iOS device application can be built independently.
 
 ## Before a release
 
@@ -24,6 +24,15 @@ test checklist before distribution. The workflow requires the protected
 `NITO_ANDROID_KEYSTORE_BASE64`, `NITO_ANDROID_KEYSTORE_PASSWORD`,
 `NITO_ANDROID_KEY_ALIAS` and `NITO_ANDROID_KEY_PASSWORD` repository secrets.
 It rejects missing credentials and Android Debug certificates.
+
+## Google Play
+
+Run the `Android Play AAB` workflow and select the reviewed release tag in its
+`source_ref` input. Download the signed AAB and verify its SHA-256 checksum
+before uploading it to Google Play. The workflow verifies that the AAB signer
+matches the configured Android release keystore and rejects Android Debug
+certificates. Google Play App Signing configuration and store declarations are
+separate release approvals.
 
 ## iOS
 

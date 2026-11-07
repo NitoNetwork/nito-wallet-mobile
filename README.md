@@ -49,8 +49,9 @@ native implementation and network activation path are production-ready.
 ## Current release
 
 The release version is defined in [`package.json`](package.json). The Android
-workflow produces a production-signed APK and rejects debug signing. The iOS
-workflow produces a direct unsigned device IPA for development sideloading.
+workflows independently produce a production-signed APK for direct distribution
+and a signed AAB for Google Play. Both reject debug signing. The iOS workflow
+produces a direct unsigned device IPA for development sideloading.
 App Store distribution requires Apple signing credentials.
 Existing vaults remain compatible and continue to use the standard empty BIP39
 passphrase without migration or rewriting.
@@ -96,9 +97,10 @@ Update every public and native version source with one command:
 npm version <major.minor.patch> --no-git-tag-version
 ```
 
-Use the two manual GitHub Actions workflows for reproducible device artifacts:
+Use the three manual GitHub Actions workflows for reproducible artifacts:
 
 - `Android APK`
+- `Android Play AAB`
 - `iOS Device App`
 
 ## Security and privacy

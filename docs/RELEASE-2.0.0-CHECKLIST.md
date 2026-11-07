@@ -1,7 +1,8 @@
 # 2.0.0 candidate checklist
 
 This is a development candidate, not approval for public distribution. Build
-Android and iOS from the same reviewed commit and record both artifact hashes.
+the Android APK, Google Play AAB and iOS IPA from the same reviewed source and
+record all three artifact hashes.
 Do not create a release tag before successful physical-device validation.
 
 ## Main changes to exercise
@@ -43,8 +44,9 @@ Do not create a release tag before successful physical-device validation.
 - Rust formatting, Clippy with warnings denied and all Rust tests must pass.
 - The merged Android manifest must contain no storage, media, overlay or package
   installation permission.
-- Android lint, Android unit tests and the production-signed release APK must
-  complete from the same commit. iOS must build from that same commit.
+- Android lint, Android unit tests, the production-signed release APK and the
+  signed Google Play AAB must complete from the same reviewed source. iOS must
+  build from that same source.
 
 ## Wallet compatibility and cryptography
 

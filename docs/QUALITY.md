@@ -1,11 +1,12 @@
 # Live quality status
 
 [![Android APK](https://github.com/NitoNetwork/nito-wallet-mobile/actions/workflows/android-apk.yml/badge.svg)](https://github.com/NitoNetwork/nito-wallet-mobile/actions/workflows/android-apk.yml)
+[![Android Play AAB](https://github.com/NitoNetwork/nito-wallet-mobile/actions/workflows/android-aab.yml/badge.svg)](https://github.com/NitoNetwork/nito-wallet-mobile/actions/workflows/android-aab.yml)
 [![iOS Device App](https://github.com/NitoNetwork/nito-wallet-mobile/actions/workflows/ios-device-app.yml/badge.svg)](https://github.com/NitoNetwork/nito-wallet-mobile/actions/workflows/ios-device-app.yml)
 
 This document intentionally contains no manually maintained test counts. The
 workflow badges and generated job summaries are the current source of truth.
-Each device workflow runs the same project quality gate before compilation:
+Each device and store workflow runs the same project quality gate before compilation:
 
 - ESLint with zero project warnings.
 - Strict TypeScript checking.
@@ -34,7 +35,7 @@ disables only its newer-wrapper recommendation until that dated review.
 This policy does not apply to dependency security audits, which require a raw
 zero result.
 
-The Android workflow downloads a pinned official Android CLI binary, verifies
+Both Android workflows download a pinned official Android CLI binary, verify
 its SHA-256 checksum, installs the exact platform 37.0, Build Tools 37.0.0 and
 NDK 27.1.12297006 packages, and verifies their installed metadata before any
 project dependency is installed.
