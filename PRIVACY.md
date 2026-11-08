@@ -1,19 +1,31 @@
 # Privacy
 
+Last updated: November 8, 2026
+
 Nito Wallet does not require an account, email address or custodial service.
 The recovery phrase, optional BIP39 passphrase and private keys are encrypted
 and stored on the device. They are not sent to Nito network services.
 
 ## Network data
 
-The application connects to Nito network infrastructure to discover addresses,
-balances, unspent outputs, transaction history and new blocks, and to broadcast
-signed transactions. Those services can observe normal connection metadata,
-including the source IP address and requested public blockchain data.
+The application connects over encrypted TLS connections using `wss://` to
+official or user-selected ElectrumX servers. These servers receive public
+blockchain queries used to discover addresses, balances, unspent outputs,
+transaction history and new blocks, and to broadcast signed transactions. The
+server operators can observe normal connection metadata, including the source
+IP address and requested public blockchain data. Infrastructure operators may
+retain routine security logs according to their operational policies.
 
 Opening a transaction in the explorer sends the transaction identifier to the
-device browser. QR scanning uses the device camera only while the scanner is
-open. Copying an address places public data on the system clipboard.
+device browser over HTTPS. The selected explorer operator receives that public
+identifier and normal connection metadata. Copying or sharing an address sends
+public data to the operating system clipboard or sharing facility.
+
+QR scanning uses the device camera only while the scanner is open. QR images
+are processed on the device and are not stored or uploaded by Nito Wallet.
+
+Optional biometric authentication is performed by Android or iOS. Nito Wallet
+does not receive or store fingerprints, facial images or biometric templates.
 
 ## Network trust model
 
@@ -33,6 +45,11 @@ and connect to their own trusted node.
 Wallet metadata, synchronization checkpoints and optional reconstructed history
 are stored locally. Removing the wallet from the application deletes its local
 vault and cached metadata but does not erase the public blockchain.
+
+Local data remains on the device until the wallet is removed from the
+application or the application is uninstalled. Nito Wallet does not create a
+server-side account, so there is no remote account or server-side wallet record
+to delete.
 
 An optional BIP39 passphrase creates a different wallet from the same recovery
 phrase. It is not an extra recovery word and cannot be recovered if forgotten.
