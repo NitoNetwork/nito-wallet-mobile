@@ -48,6 +48,27 @@ import walletIdentitySource from './wallet/walletIdentity.ts?raw';
 import nativeCryptoContractSource from './native/nitoWalletCryptoContract.ts?raw';
 
 describe('mobile wallet UX and security invariants', () => {
+  it('uses local feedback instead of a global transient status banner', () => {
+    expect(appSource).not.toContain('const [status, setStatus]');
+    expect(appSource).not.toContain('setStatus(');
+    expect(screensSource).toContain('export function Feedback({ error }: { error: string })');
+    expect(screensSource).not.toContain('styles.status');
+    expect(stylesSource).not.toContain('status: {');
+    expect(tabsSource).toContain("addressCopied ? t('actions.addressCopied') : t('actions.copyAddress')");
+    expect(appSource).toContain('}, 2000);');
+    expect(appSource).toContain('setCopiedAddress(null);');
+    expect(tabsSource.match(/t\('send\.reviewChanged'\)/g)).toHaveLength(2);
+    expect(appSource).toContain('setFinancialReviewChanged(true);');
+    expect(diceSource).toContain("t('dice.backgroundWarning')");
+  });
+
+  it('opens the wallet before reporting an initial biometric activation failure', () => {
+    expect(appSource).toMatch(
+      /enterWallet\(walletToPersist, true\);\s*if \(biometricActivationFailed\) \{\s*Alert\.alert\(\s*t\('dialog\.biometricActivationFailedTitle'\),\s*t\('dialog\.biometricActivationFailedBody'\),/,
+    );
+    expect(appSource).toContain("reportNonFinancialFailure('biometric opt-in', caught)");
+  });
+
   it('keeps password encryption when biometric quick unlock is enabled', () => {
     expect(appSource).toContain('await saveBiometricSecret(password);');
     expect(appSource).toContain('void unlockSavedWallet(false);');
@@ -214,6 +235,7 @@ describe('mobile wallet UX and security invariants', () => {
     );
     expect(screenProtectionPolicySource).not.toContain("screen === 'import'");
     expect(screenProtectionPolicySource).not.toContain("screen === 'unlock'");
+    expect(appSource).toContain('diceEntropyResetRef.current();');
   });
 
   it('removes unused photo-library permissions without disabling screen protection', () => {

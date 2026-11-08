@@ -11,6 +11,25 @@ import {
 import { tr } from './i18n/tr';
 
 describe('i18n coverage', () => {
+  it.each(LANGUAGES)('defines local feedback copy directly in $code', ({ code }) => {
+    const keys = [
+      'actions.addressCopied',
+      'send.reviewChanged',
+      'dialog.biometricActivationFailedTitle',
+      'dialog.biometricActivationFailedBody',
+      'dice.backgroundWarning',
+      'persist.seedBackupVerified',
+    ] as const;
+    for (const key of keys) {
+      const dictionary = TRANSLATIONS[code];
+      expect(Object.hasOwn(dictionary, key), `${code}:${key}`).toBe(true);
+      expect(dictionary[key].trim().length, `${code}:${key}`).toBeGreaterThan(0);
+      expect(makeTranslator(code)(key), `${code}:${key}`).toBe(dictionary[key]);
+      if (code !== 'en') expect(dictionary[key], `${code}:${key}`).not.toBe(TRANSLATIONS.en[key]);
+    }
+    expect(Object.keys(TRANSLATIONS[code]).some((key) => key.startsWith('status.'))).toBe(false);
+  });
+
   it('removes the two receive-screen explanatory paragraphs from every language', () => {
     for (const { code } of LANGUAGES) {
       for (const key of ['receive.hdInfo', 'receive.gapHelp']) {

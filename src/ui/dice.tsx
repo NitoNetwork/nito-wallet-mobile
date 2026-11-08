@@ -216,6 +216,7 @@ export function DiceEntropyScreen({
     <View style={styles.card}>
       <Text style={styles.sectionTitle}>{t('dice.title')}</Text>
       <Text style={styles.body}>{t('dice.body')}</Text>
+      <Text style={styles.settingsWarning}>{t('dice.backgroundWarning')}</Text>
 
       <TouchableOpacity
         accessibilityRole="button"
