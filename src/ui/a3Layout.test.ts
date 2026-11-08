@@ -32,9 +32,33 @@ describe('A3 compact wallet shell', () => {
     const homeSource = tabsSource.slice(homeStart);
 
     expect(homeSource).toContain('network.snapshot.spendableSats');
-    expect(homeSource).toContain('network.snapshot.confirmedSats');
-    expect(homeSource).toContain('network.snapshot.unconfirmedSats');
+    expect(homeSource).not.toContain('network.snapshot.confirmedSats');
+    expect(homeSource).toContain('network.snapshot?.unconfirmedSats');
+    expect(homeSource).toContain('network.snapshot?.immatureCoinbaseSats');
+    expect(homeSource).toContain('network.snapshot?.immatureCoinbaseBlocksRemaining');
     expect(homeSource).toContain('network.snapshot?.history[0]');
     expect(homeSource).toContain('eligibleUtxos.length >= CONSOLIDATION_MIN_UTXOS');
+  });
+
+  it('keeps one network indicator above the available balance', () => {
+    const homeStart = tabsSource.indexOf('export function HomeTab');
+    const homeSource = tabsSource.slice(homeStart);
+
+    expect(appSource).not.toContain('networkStatusLabel');
+    expect(screensSource).not.toContain('connectionLabel');
+    expect(homeSource.indexOf('homeStyles.networkStrip'))
+      .toBeLessThan(homeSource.indexOf('homeStyles.glassPanel'));
+  });
+
+  it('renders unsettled funds only when their distinct amounts are present', () => {
+    const homeStart = tabsSource.indexOf('export function HomeTab');
+    const homeSource = tabsSource.slice(homeStart);
+
+    expect(homeSource).not.toContain("t('home.confirmedBalance')");
+    expect(homeSource).toContain('unconfirmedSats > 0 || immatureCoinbaseSats > 0');
+    expect(homeSource).toContain('unconfirmedSats > 0 ? (');
+    expect(homeSource).toContain('immatureCoinbaseSats > 0 ? (');
+    expect(homeSource).toContain("t('home.unconfirmedFunds')");
+    expect(homeSource).toContain("t('home.immatureMiningRewardsLabel')");
   });
 });

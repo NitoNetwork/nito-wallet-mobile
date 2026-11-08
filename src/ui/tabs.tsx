@@ -99,12 +99,10 @@ const HOME_A3_DEFINITIONS = {
     flexShrink: 1,
   },
   metrics: {
-    flexDirection: 'row',
     gap: 10,
   },
   metric: {
-    flex: 1,
-    minHeight: 82,
+    minHeight: 76,
     borderRadius: 18,
     padding: 13,
     justifyContent: 'space-between',
@@ -124,6 +122,12 @@ const HOME_A3_DEFINITIONS = {
     fontFamily: TYPOGRAPHY.semibold,
     fontSize: 14,
     lineHeight: 20,
+  },
+  metricHint: {
+    color: A3_COLORS.bodyText,
+    fontFamily: TYPOGRAPHY.regular,
+    fontSize: 10,
+    lineHeight: 15,
   },
   actions: {
     flexDirection: 'row',
@@ -876,12 +880,10 @@ export function HomeTab({
   const balanceDisplay = network.snapshot
     ? formatHomeBalance(network.snapshot.spendableSats, language)
     : { text: '--' };
-  const confirmedBalance = network.snapshot
-    ? satoshisToNito(network.snapshot.confirmedSats, language)
-    : '--';
-  const pendingBalance = network.snapshot
-    ? satoshisToNito(network.snapshot.unconfirmedSats, language)
-    : '--';
+  const unconfirmedSats = network.snapshot?.unconfirmedSats ?? 0;
+  const immatureCoinbaseSats = network.snapshot?.immatureCoinbaseSats ?? 0;
+  const unconfirmedBalance = satoshisToNito(unconfirmedSats, language);
+  const immatureCoinbaseBalance = satoshisToNito(immatureCoinbaseSats, language);
   const canConsolidate = Boolean(
     !preparedConsolidation
     && network.snapshot
@@ -909,6 +911,23 @@ export function HomeTab({
 
   return (
     <View style={homeStyles.root}>
+      <View style={homeStyles.networkStrip}>
+        <View style={homeStyles.networkState}>
+          <View style={[
+            homeStyles.networkDot,
+            (network.status === 'idle' || network.status === 'syncing')
+              && homeStyles.networkDotBusy,
+            network.status === 'error' && homeStyles.networkDotError,
+          ]} />
+          <Text style={homeStyles.networkText}>{networkLabel}</Text>
+        </View>
+        {network.height > 0 ? (
+          <Text style={homeStyles.networkText}>
+            {t('settings.blockHeight')} {network.height}
+          </Text>
+        ) : null}
+      </View>
+
       <View style={homeStyles.glassPanel}>
         <View style={homeStyles.balanceHeader}>
           <Text style={homeStyles.eyebrow}>{t('home.availableBalance')}</Text>
@@ -934,17 +953,6 @@ export function HomeTab({
           </Text>
           <Text style={homeStyles.unit}>NITO</Text>
         </View>
-        {network.snapshot && (network.snapshot.immatureCoinbaseSats ?? 0) > 0 ? (
-          <Text style={styles.immatureCoinbaseBalance}>
-            {t('home.immatureMiningRewards', {
-              amount: satoshisToNito(network.snapshot.immatureCoinbaseSats ?? 0, language),
-            })}
-            {'\n'}
-            {t('home.coinbaseBlocksRemaining', {
-              blocks: network.snapshot.immatureCoinbaseBlocksRemaining ?? 0,
-            })}
-          </Text>
-        ) : null}
         {balanceRefreshing ? (
           <View style={styles.balanceUpdating}>
             <Text style={styles.balanceHourglass}>{'⌛'}</Text>
@@ -953,30 +961,43 @@ export function HomeTab({
         ) : null}
       </View>
 
-      <View style={homeStyles.metrics}>
-        <View style={homeStyles.metric}>
-          <Text style={homeStyles.metricLabel}>{t('home.confirmedBalance')}</Text>
-          <Text
-            adjustsFontSizeToFit
-            minimumFontScale={0.7}
-            numberOfLines={1}
-            style={homeStyles.metricValue}
-          >
-            {confirmedBalance}
-          </Text>
+      {unconfirmedSats > 0 || immatureCoinbaseSats > 0 ? (
+        <View style={homeStyles.metrics}>
+          {unconfirmedSats > 0 ? (
+            <View style={homeStyles.metric}>
+              <Text style={homeStyles.metricLabel}>{t('home.unconfirmedFunds')}</Text>
+              <Text
+                adjustsFontSizeToFit
+                minimumFontScale={0.7}
+                numberOfLines={1}
+                style={homeStyles.metricValue}
+              >
+                {unconfirmedBalance} NITO
+              </Text>
+            </View>
+          ) : null}
+          {immatureCoinbaseSats > 0 ? (
+            <View style={homeStyles.metric}>
+              <Text style={homeStyles.metricLabel}>
+                {t('home.immatureMiningRewardsLabel')}
+              </Text>
+              <Text
+                adjustsFontSizeToFit
+                minimumFontScale={0.7}
+                numberOfLines={1}
+                style={homeStyles.metricValue}
+              >
+                {immatureCoinbaseBalance} NITO
+              </Text>
+              <Text style={homeStyles.metricHint}>
+                {t('home.coinbaseBlocksRemaining', {
+                  blocks: network.snapshot?.immatureCoinbaseBlocksRemaining ?? 0,
+                })}
+              </Text>
+            </View>
+          ) : null}
         </View>
-        <View style={homeStyles.metric}>
-          <Text style={homeStyles.metricLabel}>{t('home.pendingBalanceLabel')}</Text>
-          <Text
-            adjustsFontSizeToFit
-            minimumFontScale={0.7}
-            numberOfLines={1}
-            style={homeStyles.metricValue}
-          >
-            {pendingBalance}
-          </Text>
-        </View>
-      </View>
+      ) : null}
 
       {(onReceive || onSend || canConsolidate) ? (
         <View style={homeStyles.actions}>
@@ -1036,23 +1057,6 @@ export function HomeTab({
           ) : null}
         </View>
       ) : null}
-
-      <View style={homeStyles.networkStrip}>
-        <View style={homeStyles.networkState}>
-          <View style={[
-            homeStyles.networkDot,
-            (network.status === 'idle' || network.status === 'syncing')
-              && homeStyles.networkDotBusy,
-            network.status === 'error' && homeStyles.networkDotError,
-          ]} />
-          <Text style={homeStyles.networkText}>{networkLabel}</Text>
-        </View>
-        {network.height > 0 ? (
-          <Text style={homeStyles.networkText}>
-            {t('settings.blockHeight')} {network.height}
-          </Text>
-        ) : null}
-      </View>
 
       {latestHistory ? (
         <View style={homeStyles.glassPanel}>
