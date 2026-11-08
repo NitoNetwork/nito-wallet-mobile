@@ -40,6 +40,19 @@ jobs:
         with:
           ref: ${{ inputs.source_ref }}
 
+      - name: Free runner disk space
+        shell: bash
+        run: |
+          set -euo pipefail
+          df -h /
+          sudo rm -rf \
+            /usr/local/lib/android \
+            /usr/local/.ghcup \
+            /usr/share/dotnet \
+            /opt/ghc
+          sudo apt-get clean
+          df -h /
+
       - name: Setup Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
@@ -268,6 +281,14 @@ jobs:
           set -euo pipefail
           android/gradlew -p android :app:testDebugUnitTest --no-daemon --console=plain --warning-mode=all 2>&1 | tee gradle-tests.log
           node scripts/assert-gradle-sdk58-warning-policy.mjs gradle-tests.log
+
+      - name: Clean test build outputs before AAB
+        shell: bash
+        run: |
+          set -euo pipefail
+          android/gradlew -p android clean --no-daemon --console=plain --warning-mode=all 2>&1 | tee gradle-clean.log
+          node scripts/assert-gradle-sdk58-warning-policy.mjs gradle-clean.log
+          df -h /
 
       - name: Build release AAB
         shell: bash
