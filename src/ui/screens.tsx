@@ -56,13 +56,9 @@ const LANDING_STYLES = StyleSheet.create({
 export function Hero({
   t,
   compact = false,
-  connectionLabel = '',
-  connectionState = 'idle',
 }: {
   t: Translator;
   compact?: boolean;
-  connectionLabel?: string;
-  connectionState?: 'idle' | 'syncing' | 'connected' | 'error';
 }) {
   const styles = useStyles();
   return (
@@ -88,24 +84,6 @@ export function Hero({
             </Text>
           ) : null}
         </View>
-        {compact && connectionLabel ? (
-          <View style={styles.heroStatus} accessibilityRole="text">
-            <View style={[
-              styles.heroStatusDot,
-              (connectionState === 'idle' || connectionState === 'syncing')
-                && styles.heroStatusDotBusy,
-              connectionState === 'error' && styles.heroStatusDotError,
-            ]} />
-            <Text
-              adjustsFontSizeToFit
-              minimumFontScale={0.75}
-              numberOfLines={1}
-              style={styles.heroStatusText}
-            >
-              {connectionLabel}
-            </Text>
-          </View>
-        ) : null}
       </View>
     </View>
   );

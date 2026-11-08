@@ -4123,14 +4123,6 @@ function WalletApp({ theme, onSelectTheme }: {
     );
   };
 
-  const networkStatusLabel = network.status === 'connected'
-    ? t('settings.networkConnected')
-    : network.status === 'syncing'
-      ? t('settings.networkSyncing')
-      : network.status === 'error'
-        ? t('settings.networkError')
-        : t('settings.networkIdle');
-
   return (
     <SafeAreaProvider>
       <StatusBar
@@ -4150,12 +4142,7 @@ function WalletApp({ theme, onSelectTheme }: {
           >
             {screen === 'wallet' ? (
               <View style={styles.walletRoot}>
-                <Hero
-                  t={t}
-                  compact
-                  connectionLabel={networkStatusLabel}
-                  connectionState={network.status}
-                />
+                <Hero t={t} compact />
                 <Feedback error={error} />
                 {transactionTracking.storageError ? (
                   <Feedback error={t('errors.walletStorageUnavailable')} />
