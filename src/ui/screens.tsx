@@ -111,14 +111,9 @@ export function Hero({
   );
 }
 
-export function Feedback({ error, status }: { error: string; status: string }) {
+export function Feedback({ error }: { error: string }) {
   const styles = useStyles();
-  return (
-    <>
-      {error ? <Text style={styles.error}>{error}</Text> : null}
-      {status ? <Text style={styles.status}>{status}</Text> : null}
-    </>
-  );
+  return error ? <Text style={styles.error}>{error}</Text> : null;
 }
 
 export function LoadingScreen({ t, rotation }: { t: Translator; rotation: Rotation }) {
@@ -762,7 +757,7 @@ export function PersistScreen({
         </>
       ) : null}
       {seedBackupRequired && seedBackupConfirmed ? (
-        <Text style={styles.helper}>{t('status.seedBackupVerified')}</Text>
+        <Text style={styles.helper}>{t('persist.seedBackupVerified')}</Text>
       ) : null}
       {seedBackupConfirmed ? (
         <>

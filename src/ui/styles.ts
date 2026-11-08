@@ -572,15 +572,6 @@ const RAW_STYLES = StyleSheet.create(applySpaceGrotesk({
     borderRadius: 16,
     lineHeight: 20,
   },
-  status: {
-    color: '#d8ffef',
-    backgroundColor: 'rgba(37, 181, 121, 0.14)',
-    borderColor: 'rgba(37, 181, 121, 0.32)',
-    borderWidth: 1,
-    padding: 13,
-    borderRadius: 16,
-    lineHeight: 20,
-  },
   loadingPanel: {
     minHeight: 220,
     borderRadius: 28,

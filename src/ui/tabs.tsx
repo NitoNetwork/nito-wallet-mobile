@@ -255,6 +255,7 @@ export function ReceiveTab({
   actionLocked,
   addressBusy,
   networkReady,
+  addressCopied,
   onSelectFamily,
   onCreateAddress,
   onCopyAddress,
@@ -265,6 +266,7 @@ export function ReceiveTab({
   actionLocked: boolean;
   addressBusy: boolean;
   networkReady: boolean;
+  addressCopied: boolean;
   onSelectFamily: (accountKey: HdAccountKey) => void;
   onCreateAddress: () => void;
   onCopyAddress: () => void;
@@ -317,7 +319,7 @@ export function ReceiveTab({
       <Text selectable style={styles.address}>{wallet.receiveAddress}</Text>
       <View style={styles.receiveActions}>
         <View style={styles.receiveAction}>
-          <ActionButton label={t('actions.copyAddress')} loading={pendingAction === 'copy'} disabled={actionLocked || addressBusy} onPress={onCopyAddress} />
+          <ActionButton label={addressCopied ? t('actions.addressCopied') : t('actions.copyAddress')} loading={pendingAction === 'copy'} disabled={actionLocked || addressBusy} onPress={onCopyAddress} />
         </View>
         <View style={styles.receiveAction}>
           <ActionButton
@@ -346,6 +348,7 @@ export function SendTab({
   sendEstimatePending,
   preparedTx,
   preparedConsolidation,
+  financialReviewChanged,
   onChangeRecipient,
   onAddRecipient,
   onRemoveRecipient,
@@ -368,6 +371,7 @@ export function SendTab({
   sendEstimatePending: boolean;
   preparedTx: UnsignedTransparentSend | null;
   preparedConsolidation: UnsignedTransparentConsolidation | null;
+  financialReviewChanged: boolean;
   onChangeRecipient: (recipientId: number, field: 'address' | 'amount', value: string) => void;
   onAddRecipient: () => void;
   onRemoveRecipient: (recipientId: number) => void;
@@ -519,6 +523,11 @@ export function SendTab({
           ))}
           <Text style={styles.previewAddress}>{t('send.fee', { amount: satoshisToNito(preparedTx.feeSats, language) })}</Text>
           <Text style={styles.helper}>{t('send.inputsOutputs', { inputs: preparedTx.inputCount, outputs: preparedTx.outputCount })}</Text>
+          {financialReviewChanged ? (
+            <Text accessibilityLiveRegion="polite" style={styles.settingsWarning}>
+              {t('send.reviewChanged')}
+            </Text>
+          ) : null}
           <ActionButton
             label={broadcasting ? t('send.sending') : t('actions.sendNow')}
             loading={pendingAction === 'broadcast' || broadcasting}
@@ -542,6 +551,11 @@ export function SendTab({
           <Text style={styles.helper}>
             {`${consolidationT('fees')}: ${satoshisToNito(preparedConsolidation.totalFeeSats, language)} NITO`}
           </Text>
+          {financialReviewChanged ? (
+            <Text accessibilityLiveRegion="polite" style={styles.settingsWarning}>
+              {t('send.reviewChanged')}
+            </Text>
+          ) : null}
           <ActionButton
             label={consolidationT('send')}
             loading={pendingAction === 'broadcastConsolidation' || broadcasting}
