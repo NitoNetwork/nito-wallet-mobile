@@ -1,10 +1,11 @@
 diff --git a/node_modules/expo-modules-jsi/apple/Package.swift b/node_modules/expo-modules-jsi/apple/Package.swift
-index 8211ef0..7239fb4 100644
+index 8211ef0..1892b6d 100644
 --- a/node_modules/expo-modules-jsi/apple/Package.swift
 +++ b/node_modules/expo-modules-jsi/apple/Package.swift
-@@ -69,1 +69,13 @@
+@@ -68,6 +68,18 @@ let swiftIncludeFlags = headerSearchPaths.flatMap({ ["-Xcc", "-I\($0)"] })
+ 
  let testFrameworks = resolveTestFrameworks()
-+
+ 
 +// These fine-grained warning groups are available with the Swift compiler in Xcode 27.
 +// Passing them to the Xcode 26 compiler emits UnknownWarningGroup diagnostics before
 +// any package source is compiled. Keep the strict checks enabled where supported.
@@ -16,6 +17,10 @@ index 8211ef0..7239fb4 100644
 +#else
 +let strictWarningFlags: [String] = []
 +#endif
++
+ let package = Package(
+   name: "ExpoModulesJSI",
+   platforms: [
 @@ -78,7 +90,7 @@ let package = Package(
    products: [
      .library(
@@ -25,7 +30,7 @@ index 8211ef0..7239fb4 100644
        targets: ["ExpoModulesJSI"],
      )
    ],
-@@ -104,14 +116,7 @@ let package = Package(
+@@ -105,14 +117,7 @@ let package = Package(
            "-no-verify-emitted-module-interface",
            "-Xfrontend",
            "-clang-header-expose-decls=has-expose-attr",

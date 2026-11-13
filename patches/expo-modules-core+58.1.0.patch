@@ -26,7 +26,7 @@ index 7910c77..9c4372c 100644
    }
  }
 diff --git a/node_modules/expo-modules-core/android/build.gradle b/node_modules/expo-modules-core/android/build.gradle
-index 9a94630..4da9980 100644
+index 6d9ca64..06a0fb6 100644
 --- a/node_modules/expo-modules-core/android/build.gradle
 +++ b/node_modules/expo-modules-core/android/build.gradle
 @@ -160,26 +160,26 @@ if (buildFromSourceRequested) {
@@ -52,9 +52,9 @@ index 9a94630..4da9980 100644
    defaultConfig {
      consumerProguardFiles 'proguard-rules.pro'
 -    versionCode 1
--    versionName "58.0.30"
+-    versionName "58.1.0"
 +    versionCode = 1
-+    versionName = "58.0.30"
++    versionName = "58.1.0"
      buildConfigField "String", "EXPO_MODULES_CORE_VERSION", "\"${versionName}\""
      buildConfigField "boolean", "IS_NEW_ARCHITECTURE_ENABLED", "true"
  
@@ -126,40 +126,6 @@ index 0ba2a56..fab3cd4 100644
    ) : Color()
  
    @RequiresApi(Build.VERSION_CODES.O)
-diff --git a/node_modules/expo-modules-core/ios/Legacy/ModuleRegistryAdapter/EXModuleRegistryAdapter.m b/node_modules/expo-modules-core/ios/Legacy/ModuleRegistryAdapter/EXModuleRegistryAdapter.m
---- a/node_modules/expo-modules-core/ios/Legacy/ModuleRegistryAdapter/EXModuleRegistryAdapter.m
-+++ b/node_modules/expo-modules-core/ios/Legacy/ModuleRegistryAdapter/EXModuleRegistryAdapter.m
-@@ -5 +5 @@
--#import <ExpoModulesCore/EXModuleRegistryHolderReactModule.h>
-+#import <ExpoModulesCore/EXModuleRegistryHolderReactModule+Private.h>
-diff --git a/node_modules/expo-modules-core/ios/Legacy/ModuleRegistryAdapter/EXModuleRegistryHolderReactModule+Private.h b/node_modules/expo-modules-core/ios/Legacy/ModuleRegistryAdapter/EXModuleRegistryHolderReactModule+Private.h
-new file mode 100644
---- /dev/null
-+++ b/node_modules/expo-modules-core/ios/Legacy/ModuleRegistryAdapter/EXModuleRegistryHolderReactModule+Private.h
-@@ -0,0 +1,8 @@
-+// Copyright 2018-present 650 Industries. All rights reserved.
-+
-+#import <React/RCTBridgeModule.h>
-+#import <ExpoModulesCore/EXModuleRegistryHolderReactModule.h>
-+
-+@interface EXModuleRegistryHolderReactModule () <RCTBridgeModule>
-+
-+@end
-diff --git a/node_modules/expo-modules-core/ios/Legacy/ModuleRegistryAdapter/EXModuleRegistryHolderReactModule.h b/node_modules/expo-modules-core/ios/Legacy/ModuleRegistryAdapter/EXModuleRegistryHolderReactModule.h
---- a/node_modules/expo-modules-core/ios/Legacy/ModuleRegistryAdapter/EXModuleRegistryHolderReactModule.h
-+++ b/node_modules/expo-modules-core/ios/Legacy/ModuleRegistryAdapter/EXModuleRegistryHolderReactModule.h
-@@ -3,2 +3,0 @@
--@protocol RCTBridgeModule;
--
-@@ -7 +5 @@
--@interface EXModuleRegistryHolderReactModule : NSObject <RCTBridgeModule>
-+@interface EXModuleRegistryHolderReactModule : NSObject
-diff --git a/node_modules/expo-modules-core/ios/Legacy/ModuleRegistryAdapter/EXModuleRegistryHolderReactModule.m b/node_modules/expo-modules-core/ios/Legacy/ModuleRegistryAdapter/EXModuleRegistryHolderReactModule.m
---- a/node_modules/expo-modules-core/ios/Legacy/ModuleRegistryAdapter/EXModuleRegistryHolderReactModule.m
-+++ b/node_modules/expo-modules-core/ios/Legacy/ModuleRegistryAdapter/EXModuleRegistryHolderReactModule.m
-@@ -3 +3 @@
--#import <ExpoModulesCore/EXModuleRegistryHolderReactModule.h>
-+#import <ExpoModulesCore/EXModuleRegistryHolderReactModule+Private.h>
 diff --git a/node_modules/expo-modules-core/expo-module-gradle-plugin/src/main/kotlin/expo/modules/plugin/android/AndroidLibraryExtension.kt b/node_modules/expo-modules-core/expo-module-gradle-plugin/src/main/kotlin/expo/modules/plugin/android/AndroidLibraryExtension.kt
 index 0de0f0e..ba74d75 100644
 --- a/node_modules/expo-modules-core/expo-module-gradle-plugin/src/main/kotlin/expo/modules/plugin/android/AndroidLibraryExtension.kt
@@ -175,3 +141,58 @@ index 0de0f0e..ba74d75 100644
  }
  
  internal fun LibraryExtension.applyPublishingVariant() {
+diff --git a/node_modules/expo-modules-core/ios/Legacy/ModuleRegistryAdapter/EXModuleRegistryAdapter.m b/node_modules/expo-modules-core/ios/Legacy/ModuleRegistryAdapter/EXModuleRegistryAdapter.m
+index d74e692..3edf1b6 100644
+--- a/node_modules/expo-modules-core/ios/Legacy/ModuleRegistryAdapter/EXModuleRegistryAdapter.m
++++ b/node_modules/expo-modules-core/ios/Legacy/ModuleRegistryAdapter/EXModuleRegistryAdapter.m
+@@ -2,7 +2,7 @@
+ 
+ #import <ExpoModulesCore/EXModuleRegistryAdapter.h>
+ #import <ExpoModulesCore/EXModuleRegistryProvider.h>
+-#import <ExpoModulesCore/EXModuleRegistryHolderReactModule.h>
++#import <ExpoModulesCore/EXModuleRegistryHolderReactModule+Private.h>
+ 
+ @interface EXModuleRegistryAdapter ()
+ 
+diff --git a/node_modules/expo-modules-core/ios/Legacy/ModuleRegistryAdapter/EXModuleRegistryHolderReactModule+Private.h b/node_modules/expo-modules-core/ios/Legacy/ModuleRegistryAdapter/EXModuleRegistryHolderReactModule+Private.h
+new file mode 100644
+index 0000000..e230116
+--- /dev/null
++++ b/node_modules/expo-modules-core/ios/Legacy/ModuleRegistryAdapter/EXModuleRegistryHolderReactModule+Private.h
+@@ -0,0 +1,8 @@
++// Copyright 2018-present 650 Industries. All rights reserved.
++
++#import <React/RCTBridgeModule.h>
++#import <ExpoModulesCore/EXModuleRegistryHolderReactModule.h>
++
++@interface EXModuleRegistryHolderReactModule () <RCTBridgeModule>
++
++@end
+diff --git a/node_modules/expo-modules-core/ios/Legacy/ModuleRegistryAdapter/EXModuleRegistryHolderReactModule.h b/node_modules/expo-modules-core/ios/Legacy/ModuleRegistryAdapter/EXModuleRegistryHolderReactModule.h
+index 40307db..4682205 100644
+--- a/node_modules/expo-modules-core/ios/Legacy/ModuleRegistryAdapter/EXModuleRegistryHolderReactModule.h
++++ b/node_modules/expo-modules-core/ios/Legacy/ModuleRegistryAdapter/EXModuleRegistryHolderReactModule.h
+@@ -1,10 +1,8 @@
+ // Copyright 2018-present 650 Industries. All rights reserved.
+ 
+-@protocol RCTBridgeModule;
+-
+ #import <ExpoModulesCore/EXModuleRegistry.h>
+ 
+-@interface EXModuleRegistryHolderReactModule : NSObject <RCTBridgeModule>
++@interface EXModuleRegistryHolderReactModule : NSObject
+ 
+ - (nonnull instancetype)initWithModuleRegistry:(nonnull EXModuleRegistry *)moduleRegistry;
+ - (nullable EXModuleRegistry *)exModuleRegistry;
+diff --git a/node_modules/expo-modules-core/ios/Legacy/ModuleRegistryAdapter/EXModuleRegistryHolderReactModule.m b/node_modules/expo-modules-core/ios/Legacy/ModuleRegistryAdapter/EXModuleRegistryHolderReactModule.m
+index 2091548..6c383c0 100644
+--- a/node_modules/expo-modules-core/ios/Legacy/ModuleRegistryAdapter/EXModuleRegistryHolderReactModule.m
++++ b/node_modules/expo-modules-core/ios/Legacy/ModuleRegistryAdapter/EXModuleRegistryHolderReactModule.m
+@@ -1,6 +1,6 @@
+ // Copyright 2018-present 650 Industries. All rights reserved.
+ 
+-#import <ExpoModulesCore/EXModuleRegistryHolderReactModule.h>
++#import <ExpoModulesCore/EXModuleRegistryHolderReactModule+Private.h>
+ 
+ @interface EXModuleRegistryHolderReactModule ()
+ 

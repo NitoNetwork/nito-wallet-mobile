@@ -3,8 +3,8 @@
 import { describe, expect, it } from 'vitest';
 
 import expoClipboardPatchSource from '../patches/expo-clipboard+58.0.4.patch?raw';
-import expoModulesCorePatchSource from '../patches/expo-modules-core+58.0.30.patch?raw';
-import expoModulesJsiPatchSource from '../patches/expo-modules-jsi+58.0.22.patch?raw';
+import expoModulesCorePatchSource from '../patches/expo-modules-core+58.1.0.patch?raw';
+import expoModulesJsiPatchSource from '../patches/expo-modules-jsi+58.0.23.patch?raw';
 import iosWarningGateSource from '../scripts/assert-ios-owned-warning-free.mjs?raw';
 
 describe('iOS dependency warning fixes', () => {
