@@ -36,6 +36,8 @@
     "warnings:gradle-self-test": "node scripts/assert-gradle-sdk58-warning-policy.mjs --self-test",
     "warnings:source": "node scripts/assert-no-warning-suppressions.mjs",
     "audit:production": "node scripts/audit-production-dependencies.mjs",
+    "audit:ruby-build": "node scripts/audit-ruby-build-dependencies.mjs",
+    "audit:ruby-build:self-test": "node scripts/audit-ruby-build-dependencies.mjs --self-test",
     "start": "expo start",
     "android": "expo run:android",
     "ios": "expo run:ios",

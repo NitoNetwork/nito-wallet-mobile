@@ -41,5 +41,22 @@ vaults remain compatible and use the standard empty BIP39 passphrase.
 
 ## Dependency security
 
-The production dependency audit must report zero known vulnerabilities. Release
-gates do not accept advisory allowlists or temporary audit exceptions.
+The full and production npm dependency audits must report zero known
+vulnerabilities. Their release gates do not accept advisory allowlists or
+temporary exceptions.
+
+The iOS Ruby build-tool audit currently accepts exactly one dated exception,
+`GHSA-8474-xrp6-wh69` (`CVE-2026-126080`) in ActiveSupport 7.2.3.2. CocoaPods
+Core 1.17.0 is the latest stable release and requires ActiveSupport below 8,
+while the first fixed ActiveSupport 8 release is 8.0.5.2.
+
+Ruby, CocoaPods and ActiveSupport run only while resolving and generating the
+iOS native project. They are absent from the APK and IPA. The wallet contains
+no Action Cable endpoint and does not pass application input to
+`safe_constantize`, so the vulnerable path is not accessible from the shipped
+application.
+
+The exception expires on 13 February 2027. The gate also fails if the advisory
+disappears, changes dependency or version, or is joined by any other Ruby
+advisory. This forces removal or a new documented review when CocoaPods gains a
+compatible fixed dependency.
