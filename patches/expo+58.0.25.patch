@@ -1,8 +1,8 @@
 diff --git a/node_modules/expo/android/build.gradle b/node_modules/expo/android/build.gradle
-index a1c17d7..a758f17 100644
+index e5ea679..2699f3d 100644
 --- a/node_modules/expo/android/build.gradle
 +++ b/node_modules/expo/android/build.gradle
-@@ -14,14 +14,14 @@ version = '58.0.23'
+@@ -14,14 +14,14 @@ version = '58.0.25'
  
  expoModule {
    // We can't prebuild the module because it depends on the generated files.
@@ -15,9 +15,9 @@ index a1c17d7..a758f17 100644
 +  namespace = "expo.core"
    defaultConfig {
 -    versionCode 1
--    versionName "58.0.23"
+-    versionName "58.0.25"
 +    versionCode = 1
-+    versionName = "58.0.23"
++    versionName = "58.0.25"
      consumerProguardFiles("proguard-rules.pro")
    }
    testOptions {
