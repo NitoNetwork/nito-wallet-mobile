@@ -76,6 +76,7 @@ jobs:
           test "$(bundle exec pod --version)" = "1.17.0"
           bundle exec ruby scripts/check-ios-ruby-json.rb 2>&1 | tee -a ruby-toolchain.log
           node scripts/assert-warning-free.mjs ruby-toolchain.log
+          npm run audit:ruby-build
 
       - name: Verify dependency alignment
         shell: bash
@@ -91,6 +92,7 @@ jobs:
           npm run warnings:self-test
           npm run warnings:ios-self-test
           npm run warnings:ios-pods-self-test
+          npm run audit:ruby-build:self-test
           npm run warnings:source
 
       - name: ESLint

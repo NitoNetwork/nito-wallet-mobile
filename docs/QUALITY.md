@@ -12,9 +12,11 @@ Each device and store workflow runs the same project quality gate before compila
 - Strict TypeScript checking.
 - Unit and integration tests.
 - Localization completeness and encoding audits.
-- production dependency audit requiring zero known vulnerabilities, with no
-  advisory allowlist or temporary exception.
+- production npm dependency audit requiring zero known vulnerabilities, with
+  no advisory allowlist or temporary exception.
 - raw full dependency audit requiring zero known vulnerabilities.
+- iOS Ruby build-tool audit allowing only one enumerated and dated upstream
+  compatibility exception.
 - Expo SDK dependency alignment and Expo Doctor.
 - Rust formatting, Clippy with warnings denied, and Rust tests.
 - native bridge and artifact integrity checks.
@@ -32,8 +34,19 @@ Gradle 9.6.1 is the newest compatible wrapper for this SDK because Gradle 9.7
 and newer embed Kotlin 2.4 metadata that the Expo 58 and React Native 0.88
 build plugins compiled with Kotlin 2.2 cannot read. Android lint therefore
 disables only its newer-wrapper recommendation until that dated review.
-This policy does not apply to dependency security audits, which require a raw
-zero result.
+This policy does not apply to npm dependency security audits, which require a
+raw zero result.
+
+The Ruby build-tool audit accepts only `GHSA-8474-xrp6-wh69`
+(`CVE-2026-126080`) for ActiveSupport 7.2.3.2. CocoaPods Core 1.17.0 requires
+ActiveSupport below 8, while the fix begins at ActiveSupport 8.0.5.2. These Ruby
+gems run during iOS project generation and are absent from the delivered APK
+and IPA. The shipped application has no Action Cable endpoint and does not pass
+application input to `safe_constantize`.
+
+The exception expires on 13 February 2027. The gate fails before then if that
+advisory disappears or changes, or if any other Ruby advisory appears. The
+exception must then be removed or reviewed explicitly.
 
 Both Android workflows download a pinned official Android CLI binary, verify
 its SHA-256 checksum, installs the exact platform 37.0, Build Tools 37.0.0 and

@@ -81,6 +81,7 @@ npm run typecheck
 npm test
 npm audit
 npm run audit:production
+npm run audit:ruby-build:self-test
 npm run warnings:self-test
 npm run warnings:ios-self-test
 npm run warnings:ios-pods-self-test
@@ -90,6 +91,9 @@ npm run rust:fmt
 npm run rust:clippy
 npm run rust:test
 ```
+
+After installing the locked Ruby toolchain with `bundle install`, run the iOS
+build-tool dependency audit with `npm run audit:ruby-build`.
 
 Update every public and native version source with one command:
 
