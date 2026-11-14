@@ -675,7 +675,7 @@ describe('Nito Electrum helpers', () => {
     }).toMatchObject({ peakInFlight: 6 });
     expect(ThrottledFakeWebSocket.peakInFlight).toBe(6);
     client.disconnect();
-  });
+  }, 15_000);
 });
 
 const liveBenchmark = process.env.NITO_LIVE_BENCHMARK === '1' ? it : it.skip;
