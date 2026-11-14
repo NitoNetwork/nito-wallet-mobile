@@ -20,7 +20,13 @@ const NETWORK = {
   bip32: { public: 0x0488b21e, private: 0x0488ade4 },
 };
 const bytesToHex = (value: Uint8Array) => Array.from(value, (byte) => byte.toString(16).padStart(2, '0')).join('');
-const bytesToBase64 = (value: Uint8Array) => btoa(String.fromCharCode(...value));
+const bytesToBase64 = (value: Uint8Array) => {
+  let binary = '';
+  for (let offset = 0; offset < value.length; offset += 0x8000) {
+    binary += String.fromCharCode(...value.subarray(offset, offset + 0x8000));
+  }
+  return btoa(binary);
+};
 const base64ToBytes = (value: string) => Uint8Array.from(atob(value), (character) => character.charCodeAt(0));
 
 const derive = (
