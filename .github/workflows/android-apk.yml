@@ -80,7 +80,6 @@ jobs:
             --output "$ANDROID_CLI"
           printf '%s  %s\n' "$ANDROID_CLI_SHA256" "$ANDROID_CLI" | sha256sum --check --strict
           chmod 0700 "$ANDROID_CLI"
-          test "$("$ANDROID_CLI" --no-metrics --version)" = "$ANDROID_CLI_VERSION"
           bash scripts/install-android-sdk-with-retry.sh \
             "$ANDROID_CLI" \
             "$ANDROID_HOME" \

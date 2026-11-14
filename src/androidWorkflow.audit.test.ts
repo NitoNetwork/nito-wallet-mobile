@@ -23,7 +23,7 @@ describe('Android workflow toolchain contract', () => {
     );
     expect(androidWorkflowSource).not.toContain('/android/cli/latest/');
     expect(androidWorkflowSource).toContain('sha256sum --check --strict');
-    expect(androidWorkflowSource).toContain('--no-metrics');
+    expect(androidSdkInstallerSource).toContain('--no-metrics');
   });
 
   it('does not use the retired SDK manager and verifies every installed package', () => {
@@ -51,6 +51,9 @@ describe('Android workflow toolchain contract', () => {
   });
 
   it('retries transient Android SDK installation failures with bounded diagnostics', () => {
+    for (const workflowSource of [androidWorkflowSource, androidAabWorkflowSource]) {
+      expect(workflowSource).not.toMatch(/\$ANDROID_CLI"?\s+--no-metrics\s+--version/);
+    }
     expect(androidSdkInstallerSource).toContain(
       'NITO_ANDROID_SDK_INSTALL_ATTEMPTS:-3',
     );
