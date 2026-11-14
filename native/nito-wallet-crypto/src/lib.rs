@@ -496,12 +496,39 @@ struct ValidatedSignerInput {
     witness_program: Option<ScriptBuf>,
 }
 
+#[derive(Clone)]
+struct SignerKeyMaterial {
+    secret_key: SecretKey,
+    public_key: PublicKey,
+}
+
+fn signer_key_material(
+    cache: &mut HashMap<String, SignerKeyMaterial>,
+    root: &Xpriv,
+    path: &str,
+    secp: &Secp256k1<bitcoin::secp256k1::All>,
+) -> Result<SignerKeyMaterial, CryptoError> {
+    if let Some(material) = cache.get(path) {
+        return Ok(material.clone());
+    }
+
+    let secret_key = derive_secret(root, path)?;
+    let secp_public_key = bitcoin::secp256k1::PublicKey::from_secret_key(secp, &secret_key);
+    let material = SignerKeyMaterial {
+        secret_key,
+        public_key: PublicKey::new(secp_public_key),
+    };
+    cache.insert(path.to_owned(), material.clone());
+    Ok(material)
+}
+
 fn validate_signer_inputs(
     psbt: &Psbt,
     root: &Xpriv,
     signers: &HashMap<(String, u32), SignerRequest>,
     secp: &Secp256k1<bitcoin::secp256k1::All>,
 ) -> Result<Vec<ValidatedSignerInput>, CryptoError> {
+    let mut key_material_by_path = HashMap::new();
     psbt.unsigned_tx
         .input
         .iter()
@@ -511,9 +538,10 @@ fn validate_signer_inputs(
             let signer = signers
                 .get(&(outpoint.txid.to_string().to_lowercase(), outpoint.vout))
                 .ok_or(CryptoError::MissingSigner(index))?;
-            let secret_key = derive_secret(root, &signer.path)?;
-            let secp_public_key = bitcoin::secp256k1::PublicKey::from_secret_key(secp, &secret_key);
-            let public_key = PublicKey::new(secp_public_key);
+            let SignerKeyMaterial {
+                secret_key,
+                public_key,
+            } = signer_key_material(&mut key_material_by_path, root, &signer.path, secp)?;
             let psbt_input = psbt
                 .inputs
                 .get(index)
@@ -912,6 +940,23 @@ mod tests {
 
         assert_eq!(derive("é"), derive("e\u{301}"));
         assert_ne!(derive("é"), derive(""));
+    }
+
+    #[test]
+    fn signer_key_material_cache_reuses_the_same_hd_path() {
+        let root = master_xpriv(MNEMONIC).unwrap();
+        let secp = Secp256k1::new();
+        let mut cache = HashMap::new();
+
+        let first = signer_key_material(&mut cache, &root, "m/84'/0'/0'/0/0", &secp).unwrap();
+        let repeated = signer_key_material(&mut cache, &root, "m/84'/0'/0'/0/0", &secp).unwrap();
+
+        assert_eq!(cache.len(), 1);
+        assert_eq!(first.secret_key, repeated.secret_key);
+        assert_eq!(first.public_key, repeated.public_key);
+
+        signer_key_material(&mut cache, &root, "m/84'/0'/0'/0/1", &secp).unwrap();
+        assert_eq!(cache.len(), 2);
     }
 
     fn unsigned_spend(outpoint: OutPoint, script_pubkey: ScriptBuf) -> Transaction {
