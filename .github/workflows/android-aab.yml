@@ -102,16 +102,13 @@ jobs:
           printf '%s  %s\n' "$ANDROID_CLI_SHA256" "$ANDROID_CLI" | sha256sum --check --strict
           chmod 0700 "$ANDROID_CLI"
           test "$("$ANDROID_CLI" --no-metrics --version)" = "$ANDROID_CLI_VERSION"
-          (
-            cd "$RUNNER_TEMP"
+          bash scripts/install-android-sdk-with-retry.sh \
             "$ANDROID_CLI" \
-              --no-metrics \
-              --sdk="$ANDROID_HOME" \
-              sdk install \
-              "$ANDROID_PLATFORM_PACKAGE" \
-              "build-tools/$ANDROID_BUILD_TOOLS_VERSION" \
-              "ndk/$ANDROID_NDK_VERSION"
-          ) 2>&1 | tee android-toolchain.log
+            "$ANDROID_HOME" \
+            "$ANDROID_PLATFORM_PACKAGE" \
+            "$ANDROID_BUILD_TOOLS_VERSION" \
+            "$ANDROID_NDK_VERSION" \
+            2>&1 | tee android-toolchain.log
 
           PLATFORM_DIRECTORY="$ANDROID_HOME/$ANDROID_PLATFORM_PACKAGE"
           BUILD_TOOLS_DIRECTORY="$ANDROID_HOME/build-tools/$ANDROID_BUILD_TOOLS_VERSION"

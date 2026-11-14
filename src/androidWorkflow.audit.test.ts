@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest';
 
 import androidAabWorkflowSource from '../.github/workflows/android-aab.yml?raw';
 import androidWorkflowSource from '../.github/workflows/android-apk.yml?raw';
+import androidSdkInstallerSource from '../scripts/install-android-sdk-with-retry.sh?raw';
 
 describe('Android workflow toolchain contract', () => {
   it('installs the exact Expo SDK 58 toolchain through the pinned Android CLI', () => {
@@ -29,13 +30,16 @@ describe('Android workflow toolchain contract', () => {
     expect(androidWorkflowSource).not.toContain('sdkmanager');
     expect(androidWorkflowSource).not.toContain('android-actions/setup-android');
     expect(androidWorkflowSource).not.toContain('platform-tools');
-    expect(androidWorkflowSource).toContain('sdk install');
-    expect(androidWorkflowSource).toContain('cd "$RUNNER_TEMP"');
-    expect(androidWorkflowSource).toContain('"$ANDROID_PLATFORM_PACKAGE"');
     expect(androidWorkflowSource).toContain(
-      '"build-tools/$ANDROID_BUILD_TOOLS_VERSION"',
+      'bash scripts/install-android-sdk-with-retry.sh',
     );
-    expect(androidWorkflowSource).toContain('"ndk/$ANDROID_NDK_VERSION"');
+    expect(androidAabWorkflowSource).toContain(
+      'bash scripts/install-android-sdk-with-retry.sh',
+    );
+    expect(androidSdkInstallerSource).toContain('sdk install');
+    expect(androidSdkInstallerSource).toContain('"$platform_package"');
+    expect(androidSdkInstallerSource).toContain('"build-tools/$build_tools_version"');
+    expect(androidSdkInstallerSource).toContain('"ndk/$ndk_version"');
     expect(androidWorkflowSource).toContain('test -s "$PLATFORM_DIRECTORY/android.jar"');
     expect(androidWorkflowSource).toContain('test -x "$BUILD_TOOLS_DIRECTORY/apksigner"');
     expect(androidWorkflowSource).toContain('test -s "$NDK_DIRECTORY/source.properties"');
@@ -44,6 +48,20 @@ describe('Android workflow toolchain contract', () => {
     expect(androidWorkflowSource).toContain('ANDROID_HOME=$ANDROID_HOME');
     expect(androidWorkflowSource).toContain('ANDROID_SDK_ROOT=$ANDROID_SDK_ROOT');
     expect(androidWorkflowSource).toContain('ANDROID_NDK_HOME=$NDK_DIRECTORY');
+  });
+
+  it('retries transient Android SDK installation failures with bounded diagnostics', () => {
+    expect(androidSdkInstallerSource).toContain(
+      'NITO_ANDROID_SDK_INSTALL_ATTEMPTS:-3',
+    );
+    expect(androidSdkInstallerSource).toContain(
+      'NITO_ANDROID_SDK_INSTALL_RETRY_DELAY_SECONDS:-15',
+    );
+    expect(androidSdkInstallerSource).toContain('attempt <= max_attempts');
+    expect(androidSdkInstallerSource).toContain('max_attempts > 5');
+    expect(androidSdkInstallerSource).toContain('retry_delay_seconds > 60');
+    expect(androidSdkInstallerSource).toContain('verbosity=(-vv)');
+    expect(androidSdkInstallerSource).toContain('exit "$install_status"');
   });
 
   it('builds the Play AAB independently with the same pinned quality and signing gates', () => {
