@@ -408,7 +408,7 @@ export const isElectrumTransactionNotFoundError = (error: unknown): boolean => (
 
 export const NITO_ELECTRUM_SERVERS: ElectrumServer[] = [
   { host: 'electrum1.nito.network', port: 50005, protocol: 'wss', priority: 1 },
-  { host: 'electrum1.nitopool.fr', port: 50005, protocol: 'wss', priority: 2 },
+  { host: 'electrum1.nitopool.online', port: 50005, protocol: 'wss', priority: 2 },
 ];
 
 const NITO_ADDRESS_NETWORK = {
